@@ -19,7 +19,7 @@ jobs:
       - name: Ruff lint
         run: ruff check api/ worker/
       - name: Mypy
-        run: mypy api/ worker/ --ignore-missing-imports
+        run: mypy api/ worker/ --ignore-missing-imports --explicit-package-bases
 
   unit-tests:
     name: Unit tests

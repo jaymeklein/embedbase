@@ -77,6 +77,7 @@ async def update_workspace(ws_id: str, body: WorkspaceUpdate, db: aiosqlite.Conn
                      (*updates.values(), ws_id))
     await db.commit()
     row = await (await db.execute("SELECT * FROM workspaces WHERE id = ?", (ws_id,))).fetchone()
+    assert row is not None
     return dict(row)
 
 

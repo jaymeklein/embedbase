@@ -95,7 +95,7 @@ async def run_migrations(db: aiosqlite.Connection) -> None:
     await db.commit()
 
     row = await (await db.execute("SELECT MAX(version) FROM schema_migrations")).fetchone()
-    current_version = row[0] or 0
+    current_version = (row[0] if row and row[0] is not None else 0)
 
     for i, sql in enumerate(_MIGRATIONS, start=1):
         if i <= current_version:

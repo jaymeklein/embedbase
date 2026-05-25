@@ -92,6 +92,7 @@ async def update_collection(ws_id: str, col_id: str, body: CollectionUpdate,
     await db.execute(f"UPDATE collections SET {set_clause} WHERE id = ?", (*updates.values(), col_id))
     await db.commit()
     row = await (await db.execute("SELECT * FROM collections WHERE id = ?", (col_id,))).fetchone()
+    assert row is not None
     return dict(row)
 
 

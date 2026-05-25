@@ -36,6 +36,7 @@ def configure_logging(level: str = "info", fmt: str = "json") -> None:
 
     log_level = getattr(logging, level.upper(), logging.INFO)
 
+    renderer: structlog.types.Processor
     if fmt == "json":
         renderer = structlog.processors.JSONRenderer()
     else:
