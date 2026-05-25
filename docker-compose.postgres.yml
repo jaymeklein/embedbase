@@ -1,0 +1,41 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16-0.7.0
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-embedbase}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [embedbase_net]
+
+  api:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - VECTOR_STORE=pgvector
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+  worker:
+    environment:
+      - VECTOR_STORE=pgvector
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+
+volumes:
+  postgres_data:

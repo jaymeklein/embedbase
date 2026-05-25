@@ -1,0 +1,119 @@
+version: "3.9"
+
+networks:
+  embedbase_net:
+    driver: bridge
+
+volumes:
+  embedbase_data:
+  embedbase_store:
+  redis_data:
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: embedbase/api:1.0.0
+    environment:
+      - VECTOR_STORE=${VECTOR_STORE:-chroma}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8001
+      - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
+      - DATABASE_PATH=/store/embedbase.db
+      - MASTER_API_KEY=${MASTER_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - EMBEDBASE_SECURE_HEADERS=${EMBEDBASE_SECURE_HEADERS:-false}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
+      - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
+      - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+    volumes:
+      - embedbase_data:/data
+      - embedbase_store:/store
+      - ./config.yaml:/app/config.yaml
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks: [embedbase_net]
+
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    image: embedbase/worker:1.0.0
+    environment:
+      - VECTOR_STORE=${VECTOR_STORE:-chroma}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8001
+      - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
+      - DATABASE_PATH=/store/embedbase.db
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
+      - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
+      - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+    volumes:
+      - embedbase_data:/data
+      - embedbase_store:/store
+      - ./config.yaml:/app/config.yaml
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [embedbase_net]
+
+  redis:
+    image: redis:7.2-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks: [embedbase_net]
+
+  chroma:
+    image: chromadb/chroma:0.5.3
+    volumes:
+      - embedbase_data:/chroma/chroma
+    environment:
+      - CHROMA_SERVER_AUTH_CREDENTIALS=${CHROMA_AUTH_TOKEN:-embedbase-internal}
+      - CHROMA_SERVER_AUTH_PROVIDER=chromadb.auth.token.TokenAuthServerProvider
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks: [embedbase_net]
+
+  nginx:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    networks: [embedbase_net]

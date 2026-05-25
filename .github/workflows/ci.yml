@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint-and-type-check:
+    name: Lint + type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dev dependencies
+        run: pip install ruff mypy types-PyYAML types-redis pydantic pydantic-settings aiosqlite structlog prometheus-client
+      - name: Ruff lint
+        run: ruff check api/ worker/
+      - name: Mypy
+        run: mypy api/ worker/ --ignore-missing-imports
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install pytest pytest-asyncio pydantic pydantic-settings aiosqlite structlog PyYAML bcrypt
+      - name: Run unit tests
+        run: pytest tests/unit/ -v
+
+  docker-build:
+    name: Docker build smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Copy config
+        run: cp config.example.yaml config.yaml
+      - name: Build API image
+        run: docker build -t embedbase/api:ci ./api
+      - name: Build worker image
+        run: docker build -t embedbase/worker:ci ./worker

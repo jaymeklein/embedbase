@@ -1,0 +1,57 @@
+# EmbedBase configuration
+# Copy to config.yaml and edit. All settings here can be changed at runtime
+# via PUT /config without restarting the stack (except vector_store.backend).
+
+embedding:
+  provider: sentence_transformers  # sentence_transformers | ollama | openai_compat
+  model: all-MiniLM-L6-v2
+  batch_size: 32
+  # Ollama settings (provider: ollama)
+  # base_url: http://host.docker.internal:11434
+  # concurrency: 8
+  # OpenAI-compatible settings (provider: openai_compat)
+  # base_url: http://host.docker.internal:1234
+  # api_key: ""
+
+vector_store:
+  backend: chroma  # chroma | pgvector | qdrant
+  chroma:
+    host: chroma
+    port: 8001
+  pgvector:
+    host: postgres
+    port: 5432
+    database: embedbase
+    user: embedbase
+    # password: set via POSTGRES_PASSWORD env var
+    index_min_rows: 100   # create HNSW index after this many rows
+  qdrant:
+    host: qdrant
+    port: 6333
+
+chunking:
+  sliding_window:
+    max_tokens: 512
+    overlap_tokens: 64
+  csv:
+    rows_per_chunk: 10
+  code:
+    max_symbol_tokens: 4096
+    fallback_window_lines: 50
+
+search:
+  default_top_k: 5
+  max_top_k: 20
+  retrieval_fan_out: 4    # retrieve top_k * fan_out before applying filters
+  max_fan_out: 10
+  hybrid_default_alpha: 0.7  # 0.0 = BM25 only, 1.0 = semantic only
+  bm25_cache_ttl: 60         # seconds — API in-process BM25 cache TTL
+
+mcp:
+  enabled: true
+  rate_limit_rpm: 60
+  max_results: 20
+
+logging:
+  level: info   # debug | info | warning | error
+  format: json  # json | text
