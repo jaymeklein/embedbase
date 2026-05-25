@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+
 from api.adapters.base import EmbeddingAdapter
 
 if TYPE_CHECKING:

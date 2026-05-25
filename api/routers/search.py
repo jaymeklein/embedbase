@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+
 from api.models.search import SearchRequest, SearchResponse
 
 router = APIRouter(tags=["search"])

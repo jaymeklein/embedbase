@@ -1,10 +1,12 @@
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+
 import aiosqlite
 import bcrypt
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
 from api.dependencies import get_db
 
 router = APIRouter(prefix="/workspaces/{ws_id}/collections", tags=["collections"])
@@ -38,7 +40,7 @@ async def _require_workspace(ws_id: str, db: aiosqlite.Connection) -> None:
 async def create_collection(ws_id: str, body: CollectionCreate, db: aiosqlite.Connection = Depends(get_db)):
     await _require_workspace(ws_id, db)
     col_id = f"col_{uuid4().hex[:12]}"
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     try:
         await db.execute(
             "INSERT INTO collections (id, workspace_id, name, description, color, icon, created_at, updated_at) "
@@ -47,7 +49,7 @@ async def create_collection(ws_id: str, body: CollectionCreate, db: aiosqlite.Co
         )
         await db.commit()
     except aiosqlite.IntegrityError:
-        raise HTTPException(409, f"Collection {body.name!r} already exists in this workspace")
+        raise HTTPException(409, f"Collection {body.name!r} already exists in this workspace") from None
     return {"id": col_id, "workspace_id": ws_id, "name": body.name, "description": body.description,
             "color": body.color, "icon": body.icon, "created_at": now, "updated_at": now,
             "document_count": 0, "chunk_count": 0}
@@ -83,7 +85,7 @@ async def update_collection(ws_id: str, col_id: str, body: CollectionUpdate,
     )).fetchone()
     if not row:
         raise HTTPException(404, f"Collection {col_id!r} not found")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     updates["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in updates)
@@ -120,7 +122,7 @@ async def create_api_key(ws_id: str, col_id: str, body: APIKeyCreate,
     key_prefix = raw_key[3:11]  # 8 chars after "eb_"
     key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=12)).decode()
     key_id = uuid4().hex
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
 
     await db.execute(
         "INSERT INTO api_keys (id, collection_id, key_prefix, key_hash, label, created_at) "

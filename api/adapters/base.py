@@ -1,7 +1,8 @@
 from typing import Protocol, runtime_checkable
+
 from api.models.chunk import Chunk
-from api.models.search import SearchResult
 from api.models.document import DocumentSummary
+from api.models.search import SearchResult
 
 
 @runtime_checkable

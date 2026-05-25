@@ -1,8 +1,10 @@
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+
 import aiosqlite
-from api.db import get_connection
+
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.db import get_connection
 
 # Singletons resolved at startup via lifespan
 _embedding_adapter: EmbeddingAdapter | None = None

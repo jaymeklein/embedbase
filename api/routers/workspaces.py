@@ -1,9 +1,10 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import aiosqlite
+
 from api.dependencies import get_db
-from api.models.collection import Workspace
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -26,7 +27,7 @@ class WorkspaceUpdate(BaseModel):
 async def create_workspace(body: WorkspaceCreate, db: aiosqlite.Connection = Depends(get_db)):
     from uuid import uuid4
     ws_id = f"ws_{uuid4().hex[:12]}"
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     await db.execute(
         "INSERT INTO workspaces (id, name, description, color, icon, created_at, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -68,7 +69,7 @@ async def update_workspace(ws_id: str, body: WorkspaceUpdate, db: aiosqlite.Conn
     row = await (await db.execute("SELECT * FROM workspaces WHERE id = ?", (ws_id,))).fetchone()
     if not row:
         raise HTTPException(404, f"Workspace {ws_id!r} not found")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     updates["updated_at"] = now
     set_clause = ", ".join(f"{k} = ?" for k in updates)

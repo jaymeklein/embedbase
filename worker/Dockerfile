@@ -14,5 +14,6 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 
 COPY . .
 
-CMD ["celery", "-A", "worker.celery_app", "worker", "--loglevel=info",
-     "--concurrency=${CELERY_CONCURRENCY:-2}"]
+# Shell form required: exec-form JSON array cannot span multiple lines without \
+# and does not expand shell variables like ${CELERY_CONCURRENCY:-2}
+CMD celery -A worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}

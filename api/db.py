@@ -1,4 +1,5 @@
 import aiosqlite
+
 from api.settings import settings
 
 _MIGRATIONS = [

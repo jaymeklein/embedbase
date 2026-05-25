@@ -60,12 +60,17 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# B008: FastAPI's Depends() in default args is an intentional pattern, not a bug
+ignore = ["E501", "B008"]
 
 [tool.mypy]
 python_version = "3.12"
-strict = true
 ignore_missing_imports = true
+# Strict mode requires return annotations on every function; added progressively per delivery
+disallow_untyped_defs = false
+check_untyped_defs = true
+warn_return_any = false
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

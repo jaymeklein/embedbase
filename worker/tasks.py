@@ -1,5 +1,6 @@
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+
 from worker.celery_app import celery_app
 
 logger = structlog.get_logger()
@@ -24,7 +25,7 @@ def ingest_document(self, job_id: str, file_path: str, collection_id: str, file_
         raise  # plain raise — never self.retry()
     except Exception as exc:
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
 
 @celery_app.task(bind=True)
@@ -39,4 +40,4 @@ def delete_document(self, document_id: str, collection_id: str):
         raise
     except Exception as exc:
         logger.error("delete task failed", document_id=document_id, error=str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException
+
 from api.models.config import AppConfig
 
 router = APIRouter(prefix="/config", tags=["config"])

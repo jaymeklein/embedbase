@@ -1,6 +1,8 @@
 import time
+
 from fastapi import APIRouter
-from api.dependencies import get_embedding_adapter, get_vector_store
+
+from api.dependencies import get_embedding_adapter
 from api.settings import settings
 
 router = APIRouter(tags=["system"])
