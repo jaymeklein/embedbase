@@ -44,18 +44,29 @@ async def lifespan(app: FastAPI):
     logger.info("database migrations complete")
 
     # 3. Resolve and warm up embedding adapter
-    from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
-    embedding_adapter = resolve_embedding(app_config.embedding)
-    _ = embedding_adapter.dimensions  # triggers model load / warm-up
-    set_embedding_adapter(embedding_adapter)
-    logger.info("embedding adapter ready", provider=app_config.embedding.provider,
-                model=app_config.embedding.model, dimensions=embedding_adapter.dimensions)
+    # NOTE: adapter deps (sentence-transformers, chromadb) installed in Delivery 2.
+    # Gracefully skip if not yet available so the D1 skeleton starts cleanly.
+    try:
+        from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
+        embedding_adapter = resolve_embedding(app_config.embedding)
+        _ = embedding_adapter.dimensions  # triggers model load / warm-up
+        set_embedding_adapter(embedding_adapter)
+        logger.info("embedding adapter ready", provider=app_config.embedding.provider,
+                    model=app_config.embedding.model, dimensions=embedding_adapter.dimensions)
+    except (ImportError, Exception) as exc:
+        logger.warning("embedding adapter unavailable (Delivery 2)", error=str(exc))
 
     # 4. Resolve vector store adapter
-    from api.adapters.vector_store import get_vector_store as resolve_store
-    vector_store = resolve_store(app_config.vector_store, embedding_adapter.dimensions)
-    set_vector_store(vector_store)
-    logger.info("vector store ready", backend=app_config.vector_store.backend)
+    try:
+        from api.adapters.vector_store import get_vector_store as resolve_store
+        from api.dependencies import get_embedding_adapter as _get_emb
+        _emb = _get_emb()
+        dims = _emb.dimensions if _emb else 384
+        vector_store = resolve_store(app_config.vector_store, dims)
+        set_vector_store(vector_store)
+        logger.info("vector store ready", backend=app_config.vector_store.backend)
+    except (ImportError, Exception) as exc:
+        logger.warning("vector store unavailable (Delivery 2)", error=str(exc))
 
     logger.info("EmbedBase API ready")
     yield

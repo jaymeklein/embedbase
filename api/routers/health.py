@@ -18,7 +18,7 @@ async def healthz():
         "service": "api",
         "version": "1.0.0",
         "vector_store": settings.vector_store,
-        "vector_store_connected": True,
+        "vector_store_connected": False,  # wired in Delivery 2
         "embedding_provider": settings.embedding_provider,
         "embedding_model": settings.embedding_model,
         "embedding_model_loaded": embedding_adapter is not None,
