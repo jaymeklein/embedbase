@@ -5,6 +5,7 @@ import structlog
 import yaml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 
 from api.db import init_db
 from api.dependencies import set_embedding_adapter, set_vector_store
@@ -20,10 +21,15 @@ def _load_app_config() -> AppConfig:
     config_path = Path("/app/config.yaml")
     if not config_path.exists():
         config_path = Path("config.yaml")
+        
     if config_path.exists():
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
-        return AppConfig.model_validate(data)
+        try:
+            return AppConfig.model_validate(data)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid config.yaml:\n{exc}") from exc
+    
     return AppConfig()
 
 

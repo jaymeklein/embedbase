@@ -12,7 +12,7 @@ _start_time = time.time()
 
 @router.get("/healthz")
 async def healthz():
-    embedding_adapter = await get_embedding_adapter()
+    embedding_adapter = get_embedding_adapter()
     return {
         "status": "ok",
         "service": "api",

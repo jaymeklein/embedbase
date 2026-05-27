@@ -23,13 +23,11 @@ def set_vector_store(store: VectorStoreAdapter) -> None:
     _vector_store = store
 
 
-async def get_embedding_adapter() -> EmbeddingAdapter | None:
-    # Returns None in Delivery 1 — adapter deps installed in Delivery 2
+def get_embedding_adapter() -> EmbeddingAdapter | None:
     return _embedding_adapter
 
 
-async def get_vector_store() -> VectorStoreAdapter | None:
-    # Returns None in Delivery 1 — adapter deps installed in Delivery 2
+def get_vector_store() -> VectorStoreAdapter | None:
     return _vector_store
 
 

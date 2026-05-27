@@ -1,6 +1,7 @@
 # Delivery 1 — minimal runtime deps (worker tasks are stubs)
 # Full parser/embedding deps restored in Delivery 2
 celery[redis]>=5.4.0
+watchfiles>=0.13          # hot-reload wrapper for dev (replaces removed --autoreload)
 redis>=5.0.0
 structlog>=24.1.0
 pydantic>=2.7.0

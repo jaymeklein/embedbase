@@ -6,7 +6,6 @@ networks:
 
 volumes:
   embedbase_data:
-  embedbase_store:
   redis_data:
 
 services:
@@ -34,10 +33,12 @@ services:
       - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
       - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
       - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api
     volumes:
       - embedbase_data:/data
-      - embedbase_store:/store
+      - ./data/store:/store
       - ./config.yaml:/app/config.yaml
+      - ./api:/app/api   # bind-mount: edits on host are visible instantly; --reload picks them up
     ports:
       - "8000:8000"
     depends_on:
@@ -73,10 +74,12 @@ services:
       - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
       - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
       - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+    command: watchfiles "celery -A worker.celery_app worker --loglevel=info --concurrency=1" /app/worker
     volumes:
       - embedbase_data:/data
-      - embedbase_store:/store
+      - ./data/store:/store
       - ./config.yaml:/app/config.yaml
+      - ./worker:/app/worker   # bind-mount: watchfiles restarts celery on any .py change
     depends_on:
       redis:
         condition: service_healthy

@@ -1,4 +1,24 @@
+import warnings
+from typing import Any
+
 from pydantic import BaseModel
+
+
+def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: str = "") -> None:
+    known = set(model_cls.model_fields)
+    for key in data:
+        full = f"{prefix}.{key}" if prefix else key
+
+        if key not in known:
+            warnings.warn(
+                f"config.yaml: unknown key '{full}' will be ignored", UserWarning, stacklevel=5
+            )
+
+        elif isinstance(data[key], dict):
+            ann = model_cls.model_fields[key].annotation
+
+            if isinstance(ann, type) and issubclass(ann, BaseModel):
+                _warn_extra_keys(data[key], ann, full)
 
 
 class EmbeddingConfig(BaseModel):
@@ -83,3 +103,18 @@ class AppConfig(BaseModel):
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
+
+    @classmethod
+    def model_validate(
+        cls,
+        obj: Any,
+        *,
+        strict: bool | None = None,
+        from_attributes: bool | None = None,
+        context: Any = None,
+    ) -> "AppConfig":
+        if isinstance(obj, dict):
+            _warn_extra_keys(obj, cls)
+        return super().model_validate(
+            obj, strict=strict, from_attributes=from_attributes, context=context
+        )
