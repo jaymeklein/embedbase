@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # NOTE: sentence-transformers model pre-download added in Delivery 2
 # RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
-COPY . .
+COPY . ./worker/
 
 # Shell form required: exec-form JSON array cannot span multiple lines without \
 # and does not expand shell variables like ${CELERY_CONCURRENCY:-2}

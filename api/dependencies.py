@@ -1,12 +1,14 @@
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 
-import aiosqlite
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
-from api.db import get_connection
+from api.db import AsyncSessionLocal
 
-# Singletons resolved at startup via lifespan
+# ---------------------------------------------------------------------------
+# Adapter singletons — set once in lifespan(), read everywhere via Depends()
+# ---------------------------------------------------------------------------
+
 _embedding_adapter: EmbeddingAdapter | None = None
 _vector_store: VectorStoreAdapter | None = None
 
@@ -31,15 +33,15 @@ async def get_vector_store() -> VectorStoreAdapter | None:
     return _vector_store
 
 
-@asynccontextmanager
-async def db_context() -> AsyncIterator[aiosqlite.Connection]:
-    db = await get_connection()
-    try:
-        yield db
-    finally:
-        await db.close()
+# ---------------------------------------------------------------------------
+# Database session — yields a transactional AsyncSession per request
+# ---------------------------------------------------------------------------
 
-
-async def get_db() -> AsyncIterator[aiosqlite.Connection]:
-    async with db_context() as db:
-        yield db
+async def get_db() -> AsyncIterator[AsyncSession]:
+    """
+    FastAPI dependency that opens an AsyncSession, yields it to the route
+    handler, and closes it when the response is sent.  Commit explicitly
+    inside the route; any unhandled exception triggers an implicit rollback.
+    """
+    async with AsyncSessionLocal() as session:
+        yield session

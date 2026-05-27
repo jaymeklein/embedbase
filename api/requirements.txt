@@ -4,7 +4,10 @@ fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
+# SQLAlchemy 2.0 async (aiosqlite is the async driver for SQLite)
+sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
+alembic>=1.13.0
 python-multipart>=0.0.9
 httpx>=0.27.0
 bcrypt>=4.1.0

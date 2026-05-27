@@ -6,7 +6,7 @@ import yaml
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.db import get_connection, run_migrations
+from api.db import init_db
 from api.dependencies import set_embedding_adapter, set_vector_store
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
@@ -37,10 +37,8 @@ async def lifespan(app: FastAPI):
     logger.info("config loaded", provider=app_config.embedding.provider,
                 vector_store=app_config.vector_store.backend)
 
-    # 2. SQLite — WAL mode, foreign keys, run migrations
-    db = await get_connection()
-    await run_migrations(db)
-    await db.close()
+    # 2. SQLite — run Alembic migrations (pragmas set via engine event)
+    await init_db()
     logger.info("database migrations complete")
 
     # 3. Resolve and warm up embedding adapter
