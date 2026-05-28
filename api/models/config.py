@@ -105,16 +105,7 @@ class AppConfig(BaseModel):
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod
-    def model_validate(
-        cls,
-        obj: Any,
-        *,
-        strict: bool | None = None,
-        from_attributes: bool | None = None,
-        context: Any = None,
-    ) -> "AppConfig":
+    def model_validate(cls, obj: Any, /, **kwargs: Any) -> "AppConfig":  # type: ignore[override]
         if isinstance(obj, dict):
             _warn_extra_keys(obj, cls)
-        return super().model_validate(
-            obj, strict=strict, from_attributes=from_attributes, context=context
-        )
+        return super().model_validate(obj, **kwargs)
