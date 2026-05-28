@@ -25,7 +25,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Import our metadata so autogenerate can diff the schema
-from api.db import metadata  # noqa: E402
+from api.tables import metadata  # noqa: E402
 
 target_metadata = metadata
 

@@ -14,8 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dev dependencies
-        run: pip install ruff mypy types-PyYAML types-redis pydantic pydantic-settings aiosqlite structlog prometheus-client
+      - name: Install dependencies
+        run: pip install -r api/requirements.txt ruff mypy types-PyYAML types-redis
       - name: Ruff lint
         run: ruff check api/ worker/
       - name: Mypy
@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install pytest pytest-asyncio pydantic pydantic-settings aiosqlite structlog PyYAML bcrypt
+        run: pip install -r api/requirements.txt pytest pytest-asyncio
       - name: Run unit tests
         run: pytest tests/unit/ -v
 
