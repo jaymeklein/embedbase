@@ -1,10 +1,190 @@
+"""Celery ingestion tasks: parse → chunk → embed → store, plus BM25 indexing."""
+
+from __future__ import annotations
+
+import json
+import os
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select, update
 
 from worker.celery_app import celery_app
+from worker.config import get_config
+from worker.db import SessionLocal, documents, job_records
+
+if TYPE_CHECKING:
+    from api.models.chunk import Chunk
 
 logger = structlog.get_logger()
 
+BM25_TTL_SECONDS = 60 * 60 * 24  # 24h — corpus is a rebuildable cache, not state.
+
+# Lazily-built singletons. Tests override these module globals (or pass deps
+# directly to ``_run_ingestion``) to avoid real Redis / Chroma / model loads.
+_embedder_singleton: Any = None
+_vector_store_singleton: Any = None
+_redis_singleton: Any = None
+
+
+def _embedder() -> Any:
+    global _embedder_singleton
+    if _embedder_singleton is None:
+        from api.adapters.embeddings import get_embedding_adapter
+
+        _embedder_singleton = get_embedding_adapter(get_config().embedding)
+    return _embedder_singleton
+
+
+def _vector_store() -> Any:
+    global _vector_store_singleton
+    if _vector_store_singleton is None:
+        from api.adapters.vector_store import get_vector_store
+
+        dims = _embedder().dimensions
+        _vector_store_singleton = get_vector_store(get_config().vector_store, dims)
+    return _vector_store_singleton
+
+
+def _redis() -> Any:
+    global _redis_singleton
+    if _redis_singleton is None:
+        import redis
+
+        url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+        _redis_singleton = redis.Redis.from_url(url, decode_responses=True)
+    return _redis_singleton
+
+
+# ---------------------------------------------------------------------------
+# Job-record helpers
+# ---------------------------------------------------------------------------
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _set_job_status(
+    session: Any, job_id: str, status: str, **fields: Any
+) -> None:
+    session.execute(
+        update(job_records)
+        .where(job_records.c.job_id == job_id)
+        .values(status=status, updated_at=_now(), **fields)
+    )
+
+
+# ---------------------------------------------------------------------------
+# BM25 write path
+# ---------------------------------------------------------------------------
+
+def _update_bm25_index(
+    redis_client: Any, collection_id: str, chunks: list[Chunk]
+) -> None:
+    """Append ``[document_id, text]`` pairs to the collection's BM25 corpus.
+
+    The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
+    under ``bm25:{collection_id}:corpus`` with a 24h TTL, and a monotonically
+    increasing ``:version`` key lets the search side invalidate its local cache.
+    """
+    if not chunks:
+        return
+    corpus_key = f"bm25:{collection_id}:corpus"
+    version_key = f"bm25:{collection_id}:version"
+
+    raw = redis_client.get(corpus_key)
+    corpus: list[list[str]] = json.loads(raw) if raw else []
+    corpus.extend([chunk.metadata.document_id, chunk.text] for chunk in chunks)
+
+    redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
+    redis_client.incr(version_key)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline core (dependency-injected so it is unit-testable without infra)
+# ---------------------------------------------------------------------------
+
+def _run_ingestion(
+    job_id: str,
+    file_path: str,
+    collection_id: str,
+    document_id: str,
+    file_type: str,
+    *,
+    session_factory: Any = None,
+    embedder: Any = None,
+    vector_store: Any = None,
+    redis_client: Any = None,
+    config: Any = None,
+) -> int:
+    """Run the full ingestion pipeline. Returns the number of chunks stored."""
+    from api.adapters.parsers import get_parser
+
+    session_factory = session_factory or SessionLocal
+    embedder = embedder or _embedder()
+    vector_store = vector_store or _vector_store()
+    redis_client = redis_client or _redis()
+    config = config or get_config()
+
+    # --- Idempotency guard ---------------------------------------------------
+    with session_factory() as session:
+        row = session.execute(
+            select(job_records.c.status).where(job_records.c.job_id == job_id)
+        ).fetchone()
+        if row is None:
+            logger.warning("ingest: unknown job", job_id=job_id)
+            return 0
+        if row.status in ("done", "processing"):
+            logger.info("ingest: already handled", job_id=job_id, status=row.status)
+            return 0
+        _set_job_status(session, job_id, "processing")
+        session.commit()
+
+    # --- Parse → chunk -------------------------------------------------------
+    parser = get_parser(file_type, config.chunking)
+    chunks = parser.parse(file_path, document_id)
+
+    # --- Embed (batched) → upsert -------------------------------------------
+    if chunks:
+        batch_size = config.embedding.batch_size
+        texts = [c.text for c in chunks]
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), batch_size):
+            vectors.extend(embedder.embed_batch(texts[start : start + batch_size]))
+        vector_store.upsert(collection_id, chunks, vectors)
+        _update_bm25_index(redis_client, collection_id, chunks)
+
+    # --- Mark done -----------------------------------------------------------
+    chunk_count = len(chunks)
+    with session_factory() as session:
+        session.execute(
+            update(documents)
+            .where(documents.c.id == document_id)
+            .values(chunk_count=chunk_count, updated_at=_now())
+        )
+        _set_job_status(session, job_id, "done", chunk_count=chunk_count)
+        session.commit()
+
+    logger.info(
+        "ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count
+    )
+    return chunk_count
+
+
+def _mark_failed(job_id: str, error: str) -> None:
+    try:
+        with SessionLocal() as session:
+            _set_job_status(session, job_id, "failed", error=error[:2000])
+            session.commit()
+    except Exception:  # pragma: no cover - failure-path best effort
+        logger.error("could not record job failure", job_id=job_id)
+
+
+# ---------------------------------------------------------------------------
+# Celery tasks
+# ---------------------------------------------------------------------------
 
 @celery_app.task(
     bind=True,
@@ -12,30 +192,38 @@ logger = structlog.get_logger()
     retry_backoff=True,
     retry_backoff_max=60,
 )
-def ingest_document(self, job_id: str, file_path: str, collection_id: str, file_type: str):
-    """
-    Parse → chunk → embed → store a single document.
-    Full implementation in Delivery 2.
-    """
-    # SoftTimeLimitExceeded MUST be the first except clause — it's a subclass of Exception
+def ingest_document(
+    self,
+    job_id: str,
+    file_path: str,
+    collection_id: str,
+    document_id: str,
+    file_type: str,
+):
+    """Parse → chunk → embed → store a single document."""
+    # SoftTimeLimitExceeded MUST be the first except — it subclasses Exception.
     try:
-        raise NotImplementedError("ingest_document implemented in Delivery 2")
+        return _run_ingestion(
+            job_id, file_path, collection_id, document_id, file_type
+        )
     except SoftTimeLimitExceeded:
         logger.warning("task exceeded time limit", job_id=job_id)
+        _mark_failed(job_id, "Ingestion exceeded time limit")
         raise  # plain raise — never self.retry()
     except Exception as exc:
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
+        _mark_failed(job_id, str(exc))
         raise self.retry(exc=exc) from exc
 
 
 @celery_app.task(bind=True)
 def delete_document(self, document_id: str, collection_id: str):
-    """
-    Remove vectors + BM25 corpus entries for a document.
-    Full implementation in Delivery 3.
+    """Remove vectors + BM25 corpus entries for a document.
+
+    Vector-store deletion is wired here; BM25 prune is completed in Delivery 3.
     """
     try:
-        raise NotImplementedError("delete_document implemented in Delivery 3")
+        _vector_store().delete_document(collection_id, document_id)
     except SoftTimeLimitExceeded:
         raise
     except Exception as exc:

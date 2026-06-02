@@ -44,4 +44,4 @@ jobs:
       - name: Build API image
         run: docker build -t embedbase/api:ci ./api
       - name: Build worker image
-        run: docker build -t embedbase/worker:ci ./worker
+        run: docker build -t embedbase/worker:ci -f worker/Dockerfile .
