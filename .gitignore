@@ -21,6 +21,9 @@ config.yaml.tmp
 store/
 data/
 
+# Local CI build cache (scripts/ci-local)
+.buildcache/
+
 # Node
 ui/node_modules/
 ui/dist/
