@@ -55,8 +55,8 @@ services:
 
   worker:
     build:
-      context: ./worker
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: worker/Dockerfile
     image: embedbase/worker:1.0.0
     environment:
       - VECTOR_STORE=${VECTOR_STORE:-chroma}
@@ -80,6 +80,7 @@ services:
       - ./data/store:/store
       - ./config.yaml:/app/config.yaml
       - ./worker:/app/worker   # bind-mount: watchfiles restarts celery on any .py change
+      - ./api:/app/api         # shared package imported by the worker pipeline
     depends_on:
       redis:
         condition: service_healthy
