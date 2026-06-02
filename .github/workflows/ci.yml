@@ -39,9 +39,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Copy config
         run: cp config.example.yaml config.yaml
       - name: Build API image
-        run: docker build -t embedbase/api:ci ./api
+        uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          tags: embedbase/api:ci
+          load: true
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
       - name: Build worker image
-        run: docker build -t embedbase/worker:ci -f worker/Dockerfile .
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          tags: embedbase/worker:ci
+          load: true
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,scope=worker,mode=max

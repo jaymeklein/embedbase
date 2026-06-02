@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from api.models.chunk import Chunk, ChunkMetadata
 from api.services.ingestion import count_tokens, sliding_window
@@ -61,7 +61,8 @@ class MarkdownParser:
         with open(file_path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
         md = mistune.create_markdown(renderer=None)
-        tokens = md(text)
+        # With renderer=None mistune returns the token list (not a rendered str).
+        tokens = cast(list[dict[str, Any]], md(text))
 
         sections = self._split_sections(tokens)
         filename = os.path.basename(file_path)

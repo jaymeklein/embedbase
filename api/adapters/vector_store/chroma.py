@@ -1,4 +1,5 @@
 import contextlib
+from typing import Any
 
 from api.models.chunk import Chunk
 from api.models.document import DocumentSummary
@@ -9,7 +10,7 @@ class ChromaAdapter:
     def __init__(self, host: str, port: int) -> None:
         self._host = host
         self._port = port
-        self._client = None
+        self._client: Any = None
 
     def _get_client(self):
         if self._client is None:
