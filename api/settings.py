@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Infrastructure
     redis_url: str = "redis://redis:6379/0"
     database_path: str = "/store/embedbase.db"
+    upload_dir: str = "/data"
     master_api_key: str
 
     # Vector store

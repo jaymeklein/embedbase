@@ -1,0 +1,143 @@
+"""Smoke tests — does the whole system assemble and boot?
+
+Fast, dependency-light checks: the app builds, OpenAPI generates, every router
+is wired, core endpoints answer, middleware runs, and the deployment artifacts
+(compose files, example config) parse.
+"""
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from api.main import create_app
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+# ---------------------------------------------------------------------------
+# App assembly
+# ---------------------------------------------------------------------------
+
+def test_app_builds_with_metadata():
+    app = create_app()
+    assert app.title == "EmbedBase"
+    assert app.version == "1.0.0"
+
+
+def test_openapi_schema_generates():
+    schema = create_app().openapi()
+    assert schema["info"]["title"] == "EmbedBase"
+    assert "paths" in schema and schema["paths"]
+
+
+def test_all_routers_are_wired():
+    paths = {route.path for route in create_app().routes}
+    expected = {
+        "/healthz",
+        "/metrics",
+        "/workspaces",
+        "/workspaces/{ws_id}",
+        "/workspaces/{ws_id}/collections",
+        "/workspaces/{ws_id}/collections/{col_id}",
+        "/workspaces/{ws_id}/collections/{col_id}/keys",
+        "/workspaces/{ws_id}/collections/{col_id}/documents",
+        "/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status",
+        "/documents",
+        "/search",
+        "/config",
+        "/mcp/sse",
+    }
+    missing = expected - paths
+    assert not missing, f"router paths missing: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Live endpoints (via the in-memory client fixture)
+# ---------------------------------------------------------------------------
+
+async def test_healthz_answers(client):
+    r = await client.get("/healthz")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ok"
+
+
+async def test_docs_endpoint_serves(client):
+    r = await client.get("/docs")
+    assert r.status_code == 200
+
+
+async def test_openapi_json_serves(client):
+    r = await client.get("/openapi.json")
+    assert r.status_code == 200
+    assert r.json()["info"]["title"] == "EmbedBase"
+
+
+async def test_request_id_middleware_sets_header(client):
+    r = await client.get("/healthz")
+    assert "x-request-id" in {k.lower() for k in r.headers}
+
+
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+def test_settings_load_and_derive():
+    from api.settings import settings
+
+    assert settings.master_api_key  # provided via env in conftest
+    assert settings.max_file_size_bytes == settings.max_file_size_mb * 1024 * 1024
+    assert settings.cors_origins_list  # non-empty list
+
+
+# ---------------------------------------------------------------------------
+# Deployment artifacts
+# ---------------------------------------------------------------------------
+
+def test_docker_compose_has_all_services():
+    compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
+    assert {"api", "worker", "redis", "chroma", "nginx"}.issubset(compose["services"])
+
+
+def test_compose_overrides_parse():
+    for name in ("docker-compose.postgres.yml", "docker-compose.qdrant.yml"):
+        data = yaml.safe_load((REPO / name).read_text())
+        assert "services" in data
+
+
+def test_config_example_is_valid():
+    from api.models.config import AppConfig
+
+    data = yaml.safe_load((REPO / "config.example.yaml").read_text())
+    cfg = AppConfig.model_validate(data)
+    assert cfg.embedding.provider
+
+
+# ---------------------------------------------------------------------------
+# Worker assembly
+# ---------------------------------------------------------------------------
+
+def test_worker_celery_configured():
+    from worker.celery_app import celery_app
+
+    conf = celery_app.conf
+    assert conf.task_acks_late is True
+    assert conf.worker_prefetch_multiplier == 1
+    assert conf.task_time_limit == 600
+    assert conf.task_soft_time_limit == 540
+
+
+def test_worker_tasks_registered():
+    import worker.tasks  # noqa: F401  (registers tasks)
+    from worker.celery_app import celery_app
+
+    assert "worker.tasks.ingest_document" in celery_app.tasks
+    assert "worker.tasks.delete_document" in celery_app.tasks
+
+
+@pytest.mark.skipif(
+    not (REPO / "docs" / "openapi.yaml").exists(),
+    reason="docs/openapi.yaml not present",
+)
+def test_static_openapi_yaml_parses():
+    yaml.safe_load((REPO / "docs" / "openapi.yaml").read_text())
