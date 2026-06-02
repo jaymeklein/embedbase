@@ -24,6 +24,35 @@ async def _noop_lifespan(app):
 
 
 @pytest.fixture
+async def db_session():
+    """A bare in-memory AsyncSession with the full schema created.
+
+    For unit-testing async DB code (e.g. the auth service) without spinning up
+    the whole ASGI app.
+    """
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    @sa_event.listens_for(engine.sync_engine, "connect")
+    def _fk_on(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as session:
+        yield session
+
+    await engine.dispose()
+
+
+@pytest.fixture
 async def client():
     """
     Provides an AsyncClient backed by a fresh in-memory SQLite database.

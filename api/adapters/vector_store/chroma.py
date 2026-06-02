@@ -87,5 +87,46 @@ class ChromaAdapter:
             client.delete_collection(name=collection_id)
 
     def list_documents(self, collection_id: str) -> list[DocumentSummary]:
-        # Full implementation in Delivery 2
-        return []
+        """Aggregate stored chunks into per-document summaries.
+
+        Timestamps are not tracked in the vector store; the authoritative
+        document listing (with created/updated times) comes from SQLite. This is
+        a convenience view over what is actually indexed.
+        """
+        from datetime import UTC, datetime
+
+        client = self._get_client()
+        try:
+            col = client.get_collection(name=collection_id)
+        except Exception:
+            return []
+
+        data = col.get(include=["metadatas"])
+        metas = data.get("metadatas") or []
+        agg: dict[str, dict] = {}
+        for meta in metas:
+            doc_id = (meta or {}).get("document_id")
+            if not doc_id:
+                continue
+            entry = agg.setdefault(
+                doc_id,
+                {
+                    "filename": meta.get("filename", ""),
+                    "file_type": meta.get("parser", ""),
+                    "count": 0,
+                },
+            )
+            entry["count"] += 1
+
+        now = datetime.now(UTC)
+        return [
+            DocumentSummary(
+                document_id=doc_id,
+                filename=entry["filename"],
+                file_type=entry["file_type"],
+                chunk_count=entry["count"],
+                created_at=now,
+                updated_at=now,
+            )
+            for doc_id, entry in agg.items()
+        ]
