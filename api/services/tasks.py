@@ -1,0 +1,45 @@
+"""Celery task producer for the API process.
+
+The API never imports the worker package — it dispatches by task *name* over the
+shared broker. This keeps the API image free of the heavy parser/embedding
+dependencies the worker carries.
+"""
+
+from __future__ import annotations
+
+from celery import Celery
+
+from api.settings import settings
+
+_producer = Celery(
+    "embedbase-producer",
+    broker=settings.redis_url,
+    backend=settings.redis_url.replace("/0", "/1"),
+)
+_producer.conf.update(
+    task_serializer="json",
+    result_serializer="json",
+    accept_content=["json"],
+)
+
+INGEST_TASK = "worker.tasks.ingest_document"
+DELETE_TASK = "worker.tasks.delete_document"
+
+
+def enqueue_ingest(
+    job_id: str,
+    file_path: str,
+    collection_id: str,
+    document_id: str,
+    file_type: str,
+) -> str | None:
+    result = _producer.send_task(
+        INGEST_TASK,
+        args=[job_id, file_path, collection_id, document_id, file_type],
+    )
+    return getattr(result, "id", None)
+
+
+def enqueue_delete(document_id: str, collection_id: str) -> str | None:
+    result = _producer.send_task(DELETE_TASK, args=[document_id, collection_id])
+    return getattr(result, "id", None)
