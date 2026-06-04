@@ -31,3 +31,6 @@ ui/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# AI assistant instructions (local only)
+CLAUDE.md
