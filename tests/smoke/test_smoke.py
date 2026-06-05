@@ -135,9 +135,13 @@ def test_worker_tasks_registered():
     assert "worker.tasks.delete_document" in celery_app.tasks
 
 
-@pytest.mark.skipif(
-    not (REPO / "docs" / "openapi.yaml").exists(),
-    reason="docs/openapi.yaml not present",
-)
 def test_static_openapi_yaml_parses():
-    yaml.safe_load((REPO / "docs" / "openapi.yaml").read_text())
+    """docs/openapi.yaml must exist and be valid YAML.
+
+    Re-generate with: python scripts/export_openapi.py
+    """
+    spec_path = REPO / "docs" / "openapi.yaml"
+    assert spec_path.exists(), "docs/openapi.yaml missing — run: python scripts/export_openapi.py"
+    schema = yaml.safe_load(spec_path.read_text())
+    assert "openapi" in schema
+    assert "paths" in schema

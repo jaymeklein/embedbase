@@ -32,7 +32,8 @@ class EmbeddingConfig(BaseModel):
 
 class ChromaConfig(BaseModel):
     host: str = "chroma"
-    port: int = 8001
+    port: int = 8000
+    auth_token: str = "embedbase-internal"
 
 
 class PgvectorConfig(BaseModel):

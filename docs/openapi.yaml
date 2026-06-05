@@ -1,0 +1,1614 @@
+openapi: 3.1.0
+info:
+  title: EmbedBase
+  description: Local-first document embedding system with REST and MCP APIs
+  version: 1.0.0
+paths:
+  /healthz:
+    get:
+      tags:
+      - system
+      summary: Healthz
+      operationId: healthz_healthz_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /metrics:
+    get:
+      tags:
+      - system
+      summary: Metrics
+      operationId: metrics_metrics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+  /workspaces:
+    post:
+      tags:
+      - workspaces
+      summary: Create Workspace
+      operationId: create_workspace_workspaces_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - workspaces
+      summary: List Workspaces
+      operationId: list_workspaces_workspaces_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}:
+    get:
+      tags:
+      - workspaces
+      summary: Get Workspace
+      operationId: get_workspace_workspaces__ws_id__get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - workspaces
+      summary: Update Workspace
+      operationId: update_workspace_workspaces__ws_id__patch
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - workspaces
+      summary: Delete Workspace
+      operationId: delete_workspace_workspaces__ws_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections:
+    post:
+      tags:
+      - collections
+      summary: Create Collection
+      operationId: create_collection_workspaces__ws_id__collections_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - collections
+      summary: List Collections
+      operationId: list_collections_workspaces__ws_id__collections_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}:
+    get:
+      tags:
+      - collections
+      summary: Get Collection
+      operationId: get_collection_workspaces__ws_id__collections__col_id__get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - collections
+      summary: Update Collection
+      operationId: update_collection_workspaces__ws_id__collections__col_id__patch
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - collections
+      summary: Delete Collection
+      operationId: delete_collection_workspaces__ws_id__collections__col_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/keys:
+    post:
+      tags:
+      - collections
+      summary: Create Api Key
+      operationId: create_api_key_workspaces__ws_id__collections__col_id__keys_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/APIKeyCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - collections
+      summary: List Api Keys
+      operationId: list_api_keys_workspaces__ws_id__collections__col_id__keys_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/keys/{key_id}:
+    delete:
+      tags:
+      - collections
+      summary: Revoke Api Key
+      operationId: revoke_api_key_workspaces__ws_id__collections__col_id__keys__key_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: key_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Key Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents:
+    post:
+      tags:
+      - documents
+      summary: Upload Document
+      operationId: upload_document_workspaces__ws_id__collections__col_id__documents_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_document_workspaces__ws_id__collections__col_id__documents_post'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - documents
+      summary: List Documents
+      operationId: list_documents_workspaces__ws_id__collections__col_id__documents_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status:
+    get:
+      tags:
+      - documents
+      summary: Get Document Status
+      operationId: get_document_status_workspaces__ws_id__collections__col_id__documents__doc_id__status_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}:
+    delete:
+      tags:
+      - documents
+      summary: Delete Document
+      operationId: delete_document_workspaces__ws_id__collections__col_id__documents__doc_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /documents:
+    post:
+      tags:
+      - documents
+      summary: Upload Document Flat
+      operationId: upload_document_flat_documents_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Body_upload_document_flat_documents_post'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /documents/{doc_id}:
+    delete:
+      tags:
+      - documents
+      summary: Delete Document Flat
+      operationId: delete_document_flat_documents__doc_id__delete
+      parameters:
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /search:
+    post:
+      tags:
+      - search
+      summary: Search
+      operationId: search_search_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config:
+    get:
+      tags:
+      - config
+      summary: Get Config
+      operationId: get_config_config_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+    put:
+      tags:
+      - config
+      summary: Update Config
+      operationId: update_config_config_put
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppConfig'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config/reload-status/{version_id}:
+    get:
+      tags:
+      - config
+      summary: Get Reload Status
+      operationId: get_reload_status_config_reload_status__version_id__get
+      parameters:
+      - name: version_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Version Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /mcp/sse:
+    get:
+      tags:
+      - mcp
+      summary: Mcp Sse
+      operationId: mcp_sse_mcp_sse_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+components:
+  schemas:
+    APIKeyCreate:
+      properties:
+        label:
+          type: string
+          title: Label
+          default: ''
+      type: object
+      title: APIKeyCreate
+    AppConfig:
+      properties:
+        embedding:
+          $ref: '#/components/schemas/EmbeddingConfig'
+          default:
+            provider: sentence_transformers
+            model: all-MiniLM-L6-v2
+            batch_size: 32
+            concurrency: 8
+        vector_store:
+          $ref: '#/components/schemas/VectorStoreConfig'
+          default:
+            backend: chroma
+            chroma:
+              auth_token: embedbase-internal
+              host: chroma
+              port: 8000
+            pgvector:
+              database: embedbase
+              host: postgres
+              index_min_rows: 100
+              password: ''
+              port: 5432
+              user: embedbase
+            qdrant:
+              host: qdrant
+              port: 6333
+        chunking:
+          $ref: '#/components/schemas/ChunkingConfig'
+          default:
+            sliding_window:
+              max_tokens: 512
+              overlap_tokens: 64
+            csv:
+              rows_per_chunk: 10
+            code:
+              fallback_window_lines: 50
+              max_symbol_tokens: 4096
+        search:
+          $ref: '#/components/schemas/SearchConfig'
+          default:
+            default_top_k: 5
+            max_top_k: 20
+            retrieval_fan_out: 4
+            max_fan_out: 10
+            hybrid_default_alpha: 0.7
+            bm25_cache_ttl: 60
+        mcp:
+          $ref: '#/components/schemas/MCPConfig'
+          default:
+            enabled: true
+            rate_limit_rpm: 60
+            max_results: 20
+        logging:
+          $ref: '#/components/schemas/LoggingConfig'
+          default:
+            level: info
+            format: json
+      type: object
+      title: AppConfig
+    Body_upload_document_flat_documents_post:
+      properties:
+        collection_id:
+          type: string
+          title: Collection Id
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+      type: object
+      required:
+      - collection_id
+      - file
+      title: Body_upload_document_flat_documents_post
+    Body_upload_document_workspaces__ws_id__collections__col_id__documents_post:
+      properties:
+        file:
+          type: string
+          contentMediaType: application/octet-stream
+          title: File
+      type: object
+      required:
+      - file
+      title: Body_upload_document_workspaces__ws_id__collections__col_id__documents_post
+    ChromaConfig:
+      properties:
+        host:
+          type: string
+          title: Host
+          default: chroma
+        port:
+          type: integer
+          title: Port
+          default: 8000
+        auth_token:
+          type: string
+          title: Auth Token
+          default: embedbase-internal
+      type: object
+      title: ChromaConfig
+    ChunkingConfig:
+      properties:
+        sliding_window:
+          $ref: '#/components/schemas/SlidingWindowConfig'
+          default:
+            max_tokens: 512
+            overlap_tokens: 64
+        csv:
+          $ref: '#/components/schemas/CsvChunkConfig'
+          default:
+            rows_per_chunk: 10
+        code:
+          $ref: '#/components/schemas/CodeChunkConfig'
+          default:
+            max_symbol_tokens: 4096
+            fallback_window_lines: 50
+      type: object
+      title: ChunkingConfig
+    CodeChunkConfig:
+      properties:
+        max_symbol_tokens:
+          type: integer
+          title: Max Symbol Tokens
+          default: 4096
+        fallback_window_lines:
+          type: integer
+          title: Fallback Window Lines
+          default: 50
+      type: object
+      title: CodeChunkConfig
+    CollectionCreate:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+          default: ''
+        color:
+          type: string
+          title: Color
+          default: '#8b5cf6'
+        icon:
+          type: string
+          title: Icon
+          default: book
+      type: object
+      required:
+      - name
+      title: CollectionCreate
+    CollectionStat:
+      properties:
+        name:
+          type: string
+          title: Name
+        workspace_name:
+          type: string
+          title: Workspace Name
+        retrieved_before_filter:
+          type: integer
+          title: Retrieved Before Filter
+          default: 0
+        returned_after_filter:
+          type: integer
+          title: Returned After Filter
+          default: 0
+        contributed_to_top_k:
+          type: integer
+          title: Contributed To Top K
+          default: 0
+      type: object
+      required:
+      - name
+      - workspace_name
+      title: CollectionStat
+    CollectionUpdate:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        color:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Color
+        icon:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Icon
+      type: object
+      title: CollectionUpdate
+    CsvChunkConfig:
+      properties:
+        rows_per_chunk:
+          type: integer
+          title: Rows Per Chunk
+          default: 10
+      type: object
+      title: CsvChunkConfig
+    EmbeddingConfig:
+      properties:
+        provider:
+          type: string
+          title: Provider
+          default: sentence_transformers
+        model:
+          type: string
+          title: Model
+          default: all-MiniLM-L6-v2
+        batch_size:
+          type: integer
+          title: Batch Size
+          default: 32
+        base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
+        concurrency:
+          type: integer
+          title: Concurrency
+          default: 8
+      type: object
+      title: EmbeddingConfig
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    LoggingConfig:
+      properties:
+        level:
+          type: string
+          title: Level
+          default: info
+        format:
+          type: string
+          title: Format
+          default: json
+      type: object
+      title: LoggingConfig
+    MCPConfig:
+      properties:
+        enabled:
+          type: boolean
+          title: Enabled
+          default: true
+        rate_limit_rpm:
+          type: integer
+          title: Rate Limit Rpm
+          default: 60
+        max_results:
+          type: integer
+          title: Max Results
+          default: 20
+      type: object
+      title: MCPConfig
+    PgvectorConfig:
+      properties:
+        host:
+          type: string
+          title: Host
+          default: postgres
+        port:
+          type: integer
+          title: Port
+          default: 5432
+        database:
+          type: string
+          title: Database
+          default: embedbase
+        user:
+          type: string
+          title: User
+          default: embedbase
+        password:
+          type: string
+          title: Password
+          default: ''
+        index_min_rows:
+          type: integer
+          title: Index Min Rows
+          default: 100
+      type: object
+      title: PgvectorConfig
+    QdrantConfig:
+      properties:
+        host:
+          type: string
+          title: Host
+          default: qdrant
+        port:
+          type: integer
+          title: Port
+          default: 6333
+      type: object
+      title: QdrantConfig
+    SearchConfig:
+      properties:
+        default_top_k:
+          type: integer
+          title: Default Top K
+          default: 5
+        max_top_k:
+          type: integer
+          title: Max Top K
+          default: 20
+        retrieval_fan_out:
+          type: integer
+          title: Retrieval Fan Out
+          default: 4
+        max_fan_out:
+          type: integer
+          title: Max Fan Out
+          default: 10
+        hybrid_default_alpha:
+          type: number
+          title: Hybrid Default Alpha
+          default: 0.7
+        bm25_cache_ttl:
+          type: integer
+          title: Bm25 Cache Ttl
+          default: 60
+      type: object
+      title: SearchConfig
+    SearchFilters:
+      properties:
+        language:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Language
+        filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filename
+        tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Tags
+      type: object
+      title: SearchFilters
+    SearchRequest:
+      properties:
+        query:
+          type: string
+          title: Query
+        collection_ids:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Collection Ids
+        top_k:
+          type: integer
+          maximum: 20.0
+          minimum: 1.0
+          title: Top K
+          default: 5
+        hybrid:
+          type: boolean
+          title: Hybrid
+          default: true
+        hybrid_alpha:
+          type: number
+          maximum: 1.0
+          minimum: 0.0
+          title: Hybrid Alpha
+          default: 0.7
+        fan_out:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Fan Out
+        filters:
+          anyOf:
+          - $ref: '#/components/schemas/SearchFilters'
+          - type: 'null'
+      type: object
+      required:
+      - query
+      - collection_ids
+      title: SearchRequest
+    SearchResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/SearchResult'
+          type: array
+          title: Results
+        collection_stats:
+          additionalProperties:
+            $ref: '#/components/schemas/CollectionStat'
+          type: object
+          title: Collection Stats
+          default: {}
+        query_embedding_ms:
+          type: integer
+          title: Query Embedding Ms
+          default: 0
+        search_ms:
+          type: integer
+          title: Search Ms
+          default: 0
+        total_ms:
+          type: integer
+          title: Total Ms
+          default: 0
+        search_mode:
+          type: string
+          title: Search Mode
+          default: hybrid
+        under_delivered:
+          type: boolean
+          title: Under Delivered
+          default: false
+      type: object
+      required:
+      - results
+      title: SearchResponse
+    SearchResult:
+      properties:
+        chunk_id:
+          type: string
+          title: Chunk Id
+        text:
+          type: string
+          title: Text
+        score:
+          type: number
+          title: Score
+        rank:
+          type: integer
+          title: Rank
+          default: 0
+        source:
+          anyOf:
+          - $ref: '#/components/schemas/SourceProvenance'
+          - type: 'null'
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+          default: {}
+      type: object
+      required:
+      - chunk_id
+      - text
+      - score
+      title: SearchResult
+    SlidingWindowConfig:
+      properties:
+        max_tokens:
+          type: integer
+          title: Max Tokens
+          default: 512
+        overlap_tokens:
+          type: integer
+          title: Overlap Tokens
+          default: 64
+      type: object
+      title: SlidingWindowConfig
+    SourceProvenance:
+      properties:
+        collection_id:
+          type: string
+          title: Collection Id
+        collection_name:
+          type: string
+          title: Collection Name
+        workspace_id:
+          type: string
+          title: Workspace Id
+        workspace_name:
+          type: string
+          title: Workspace Name
+        document_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Document Id
+        filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filename
+        page_number:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Page Number
+      type: object
+      required:
+      - collection_id
+      - collection_name
+      - workspace_id
+      - workspace_name
+      title: SourceProvenance
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+        input:
+          title: Input
+        ctx:
+          type: object
+          title: Context
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+    VectorStoreConfig:
+      properties:
+        backend:
+          type: string
+          title: Backend
+          default: chroma
+        chroma:
+          $ref: '#/components/schemas/ChromaConfig'
+          default:
+            host: chroma
+            port: 8000
+            auth_token: embedbase-internal
+        pgvector:
+          $ref: '#/components/schemas/PgvectorConfig'
+          default:
+            host: postgres
+            port: 5432
+            database: embedbase
+            user: embedbase
+            password: ''
+            index_min_rows: 100
+        qdrant:
+          $ref: '#/components/schemas/QdrantConfig'
+          default:
+            host: qdrant
+            port: 6333
+      type: object
+      title: VectorStoreConfig
+    WorkspaceCreate:
+      properties:
+        name:
+          type: string
+          title: Name
+        description:
+          type: string
+          title: Description
+          default: ''
+        color:
+          type: string
+          title: Color
+          default: '#6366f1'
+        icon:
+          type: string
+          title: Icon
+          default: folder
+      type: object
+      required:
+      - name
+      title: WorkspaceCreate
+    WorkspaceUpdate:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        color:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Color
+        icon:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Icon
+      type: object
+      title: WorkspaceUpdate

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Table, Text
+from sqlalchemy import Column, DateTime, Integer, String, Table, Text
 
 from api.tables.metadata import metadata
 
@@ -14,6 +14,7 @@ job_records = Table(
     Column("chunk_count", Integer, nullable=True),
     Column("error", Text, nullable=True),
     Column("celery_task_id", String, nullable=True),
+    Column("processing_started_at", DateTime, nullable=True),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
 )
