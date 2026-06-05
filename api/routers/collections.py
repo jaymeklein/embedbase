@@ -14,8 +14,13 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import workspaces as ws_t
 from api.dependencies import get_db
+from api.services.auth import require_master
 
-router = APIRouter(prefix="/workspaces/{ws_id}/collections", tags=["collections"])
+router = APIRouter(
+    prefix="/workspaces/{ws_id}/collections",
+    tags=["collections"],
+    dependencies=[Depends(require_master)],
+)
 
 
 class CollectionCreate(BaseModel):

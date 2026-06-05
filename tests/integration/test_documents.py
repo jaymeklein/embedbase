@@ -22,9 +22,9 @@ def _isolate_io(monkeypatch, tmp_path):
 
 
 async def _setup(client):
-    ws_id = (await client.post("/workspaces", json={"name": "WS"})).json()["id"]
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=AUTH)).json()["id"]
     col_id = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"})
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=AUTH)
     ).json()["id"]
     return ws_id, col_id
 
@@ -181,7 +181,7 @@ async def test_collection_key_can_upload_to_own_collection(client):
     ws_id, col_id = await _setup(client)
     raw = (
         await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}
+            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}, headers=AUTH
         )
     ).json()["raw_key"]
 
@@ -196,11 +196,13 @@ async def test_collection_key_can_upload_to_own_collection(client):
 async def test_collection_key_cannot_upload_to_other_collection(client):
     ws_id, col_id = await _setup(client)
     other = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "Other"})
+        await client.post(
+            f"/workspaces/{ws_id}/collections", json={"name": "Other"}, headers=AUTH
+        )
     ).json()["id"]
     raw = (
         await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}
+            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}, headers=AUTH
         )
     ).json()["raw_key"]
 

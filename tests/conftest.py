@@ -52,6 +52,16 @@ async def db_session():
     await engine.dispose()
 
 
+MASTER_KEY = os.environ.get("MASTER_API_KEY", "test-master-key-for-testing-only")
+
+
+@pytest.fixture
+def master_client(client):
+    """AsyncClient pre-configured with the master API key header."""
+    client.headers.update({"Authorization": f"Bearer {MASTER_KEY}"})
+    return client
+
+
 @pytest.fixture
 async def client():
     """
