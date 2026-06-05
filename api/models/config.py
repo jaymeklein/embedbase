@@ -3,6 +3,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from api.constants import CHROMA_PORT, POSTGRES_PORT, QDRANT_PORT
+
 
 def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: str = "") -> None:
     known = set(model_cls.model_fields)
@@ -32,13 +34,13 @@ class EmbeddingConfig(BaseModel):
 
 class ChromaConfig(BaseModel):
     host: str = "chroma"
-    port: int = 8000
+    port: int = CHROMA_PORT
     auth_token: str = "embedbase-internal"
 
 
 class PgvectorConfig(BaseModel):
     host: str = "postgres"
-    port: int = 5432
+    port: int = POSTGRES_PORT
     database: str = "embedbase"
     user: str = "embedbase"
     password: str = ""
@@ -47,7 +49,7 @@ class PgvectorConfig(BaseModel):
 
 class QdrantConfig(BaseModel):
     host: str = "qdrant"
-    port: int = 6333
+    port: int = QDRANT_PORT
 
 
 class VectorStoreConfig(BaseModel):

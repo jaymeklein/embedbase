@@ -11,6 +11,7 @@ import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import select, update
 
+from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import SessionLocal, documents, job_records
@@ -55,7 +56,7 @@ def _redis() -> Any:
     if _redis_singleton is None:
         import redis
 
-        url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+        url = os.environ.get("REDIS_URL", _REDIS_URL_DEFAULT)
         _redis_singleton = redis.Redis.from_url(url, decode_responses=True)
     return _redis_singleton
 
