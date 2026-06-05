@@ -121,3 +121,20 @@ async def require_auth(
     """
     raw_key = _extract_key(authorization, x_api_key)
     return await validate_api_key(raw_key, db)
+
+
+async def require_master(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    db: AsyncSession = Depends(get_db),
+) -> Principal:
+    """FastAPI dependency: require the master key (raises 403 for collection keys).
+
+    Used as a router-level dependency on management routers so no endpoint can be
+    added later without authentication.
+    """
+    raw_key = _extract_key(authorization, x_api_key)
+    principal = await validate_api_key(raw_key, db)
+    if not principal.is_master:
+        raise HTTPException(403, "Master API key required")
+    return principal
