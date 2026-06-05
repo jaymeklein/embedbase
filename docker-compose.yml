@@ -18,9 +18,9 @@ services:
       - VECTOR_STORE=${VECTOR_STORE:-chroma}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
-      - REDIS_URL=redis://redis:6379/0
-      - CHROMA_HOST=chroma
-      - CHROMA_PORT=8000
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CHROMA_HOST=${CHROMA_HOST:-chroma}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
       - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
       - DATABASE_PATH=/store/embedbase.db
       - MASTER_API_KEY=${MASTER_API_KEY}
@@ -40,7 +40,7 @@ services:
       - ./config.yaml:/app/config.yaml
       - ./api:/app/api   # bind-mount: edits on host are visible instantly; --reload picks them up
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -62,9 +62,9 @@ services:
       - VECTOR_STORE=${VECTOR_STORE:-chroma}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
-      - REDIS_URL=redis://redis:6379/0
-      - CHROMA_HOST=chroma
-      - CHROMA_PORT=8000
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CHROMA_HOST=${CHROMA_HOST:-chroma}
+      - CHROMA_PORT=${CHROMA_PORT:-8000}
       - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
       - DATABASE_PATH=/store/embedbase.db
       - MASTER_API_KEY=${MASTER_API_KEY}
@@ -119,7 +119,7 @@ services:
       context: ./ui
       dockerfile: Dockerfile
     ports:
-      - "3000:80"
+      - "${UI_PORT:-3000}:80"
     depends_on:
       - api
     networks: [embedbase_net]
