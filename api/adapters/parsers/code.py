@@ -57,31 +57,34 @@ def _classify(node_type: str) -> str:
     return "function"
 
 
+def _build_language_loaders() -> dict[str, Any]:
+    """Return lazy loader callables keyed by language name.
+
+    Imports are deferred inside lambdas so unused parsers never load at startup.
+    TypeScript and TSX resolve their grammar via getattr because
+    language_typescript / language_tsx aren't in the package's type stubs.
+    """
+    return {
+        "python": lambda: __import__("tree_sitter_python").language(),
+        "javascript": lambda: __import__("tree_sitter_javascript").language(),
+        "typescript": lambda: __import__("tree_sitter_typescript").language_typescript(),
+        "tsx": lambda: __import__("tree_sitter_typescript").language_tsx(),
+        "go": lambda: __import__("tree_sitter_go").language(),
+        "rust": lambda: __import__("tree_sitter_rust").language(),
+        "java": lambda: __import__("tree_sitter_java").language(),
+    }
+
+
+_LANGUAGE_LOADERS: dict[str, Any] = _build_language_loaders()
+
+
 def _load_language(lang: str) -> Any:
     from tree_sitter import Language
 
-    if lang == "python":
-        import tree_sitter_python as ts_python
-        return Language(ts_python.language())
-    if lang == "javascript":
-        import tree_sitter_javascript as ts_javascript
-        return Language(ts_javascript.language())
-    if lang in ("typescript", "tsx"):
-        import tree_sitter_typescript as ts_typescript
-        # language_typescript / language_tsx aren't in the package's type stubs,
-        # so resolve dynamically (also avoids ruff B009 on a literal getattr).
-        loader = getattr(ts_typescript, f"language_{lang}")
-        return Language(loader())
-    if lang == "go":
-        import tree_sitter_go as ts_go
-        return Language(ts_go.language())
-    if lang == "rust":
-        import tree_sitter_rust as ts_rust
-        return Language(ts_rust.language())
-    if lang == "java":
-        import tree_sitter_java as ts_java
-        return Language(ts_java.language())
-    raise ValueError(f"Unsupported code language: {lang!r}")
+    loader = _LANGUAGE_LOADERS.get(lang)
+    if loader is None:
+        raise ValueError(f"Unsupported code language: {lang!r}")
+    return Language(loader())
 
 
 class CodeParser:

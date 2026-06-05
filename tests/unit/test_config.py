@@ -2,6 +2,7 @@
 
 import warnings
 
+from api.constants import CHROMA_PORT
 from api.models.config import AppConfig
 
 
@@ -11,7 +12,7 @@ def test_defaults_are_populated():
     assert cfg.embedding.model == "all-MiniLM-L6-v2"
     assert cfg.embedding.batch_size == 32
     assert cfg.vector_store.backend == "chroma"
-    assert cfg.vector_store.chroma.port == 8000
+    assert cfg.vector_store.chroma.port == CHROMA_PORT
     assert cfg.chunking.sliding_window.max_tokens == 512
     assert cfg.chunking.sliding_window.overlap_tokens == 64
     assert cfg.chunking.csv.rows_per_chunk == 10

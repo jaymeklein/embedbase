@@ -1,11 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from api.constants import CHROMA_PORT, POSTGRES_PORT, QDRANT_PORT, REDIS_URL
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Infrastructure
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = REDIS_URL
     database_path: str = "/store/embedbase.db"
     upload_dir: str = "/data"
     master_api_key: str
@@ -13,15 +15,15 @@ class Settings(BaseSettings):
     # Vector store
     vector_store: str = "chroma"
     chroma_host: str = "chroma"
-    chroma_port: int = 8000
+    chroma_port: int = CHROMA_PORT
     chroma_auth_token: str = "embedbase-internal"
     postgres_host: str = "postgres"
-    postgres_port: int = 5432
+    postgres_port: int = POSTGRES_PORT
     postgres_db: str = "embedbase"
     postgres_user: str = "embedbase"
     postgres_password: str = ""
     qdrant_host: str = "qdrant"
-    qdrant_port: int = 6333
+    qdrant_port: int = QDRANT_PORT
 
     # Embedding
     embedding_provider: str = "sentence_transformers"

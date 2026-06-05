@@ -1,12 +1,7 @@
-import secrets
 from datetime import UTC, datetime
-from uuid import uuid4
 
-import bcrypt
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import delete, func, insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import api_keys as keys_t
@@ -14,6 +9,8 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import workspaces as ws_t
 from api.dependencies import get_db
+from api.schemas.collections import APIKeyCreate, CollectionCreate, CollectionUpdate
+from api.services import collections as collection_svc
 from api.services.auth import require_master
 
 router = APIRouter(
@@ -21,24 +18,6 @@ router = APIRouter(
     tags=["collections"],
     dependencies=[Depends(require_master)],
 )
-
-
-class CollectionCreate(BaseModel):
-    name: str
-    description: str = ""
-    color: str = "#8b5cf6"
-    icon: str = "book"
-
-
-class CollectionUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    color: str | None = None
-    icon: str | None = None
-
-
-class APIKeyCreate(BaseModel):
-    label: str = ""
 
 
 async def _require_workspace(ws_id: str, db: AsyncSession) -> None:
@@ -54,41 +33,14 @@ async def create_collection(
     ws_id: str, body: CollectionCreate, db: AsyncSession = Depends(get_db)
 ):
     await _require_workspace(ws_id, db)
-    col_id = f"col_{uuid4().hex[:12]}"
-    now = datetime.now(UTC).isoformat()
-    try:
-        await db.execute(
-            insert(col_t).values(
-                id=col_id,
-                workspace_id=ws_id,
-                name=body.name,
-                description=body.description,
-                color=body.color,
-                icon=body.icon,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await db.commit()
-    except IntegrityError:
-        # UNIQUE(workspace_id, name) violated
-        await db.rollback()
-        raise HTTPException(
-            409,
-            f"Collection {body.name!r} already exists in this workspace",
-        ) from None
-    return {
-        "id": col_id,
-        "workspace_id": ws_id,
-        "name": body.name,
-        "description": body.description,
-        "color": body.color,
-        "icon": body.icon,
-        "created_at": now,
-        "updated_at": now,
-        "document_count": 0,
-        "chunk_count": 0,
-    }
+    return await collection_svc.create_collection(
+        workspace_id=ws_id,
+        name=body.name,
+        description=body.description,
+        color=body.color,
+        icon=body.icon,
+        db=db,
+    )
 
 
 @router.get("")
@@ -199,33 +151,11 @@ async def create_api_key(
     ).fetchone()
     if not exists:
         raise HTTPException(404, f"Collection {col_id!r} not found")
-
-    raw_key = "eb_" + secrets.token_urlsafe(32)
-    key_prefix = raw_key[3:11]  # 8 chars after "eb_" — stored for fast prefix lookup
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=12)).decode()
-    key_id = uuid4().hex
-    now = datetime.now(UTC).isoformat()
-
-    await db.execute(
-        insert(keys_t).values(
-            id=key_id,
-            collection_id=col_id,
-            key_prefix=key_prefix,
-            key_hash=key_hash,
-            label=body.label,
-            created_at=now,
-        )
+    return await collection_svc.mint_api_key(
+        collection_id=col_id,
+        label=body.label,
+        db=db,
     )
-    await db.commit()
-
-    return {
-        "id": key_id,
-        "collection_id": col_id,
-        "key_prefix": key_prefix,
-        "label": body.label,
-        "created_at": now,
-        "raw_key": raw_key,  # shown ONCE — never retrievable again
-    }
 
 
 @router.get("/{col_id}/keys")
