@@ -2,7 +2,9 @@ import os
 
 from celery import Celery
 
-redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
+from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
+
+redis_url = os.environ.get("REDIS_URL", _REDIS_URL_DEFAULT)
 result_backend = redis_url.replace("/0", "/1")
 
 celery_app = Celery(
