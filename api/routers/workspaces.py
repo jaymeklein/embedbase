@@ -1,14 +1,14 @@
 from datetime import UTC, datetime
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import collections as col_t
 from api.db import workspaces as ws_t
 from api.dependencies import get_db
+from api.schemas.workspaces import WorkspaceCreate, WorkspaceUpdate
+from api.services import workspaces as workspace_svc
 from api.services.auth import require_master
 
 router = APIRouter(
@@ -18,50 +18,17 @@ router = APIRouter(
 )
 
 
-class WorkspaceCreate(BaseModel):
-    name: str
-    description: str = ""
-    color: str = "#6366f1"
-    icon: str = "folder"
-
-
-class WorkspaceUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    color: str | None = None
-    icon: str | None = None
-
-
 @router.post("", status_code=201)
 async def create_workspace(
     body: WorkspaceCreate, db: AsyncSession = Depends(get_db)
 ):
-    ws_id = f"ws_{uuid4().hex[:12]}"
-    now = datetime.now(UTC).isoformat()
-    await db.execute(
-        insert(ws_t).values(
-            id=ws_id,
-            name=body.name,
-            description=body.description,
-            color=body.color,
-            icon=body.icon,
-            created_at=now,
-            updated_at=now,
-        )
+    return await workspace_svc.create_workspace(
+        name=body.name,
+        description=body.description,
+        color=body.color,
+        icon=body.icon,
+        db=db,
     )
-    await db.commit()
-    return {
-        "id": ws_id,
-        "name": body.name,
-        "description": body.description,
-        "color": body.color,
-        "icon": body.icon,
-        "created_at": now,
-        "updated_at": now,
-        "collection_count": 0,
-        "document_count": 0,
-        "chunk_count": 0,
-    }
 
 
 @router.get("")
