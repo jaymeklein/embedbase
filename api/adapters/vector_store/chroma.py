@@ -7,9 +7,10 @@ from api.models.search import SearchResult
 
 
 class ChromaAdapter:
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, auth_token: str = "embedbase-internal") -> None:
         self._host = host
         self._port = port
+        self._auth_token = auth_token
         self._client: Any = None
 
     def _get_client(self):
@@ -17,13 +18,14 @@ class ChromaAdapter:
             import chromadb
             from chromadb.config import Settings
 
-            from api.settings import settings as app_settings
+            # verified against chromadb==0.5.3 via github.com/chroma-core/chroma/blob/0.5.3/chromadb/config.py
             self._client = chromadb.HttpClient(
                 host=self._host,
                 port=self._port,
                 settings=Settings(
-                    chroma_client_auth_provider="chromadb.auth.token.TokenAuthClientProvider",
-                    chroma_client_auth_credentials=app_settings.chroma_auth_token,
+                    chroma_client_auth_provider="chromadb.auth.token_authn.TokenAuthClientProvider",
+                    chroma_client_auth_credentials=self._auth_token,
+                    chroma_auth_token_transport_header="Authorization",
                 ),
             )
         return self._client

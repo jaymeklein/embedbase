@@ -48,8 +48,6 @@ async def lifespan(app: FastAPI):
     logger.info("database migrations complete")
 
     # 3. Resolve and warm up embedding adapter
-    # NOTE: adapter deps (sentence-transformers, chromadb) installed in Delivery 2.
-    # Gracefully skip if not yet available so the D1 skeleton starts cleanly.
     try:
         from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
         embedding_adapter = resolve_embedding(app_config.embedding)
@@ -57,8 +55,8 @@ async def lifespan(app: FastAPI):
         set_embedding_adapter(embedding_adapter)
         logger.info("embedding adapter ready", provider=app_config.embedding.provider,
                     model=app_config.embedding.model, dimensions=embedding_adapter.dimensions)
-    except (ImportError, Exception) as exc:
-        logger.warning("embedding adapter unavailable (Delivery 2)", error=str(exc))
+    except Exception as exc:
+        logger.error("embedding adapter unavailable", error=str(exc))
 
     # 4. Resolve vector store adapter
     try:
@@ -69,8 +67,8 @@ async def lifespan(app: FastAPI):
         vector_store = resolve_store(app_config.vector_store, dims)
         set_vector_store(vector_store)
         logger.info("vector store ready", backend=app_config.vector_store.backend)
-    except (ImportError, Exception) as exc:
-        logger.warning("vector store unavailable (Delivery 2)", error=str(exc))
+    except Exception as exc:
+        logger.error("vector store unavailable", error=str(exc))
 
     logger.info("EmbedBase API ready")
     yield

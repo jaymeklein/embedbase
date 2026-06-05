@@ -4,7 +4,7 @@ from api.models.chunk import Chunk  # noqa: F401  — satisfies Protocol type ch
 class SentenceTransformersAdapter:
     def __init__(self, model_name: str) -> None:
         from sentence_transformers import SentenceTransformer
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(model_name, local_files_only=True)
 
     def embed(self, text: str) -> list[float]:
         return self._model.encode(text, show_progress_bar=False).tolist()

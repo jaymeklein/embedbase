@@ -20,7 +20,7 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_HOST=chroma
-      - CHROMA_PORT=8001
+      - CHROMA_PORT=8000
       - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
       - DATABASE_PATH=/store/embedbase.db
       - MASTER_API_KEY=${MASTER_API_KEY}
@@ -64,9 +64,10 @@ services:
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_HOST=chroma
-      - CHROMA_PORT=8001
+      - CHROMA_PORT=8000
       - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
       - DATABASE_PATH=/store/embedbase.db
+      - MASTER_API_KEY=${MASTER_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - CELERY_CONCURRENCY=${CELERY_CONCURRENCY:-2}
@@ -103,8 +104,9 @@ services:
     volumes:
       - embedbase_data:/chroma/chroma
     environment:
-      - CHROMA_SERVER_AUTH_CREDENTIALS=${CHROMA_AUTH_TOKEN:-embedbase-internal}
-      - CHROMA_SERVER_AUTH_PROVIDER=chromadb.auth.token.TokenAuthServerProvider
+      - CHROMA_SERVER_AUTHN_CREDENTIALS=${CHROMA_AUTH_TOKEN:-embedbase-internal}
+      - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.token_authn.TokenAuthenticationServerProvider
+      - CHROMA_AUTH_TOKEN_TRANSPORT_HEADER=Authorization
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
       interval: 10s
