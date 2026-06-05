@@ -13,6 +13,7 @@ def _chroma(config: "VectorStoreConfig", embedding_dimensions: int) -> VectorSto
     return ChromaAdapter(
         host=config.chroma.host,
         port=config.chroma.port,
+        auth_token=config.chroma.auth_token,
     )
 
 
