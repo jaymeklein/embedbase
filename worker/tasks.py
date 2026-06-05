@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 BM25_TTL_SECONDS = 60 * 60 * 24  # 24h — corpus is a rebuildable cache, not state.
+# task_time_limit in celery_app.py is 600s; allow a margin before reclaiming.
+STALE_PROCESSING_SECONDS = 660
 
 # Lazily-built singletons. Tests override these module globals (or pass deps
 # directly to ``_run_ingestion``) to avoid real Redis / Chroma / model loads.
@@ -131,15 +133,26 @@ def _run_ingestion(
     # --- Idempotency guard ---------------------------------------------------
     with session_factory() as session:
         row = session.execute(
-            select(job_records.c.status).where(job_records.c.job_id == job_id)
+            select(
+                job_records.c.status,
+                job_records.c.processing_started_at,
+            ).where(job_records.c.job_id == job_id)
         ).fetchone()
         if row is None:
             logger.warning("ingest: unknown job", job_id=job_id)
             return 0
-        if row.status in ("done", "processing"):
-            logger.info("ingest: already handled", job_id=job_id, status=row.status)
+        if row.status == "done":
+            logger.info("ingest: already done", job_id=job_id)
             return 0
-        _set_job_status(session, job_id, "processing")
+        if row.status == "processing":
+            started = row.processing_started_at
+            now = datetime.now(UTC).replace(tzinfo=None)
+            elapsed = (now - started).total_seconds() if started else 0
+            if started is None or elapsed < STALE_PROCESSING_SECONDS:
+                logger.info("ingest: already handling", job_id=job_id)
+                return 0
+            logger.warning("ingest: reclaiming stale job", job_id=job_id, elapsed_s=int(elapsed))
+        _set_job_status(session, job_id, "processing", processing_started_at=datetime.now(UTC).replace(tzinfo=None))
         session.commit()
 
     # --- Parse → chunk -------------------------------------------------------
