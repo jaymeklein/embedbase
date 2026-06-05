@@ -17,9 +17,9 @@ def _isolate_io(monkeypatch, tmp_path):
 
 
 async def _setup(client):
-    ws_id = (await client.post("/workspaces", json={"name": "WS"})).json()["id"]
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=AUTH)).json()["id"]
     col_id = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"})
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=AUTH)
     ).json()["id"]
     return ws_id, col_id
 
@@ -86,10 +86,10 @@ async def test_deleting_collection_with_documents_cascades(client):
     )
 
     # Collection delete must succeed even with documents present (FK CASCADE).
-    r = await client.delete(f"/workspaces/{ws_id}/collections/{col_id}")
+    r = await client.delete(f"/workspaces/{ws_id}/collections/{col_id}", headers=AUTH)
     assert r.status_code == 204
 
     # Collection (and its documents) are gone.
     assert (
-        await client.get(f"/workspaces/{ws_id}/collections/{col_id}")
+        await client.get(f"/workspaces/{ws_id}/collections/{col_id}", headers=AUTH)
     ).status_code == 404

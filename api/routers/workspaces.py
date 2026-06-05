@@ -9,8 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.db import collections as col_t
 from api.db import workspaces as ws_t
 from api.dependencies import get_db
+from api.services.auth import require_master
 
-router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+router = APIRouter(
+    prefix="/workspaces",
+    tags=["workspaces"],
+    dependencies=[Depends(require_master)],
+)
 
 
 class WorkspaceCreate(BaseModel):
