@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Vector store
     vector_store: str = "chroma"
     chroma_host: str = "chroma"
-    chroma_port: int = 8001
+    chroma_port: int = 8000
     chroma_auth_token: str = "embedbase-internal"
     postgres_host: str = "postgres"
     postgres_port: int = 5432

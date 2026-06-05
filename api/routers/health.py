@@ -2,7 +2,7 @@ import time
 
 from fastapi import APIRouter
 
-from api.dependencies import get_embedding_adapter
+from api.dependencies import get_embedding_adapter, get_vector_store
 from api.settings import settings
 
 router = APIRouter(tags=["system"])
@@ -18,7 +18,7 @@ async def healthz():
         "service": "api",
         "version": "1.0.0",
         "vector_store": settings.vector_store,
-        "vector_store_connected": False,  # wired in Delivery 2
+        "vector_store_connected": get_vector_store() is not None,
         "embedding_provider": settings.embedding_provider,
         "embedding_model": settings.embedding_model,
         "embedding_model_loaded": embedding_adapter is not None,
