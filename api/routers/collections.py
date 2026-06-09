@@ -48,7 +48,7 @@ async def list_collections(ws_id: str, db: AsyncSession = Depends(get_db)):
     await _require_workspace(ws_id, db)
     stmt = (
         select(col_t, func.count(doc_t.c.id).label("document_count"))
-        .outerjoin(doc_t, doc_t.c.collection_id == col_t.c.id)
+        .outerjoin(doc_t, (doc_t.c.collection_id == col_t.c.id) & doc_t.c.status.is_(None))
         .where(col_t.c.workspace_id == ws_id)
         .group_by(col_t.c.id)
         .order_by(col_t.c.created_at)
