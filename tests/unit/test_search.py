@@ -141,6 +141,7 @@ def test_score_structured_does_not_mutate_originals():
 
 
 def _corpus_redis(collection_id: str, entries: list[list[str]], version: int = 1) -> FakeRedis:
+    """Build a FakeRedis with the given corpus triples [chunk_id, doc_id, text]."""
     return FakeRedis({
         f"bm25:{collection_id}:corpus": json.dumps(entries),
         f"bm25:{collection_id}:version": str(version),
@@ -151,15 +152,16 @@ def test_get_bm25_scores_returns_scores_for_matching_query():
     # Three docs needed: BM25 IDF = log((N-df+0.5)/(df+0.5)).
     # With N=2 and df=1 that's log(1)=0 for all scores.
     # A third unrelated doc pushes N to 3, making IDF positive.
+    # Entries are [chunk_id, document_id, text] triples.
     rds = _corpus_redis("col1", [
-        ["doc1", "machine learning algorithms"],
-        ["doc2", "cooking recipes dinner"],
-        ["doc3", "gardening plants flowers"],
+        ["chunk1", "doc1", "machine learning algorithms"],
+        ["chunk2", "doc2", "cooking recipes dinner"],
+        ["chunk3", "doc3", "gardening plants flowers"],
     ])
     config = CorpusConfig("col1")
     scores = _get_bm25_scores(rds, config, "machine learning")
-    assert scores["doc1"] > scores["doc2"]
-    assert scores["doc1"] > scores["doc3"]
+    assert scores["chunk1"] > scores["chunk2"]
+    assert scores["chunk1"] > scores["chunk3"]
 
 
 def test_get_bm25_scores_empty_corpus_returns_empty():
@@ -168,18 +170,18 @@ def test_get_bm25_scores_empty_corpus_returns_empty():
     assert _get_bm25_scores(rds, config, "anything") == {}
 
 
-def test_get_bm25_scores_returns_all_doc_ids():
-    entries = [["doc1", "hello world"], ["doc2", "foo bar"]]
+def test_get_bm25_scores_returns_all_chunk_ids():
+    entries = [["chunk1", "doc1", "hello world"], ["chunk2", "doc2", "foo bar"]]
     rds = _corpus_redis("col2", entries)
     config = CorpusConfig("col2")
     scores = _get_bm25_scores(rds, config, "hello")
-    assert set(scores.keys()) == {"doc1", "doc2"}
+    assert set(scores.keys()) == {"chunk1", "chunk2"}
 
 
 def test_get_bm25_scores_cache_avoids_rebuild(monkeypatch):
     from api.services import search as search_module
 
-    rds = _corpus_redis("col3", [["doc1", "cached content"]], version=5)
+    rds = _corpus_redis("col3", [["chunk1", "doc1", "cached content"]], version=5)
     config = CorpusConfig("col3")
 
     build_count = 0
@@ -203,7 +205,7 @@ def test_get_bm25_scores_cache_avoids_rebuild(monkeypatch):
 def test_get_bm25_scores_rebuilds_on_version_change(monkeypatch):
     from api.services import search as search_module
 
-    rds = _corpus_redis("col4", [["doc1", "text"]], version=1)
+    rds = _corpus_redis("col4", [["chunk1", "doc1", "text"]], version=1)
     config = CorpusConfig("col4")
 
     build_count = 0
