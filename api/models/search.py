@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from pydantic import BaseModel, Field
 
 
@@ -44,11 +46,17 @@ class CollectionStat(BaseModel):
     contributed_to_top_k: int = 0
 
 
+class SearchMode(StrEnum):
+    HYBRID = "hybrid"
+    SEMANTIC = "semantic"
+    SEMANTIC_ONLY = "semantic_only"
+
+
 class SearchResponse(BaseModel):
     results: list[SearchResult]
     collection_stats: dict[str, CollectionStat] = {}
     query_embedding_ms: int = 0
     search_ms: int = 0
     total_ms: int = 0
-    search_mode: str = "hybrid"  # hybrid | semantic | semantic_only
+    search_mode: SearchMode = SearchMode.HYBRID
     under_delivered: bool = False

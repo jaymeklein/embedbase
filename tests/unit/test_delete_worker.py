@@ -2,6 +2,7 @@
 
 import json
 
+from api.models.redis import CorpusConfig
 from worker.tasks import (
     BM25_TTL_SECONDS,
     _delete_from_bm25_index,
@@ -32,26 +33,30 @@ class FakeRedis:
 
 
 def test_delete_from_bm25_index_removes_only_target() -> None:
-    corpus = [["doc1", "hello"], ["doc2", "world"], ["doc1", "again"]]
+    corpus = [
+        ["chunk1", "doc1", "hello"],
+        ["chunk2", "doc2", "world"],
+        ["chunk3", "doc1", "again"],
+    ]
     rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
 
-    _delete_from_bm25_index(rds, "col1", "doc1")
+    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
 
     result = json.loads(rds.store["bm25:col1:corpus"])
-    assert result == [["doc2", "world"]]
-
+    assert result == [["chunk2", "doc2", "world"]]
+    assert "bm25:col1:version" in rds.store
 
 def test_delete_from_bm25_index_noop_when_corpus_absent() -> None:
     rds = FakeRedis()
-    _delete_from_bm25_index(rds, "col1", "doc1")
+    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
     assert "bm25:col1:corpus" not in rds.store
 
 
 def test_delete_from_bm25_index_noop_when_doc_not_present() -> None:
-    corpus = [["doc2", "other"]]
+    corpus = [["chunk2", "doc2", "other"]]
     rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
 
-    _delete_from_bm25_index(rds, "col1", "doc1")
+    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
 
     # corpus unchanged, version not bumped
     assert "bm25:col1:version" not in rds.store
@@ -59,19 +64,19 @@ def test_delete_from_bm25_index_noop_when_doc_not_present() -> None:
 
 
 def test_delete_from_bm25_index_increments_version() -> None:
-    corpus = [["doc1", "text"]]
+    corpus = [["chunk1", "doc1", "text"]]
     rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus), "bm25:col1:version": "5"})
 
-    _delete_from_bm25_index(rds, "col1", "doc1")
+    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
 
     assert rds.store["bm25:col1:version"] == "6"
 
 
 def test_delete_from_bm25_index_preserves_ttl() -> None:
-    corpus = [["doc1", "text"]]
+    corpus = [["chunk1", "doc1", "text"]]
     rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
 
-    _delete_from_bm25_index(rds, "col1", "doc1")
+    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
 
     # corpus key was rewritten — verify it used the correct TTL constant
     assert BM25_TTL_SECONDS == 60 * 60 * 24
@@ -110,7 +115,7 @@ def test_delete_task_calls_vector_store(monkeypatch) -> None:
 def test_delete_task_prunes_bm25_corpus(monkeypatch) -> None:
     from unittest.mock import MagicMock
 
-    corpus = [["doc1", "hello"], ["doc2", "keep"]]
+    corpus = [["chunk1", "doc1", "hello"], ["chunk2", "doc2", "keep"]]
     fake_vs = MagicMock()
     fake_rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
     fake_session = MagicMock()
@@ -125,7 +130,7 @@ def test_delete_task_prunes_bm25_corpus(monkeypatch) -> None:
     delete_document.apply(args=["doc1", "col1"])
 
     remaining = json.loads(fake_rds.store["bm25:col1:corpus"])
-    assert remaining == [["doc2", "keep"]]
+    assert remaining == [["chunk2", "doc2", "keep"]]
 
 
 def test_delete_task_hard_deletes_sqlite_row(monkeypatch) -> None:

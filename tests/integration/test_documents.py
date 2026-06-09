@@ -213,11 +213,3 @@ async def test_collection_key_cannot_upload_to_other_collection(client):
     )
     assert r.status_code == 403
 
-
-# ── search still pending (Delivery 3) ─────────────────────────────────────────
-
-async def test_search_returns_501(client):
-    r = await client.post(
-        "/search", json={"query": "hello", "collection_ids": ["col_abc"]}
-    )
-    assert r.status_code == 501

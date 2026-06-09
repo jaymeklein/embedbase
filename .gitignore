@@ -35,3 +35,5 @@ Thumbs.db
 # AI assistant instructions (local only)
 CLAUDE.md
 .claude/*
+.vscode/launch.json
+.vscode/settings.json
