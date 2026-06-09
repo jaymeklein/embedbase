@@ -9,8 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-os.environ.setdefault("MASTER_API_KEY", "test-master-key-for-testing-only")
-os.environ.setdefault("DATABASE_PATH", ":memory:")
+# Force-set test values so VS Code's Python extension loading .env doesn't
+# cause settings.master_api_key to diverge from the hardcoded test headers.
+os.environ["MASTER_API_KEY"] = "test-master-key-for-testing-only"
+os.environ["DATABASE_PATH"] = ":memory:"
 
 from api.dependencies import get_db
 from api.main import create_app

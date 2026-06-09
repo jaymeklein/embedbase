@@ -48,15 +48,16 @@ jobs:
         with:
           context: ./api
           tags: embedbase/api:ci
-          load: true
+          build-args: INSTALL_ML=false
           cache-from: type=gha,scope=api
-          cache-to: type=gha,scope=api,mode=max
+          cache-to: type=gha,scope=api,mode=min
+      - name: Free disk space before worker build
+        run: docker buildx prune -f
       - name: Build worker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: worker/Dockerfile
           tags: embedbase/worker:ci
-          load: true
           cache-from: type=gha,scope=worker
-          cache-to: type=gha,scope=worker,mode=max
+          cache-to: type=gha,scope=worker,mode=min

@@ -8,6 +8,7 @@ _MH = {"Authorization": "Bearer test-master-key-for-testing-only"}
 # Helpers (pass master_client so all management calls are authenticated)
 # ---------------------------------------------------------------------------
 
+
 async def _create_workspace(client, name="Test WS", **kwargs):
     r = await client.post("/workspaces", json={"name": name, **kwargs})
     assert r.status_code == 201
@@ -17,6 +18,7 @@ async def _create_workspace(client, name="Test WS", **kwargs):
 # ---------------------------------------------------------------------------
 # POST /workspaces
 # ---------------------------------------------------------------------------
+
 
 async def test_create_workspace_returns_201(master_client):
     r = await master_client.post("/workspaces", json={"name": "My WS"})
@@ -53,6 +55,7 @@ async def test_create_workspace_missing_name_returns_422(master_client):
 # GET /workspaces
 # ---------------------------------------------------------------------------
 
+
 async def test_list_workspaces_empty(master_client):
     r = await master_client.get("/workspaces")
     assert r.status_code == 200
@@ -80,6 +83,7 @@ async def test_list_workspaces_includes_collection_count(master_client):
 # ---------------------------------------------------------------------------
 # GET /workspaces/{ws_id}
 # ---------------------------------------------------------------------------
+
 
 async def test_get_workspace(master_client):
     ws_id = (await _create_workspace(master_client, "Find Me"))["id"]
@@ -109,6 +113,7 @@ async def test_get_workspace_not_found(master_client):
 # ---------------------------------------------------------------------------
 # PATCH /workspaces/{ws_id}
 # ---------------------------------------------------------------------------
+
 
 async def test_update_workspace_name(master_client):
     ws_id = (await _create_workspace(master_client, "Old"))["id"]
@@ -141,6 +146,7 @@ async def test_update_workspace_not_found(master_client):
 # DELETE /workspaces/{ws_id}
 # ---------------------------------------------------------------------------
 
+
 async def test_delete_workspace_returns_204(master_client):
     ws_id = (await _create_workspace(master_client, "Bye"))["id"]
     r = await master_client.delete(f"/workspaces/{ws_id}")
@@ -171,6 +177,7 @@ async def test_delete_workspace_cascades_to_collections(master_client):
 # ---------------------------------------------------------------------------
 # Auth — negative tests
 # ---------------------------------------------------------------------------
+
 
 async def test_no_auth_returns_401(client):
     r = await client.post("/workspaces", json={"name": "x"})
@@ -204,9 +211,7 @@ async def test_collection_key_on_workspace_route_returns_403(client):
         await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
     ).json()["id"]
     raw_key = (
-        await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH
-        )
+        await client.post(f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH)
     ).json()["raw_key"]
 
     r = await client.post(
