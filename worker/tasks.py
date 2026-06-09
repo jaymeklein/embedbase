@@ -13,6 +13,8 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
+from api.models.redis import CorpusConfig
+from api.services.redis.redis import get_corpus
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import SessionLocal, documents, job_records
@@ -66,13 +68,12 @@ def _redis() -> Any:
 # Job-record helpers
 # ---------------------------------------------------------------------------
 
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _set_job_status(
-    session: Any, job_id: str, status: str, **fields: Any
-) -> None:
+def _set_job_status(session: Any, job_id: str, status: str, **fields: Any) -> None:
     session.execute(
         update(job_records)
         .where(job_records.c.job_id == job_id)
@@ -84,10 +85,14 @@ def _set_job_status(
 # BM25 write path
 # ---------------------------------------------------------------------------
 
-def _update_bm25_index(
-    redis_client: Any, collection_id: str, chunks: list[Chunk]
-) -> None:
-    """Append ``[document_id, text]`` pairs to the collection's BM25 corpus.
+
+def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk]) -> None:
+    """Append ``[chunk_id, document_id, text]`` triples to the collection's BM25 corpus.
+
+    Keying by chunk_id (not document_id) means each chunk gets its own BM25
+    score — a multi-chunk document no longer silently clobbers earlier scores.
+    document_id is retained as entry[1] so _delete_from_bm25_index can prune
+    all chunks for a document without a separate index.
 
     The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
     under ``bm25:{collection_id}:corpus`` with a 24h TTL, and a monotonically
@@ -100,15 +105,13 @@ def _update_bm25_index(
 
     raw = redis_client.get(corpus_key)
     corpus: list[list[str]] = json.loads(raw) if raw else []
-    corpus.extend([chunk.metadata.document_id, chunk.text] for chunk in chunks)
+    corpus.extend([chunk.id, chunk.metadata.document_id, chunk.text] for chunk in chunks)
 
     redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
     redis_client.incr(version_key)
 
 
-def _delete_from_bm25_index(
-    redis_client: Any, collection_id: str, document_id: str
-) -> None:
+def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, document_id: str) -> None:
     """Remove all corpus entries for ``document_id`` from the BM25 index.
 
     Reads the JSON corpus from ``bm25:{collection_id}:corpus``, filters out
@@ -116,23 +119,19 @@ def _delete_from_bm25_index(
     version key so the search side invalidates its local cache.
     No-op when the corpus key is absent or the document has no entries.
     """
-    corpus_key = f"bm25:{collection_id}:corpus"
-    version_key = f"bm25:{collection_id}:version"
-
-    raw = redis_client.get(corpus_key)
-    if not raw:
+    
+    corpus = get_corpus(redis_client, corpus_config)
+    pruned = [entry for entry in corpus.data if entry[1] != document_id]
+    if len(pruned) == len(corpus.data):
         return
-    corpus: list[list[str]] = json.loads(raw)
-    pruned = [entry for entry in corpus if entry[0] != document_id]
-    if len(pruned) == len(corpus):
-        return
-    redis_client.set(corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
-    redis_client.incr(version_key)
+    redis_client.set(corpus_config.corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
+    redis_client.incr(corpus_config.version_key)
 
 
 # ---------------------------------------------------------------------------
 # Pipeline core (dependency-injected so it is unit-testable without infra)
 # ---------------------------------------------------------------------------
+
 
 def _run_ingestion(
     job_id: str,
@@ -178,7 +177,12 @@ def _run_ingestion(
                 logger.info("ingest: already handling", job_id=job_id)
                 return 0
             logger.warning("ingest: reclaiming stale job", job_id=job_id, elapsed_s=int(elapsed))
-        _set_job_status(session, job_id, "processing", processing_started_at=datetime.now(UTC).replace(tzinfo=None))
+        _set_job_status(
+            session,
+            job_id,
+            "processing",
+            processing_started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
         session.commit()
 
     # --- Parse → chunk -------------------------------------------------------
@@ -206,9 +210,7 @@ def _run_ingestion(
         _set_job_status(session, job_id, "done", chunk_count=chunk_count)
         session.commit()
 
-    logger.info(
-        "ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count
-    )
+    logger.info("ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count)
     return chunk_count
 
 
@@ -224,6 +226,7 @@ def _mark_failed(job_id: str, error: str) -> None:
 # ---------------------------------------------------------------------------
 # Celery tasks
 # ---------------------------------------------------------------------------
+
 
 @celery_app.task(
     bind=True,
@@ -242,9 +245,7 @@ def ingest_document(
     """Parse → chunk → embed → store a single document."""
     # SoftTimeLimitExceeded MUST be the first except — it subclasses Exception.
     try:
-        return _run_ingestion(
-            job_id, file_path, collection_id, document_id, file_type
-        )
+        return _run_ingestion(job_id, file_path, collection_id, document_id, file_type)
     except SoftTimeLimitExceeded:
         logger.warning("task exceeded time limit", job_id=job_id)
         _mark_failed(job_id, "Ingestion exceeded time limit")
@@ -266,7 +267,7 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
     redis_client = _redis()
     try:
         _vector_store().delete_document(collection_id, document_id)
-        _delete_from_bm25_index(redis_client, collection_id, document_id)
+        _delete_from_bm25_index(redis_client, CorpusConfig(collection_id), document_id)
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
             db.commit()
