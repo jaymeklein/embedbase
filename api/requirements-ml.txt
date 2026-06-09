@@ -2,7 +2,6 @@
 # Not required for the API server itself — all adapters are lazy-imported at
 # startup time.  Install this file for production or local dev; skip it in CI
 # smoke tests by passing --build-arg INSTALL_ML=false to the API Dockerfile.
-tiktoken>=0.7.0
 sentence-transformers>=3.0.0
 chromadb>=0.5.3
 PyMuPDF>=1.24.0
