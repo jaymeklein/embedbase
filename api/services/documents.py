@@ -9,8 +9,10 @@ from __future__ import annotations
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
+import structlog
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +25,8 @@ from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.upload import stream_upload_with_size_guard
 from api.settings import settings
+
+logger = structlog.get_logger()
 
 
 def _now() -> str:
@@ -110,7 +114,7 @@ async def ingest(
 
 
 async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
-    """Return all documents in ``col_id`` with their latest job status."""
+    """Return all active documents in ``col_id`` with their latest job status."""
     stmt = (
         select(
             doc_t.c.id.label("document_id"),
@@ -123,7 +127,7 @@ async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
             job_t.c.status,
         )
         .select_from(doc_t.outerjoin(job_t, job_t.c.document_id == doc_t.c.id))
-        .where(doc_t.c.collection_id == col_id)
+        .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
         .order_by(doc_t.c.created_at.desc())
     )
     rows = (await db.execute(stmt)).fetchall()
@@ -133,7 +137,16 @@ async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
 async def get_document_status(
     db: AsyncSession, col_id: str, doc_id: str
 ) -> dict:
-    """Return the latest job record for ``doc_id`` in ``col_id``."""
+    """Return current status for ``doc_id``, including soft-delete state."""
+    doc_row = (
+        await db.execute(
+            select(doc_t.c.status).where(
+                doc_t.c.id == doc_id, doc_t.c.collection_id == col_id
+            )
+        )
+    ).fetchone()
+    if doc_row and doc_row.status == "deleting":
+        return {"status": "deleting", "document_id": doc_id}
     row = (
         await db.execute(
             select(job_t)
@@ -147,22 +160,31 @@ async def get_document_status(
 
 
 async def delete_document(db: AsyncSession, col_id: str, doc_id: str) -> None:
-    """Delete a document and its job records, then enqueue async cleanup."""
-    exists = (
-        await db.execute(
-            select(doc_t.c.id).where(
-                doc_t.c.id == doc_id, doc_t.c.collection_id == col_id
-            )
-        )
-    ).fetchone()
-    if not exists:
+    """Soft-delete a document and enqueue async vector / BM25 / row cleanup.
+
+    Marks the document row as ``status='deleting'`` instead of removing it so
+    the worker has a durable tombstone to retry against if the first cleanup
+    attempt fails. The worker hard-deletes the row after all stores are clean.
+    """
+    result: Any = await db.execute(
+        update(doc_t)
+        .where(doc_t.c.id == doc_id, doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
+        .values(status="deleting", updated_at=_now())
+    )
+    if result.rowcount == 0:
         raise HTTPException(404, f"Document {doc_id!r} not found")
-
     await db.execute(delete(job_t).where(job_t.c.document_id == doc_id))
-    await db.execute(delete(doc_t).where(doc_t.c.id == doc_id))
     await db.commit()
-
-    task_producer.enqueue_delete(doc_id, col_id)
+    try:
+        task_id = task_producer.enqueue_delete(doc_id, col_id)
+        if task_id:
+            logger.info("delete task enqueued", document_id=doc_id, celery_task_id=task_id)
+    except Exception:
+        await db.execute(
+            update(doc_t).where(doc_t.c.id == doc_id).values(status=None, updated_at=_now())
+        )
+        await db.commit()
+        raise HTTPException(503, "Cleanup queue unavailable, please retry") from None
 
 
 async def resolve_document_collection(db: AsyncSession, doc_id: str) -> str:

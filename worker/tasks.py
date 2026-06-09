@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
@@ -102,6 +103,30 @@ def _update_bm25_index(
     corpus.extend([chunk.metadata.document_id, chunk.text] for chunk in chunks)
 
     redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
+    redis_client.incr(version_key)
+
+
+def _delete_from_bm25_index(
+    redis_client: Any, collection_id: str, document_id: str
+) -> None:
+    """Remove all corpus entries for ``document_id`` from the BM25 index.
+
+    Reads the JSON corpus from ``bm25:{collection_id}:corpus``, filters out
+    all ``[document_id, text]`` pairs, rewrites the corpus, and bumps the
+    version key so the search side invalidates its local cache.
+    No-op when the corpus key is absent or the document has no entries.
+    """
+    corpus_key = f"bm25:{collection_id}:corpus"
+    version_key = f"bm25:{collection_id}:version"
+
+    raw = redis_client.get(corpus_key)
+    if not raw:
+        return
+    corpus: list[list[str]] = json.loads(raw)
+    pruned = [entry for entry in corpus if entry[0] != document_id]
+    if len(pruned) == len(corpus):
+        return
+    redis_client.set(corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
     redis_client.incr(version_key)
 
 
@@ -230,14 +255,21 @@ def ingest_document(
         raise self.retry(exc=exc) from exc
 
 
-@celery_app.task(bind=True)
-def delete_document(self, document_id: str, collection_id: str):
-    """Remove vectors + BM25 corpus entries for a document.
-
-    Vector-store deletion is wired here; BM25 prune is completed in Delivery 3.
-    """
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def delete_document(self, document_id: str, collection_id: str) -> None:
+    """Remove vectors, BM25 corpus entries, and the document row for a deleted document."""
+    redis_client = _redis()
     try:
         _vector_store().delete_document(collection_id, document_id)
+        _delete_from_bm25_index(redis_client, collection_id, document_id)
+        with SessionLocal() as db:
+            db.execute(sa_delete(documents).where(documents.c.id == document_id))
+            db.commit()
     except SoftTimeLimitExceeded:
         raise
     except Exception as exc:
