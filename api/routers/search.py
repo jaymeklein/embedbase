@@ -1,13 +1,15 @@
 """Search router: POST /search — multi-collection hybrid search."""
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
 from api.dependencies import (
     get_db,
-    get_redis_client,
     require_embedding_adapter,
+    require_redis_client,
     require_vector_store,
 )
 from api.models.search import SearchRequest, SearchResponse
@@ -24,6 +26,7 @@ async def search(
     _principal: object = Depends(require_master),
     embedder: EmbeddingAdapter = Depends(require_embedding_adapter),
     vector_store: VectorStoreAdapter = Depends(require_vector_store),
+    redis_client: Any = Depends(require_redis_client),
 ) -> SearchResponse:
     """Run a hybrid (semantic + BM25) search across one or more collections.
 
@@ -33,6 +36,7 @@ async def search(
         _principal: Authenticated master principal (enforces auth, value unused).
         embedder: Embedding adapter injected via Depends.
         vector_store: Vector store adapter injected via Depends.
+        redis_client: Redis client injected via Depends (raises 503 if not ready).
 
     Returns:
         SearchResponse with ranked results and per-collection stats.
@@ -42,5 +46,5 @@ async def search(
         db=db,
         embedder=embedder,
         vector_store=vector_store,
-        redis_client=get_redis_client(),
+        redis_client=redis_client,
     )

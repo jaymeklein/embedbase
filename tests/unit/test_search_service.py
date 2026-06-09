@@ -36,6 +36,7 @@ class FakeRedis:
 
 
 def _corpus_redis(collection_id: str, entries: list[list[str]], version: int = 1) -> FakeRedis:
+    """Build a FakeRedis with the given corpus triples [chunk_id, doc_id, text]."""
     return FakeRedis({
         f"bm25:{collection_id}:corpus": json.dumps(entries),
         f"bm25:{collection_id}:version": str(version),
@@ -60,7 +61,7 @@ class FakeVectorStore:
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
     def delete_collection(self, *args: object) -> None: ...
-    def list_documents(self, *args: object) -> list: ...  # type: ignore[override]
+    def list_documents(self, *args: object) -> list: ...
 
 
 class FakeEmbedder:
@@ -80,20 +81,17 @@ class FakeEmbedder:
 # ---------------------------------------------------------------------------
 
 
-def test_rank_by_bm25_uses_document_id_from_metadata():
-    results = [
-        _result("c1", document_id="doc1"),
-        _result("c2", document_id="doc2"),
-    ]
-    scores = {"doc1": 0.9, "doc2": 0.2}
+def test_rank_by_bm25_uses_chunk_id():
+    results = [_result("c1"), _result("c2")]
+    scores = {"c1": 0.9, "c2": 0.2}
     ranked = _rank_by_bm25(results, scores)
     assert ranked[0].chunk_id == "c1"
     assert ranked[1].chunk_id == "c2"
 
 
-def test_rank_by_bm25_missing_document_id_scores_zero():
-    results = [_result("c1"), _result("c2", document_id="doc2")]
-    scores = {"doc2": 0.5}
+def test_rank_by_bm25_missing_chunk_id_scores_zero():
+    results = [_result("c1"), _result("c2")]
+    scores = {"c2": 0.5}
     ranked = _rank_by_bm25(results, scores)
     assert ranked[0].chunk_id == "c2"
 
@@ -236,14 +234,14 @@ def test_search_collection_hybrid_mode_returns_hybrid():
 
     search_module._bm25_cache.clear()
     candidates = [
-        _result("c1", document_id="doc1"),
-        _result("c2", document_id="doc2"),
-        _result("c3", document_id="doc3"),
+        _result("c1"),
+        _result("c2"),
+        _result("c3"),
     ]
     rds = _corpus_redis("col1", [
-        ["doc1", "machine learning python"],
-        ["doc2", "cooking recipes dinner"],
-        ["doc3", "gardening flowers plants"],
+        ["c1", "doc1", "machine learning python"],
+        ["c2", "doc2", "cooking recipes dinner"],
+        ["c3", "doc3", "gardening flowers plants"],
     ])
     vs = FakeVectorStore(candidates)
     _, mode, _, _ = search_collection(

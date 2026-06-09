@@ -80,6 +80,21 @@ def require_vector_store() -> VectorStoreAdapter:
     return store
 
 
+def require_redis_client() -> Any:
+    """FastAPI dependency: return the Redis client or raise 503.
+
+    Returns:
+        The active Redis client singleton.
+
+    Raises:
+        HTTPException: 503 if the client has not been initialised.
+    """
+    client = _redis_client
+    if client is None:
+        raise HTTPException(503, "Redis backend not ready")
+    return client
+
+
 # ---------------------------------------------------------------------------
 # Database session — yields a transactional AsyncSession per request
 # ---------------------------------------------------------------------------

@@ -87,7 +87,12 @@ def _set_job_status(session: Any, job_id: str, status: str, **fields: Any) -> No
 
 
 def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk]) -> None:
-    """Append ``[document_id, text]`` pairs to the collection's BM25 corpus.
+    """Append ``[chunk_id, document_id, text]`` triples to the collection's BM25 corpus.
+
+    Keying by chunk_id (not document_id) means each chunk gets its own BM25
+    score — a multi-chunk document no longer silently clobbers earlier scores.
+    document_id is retained as entry[1] so _delete_from_bm25_index can prune
+    all chunks for a document without a separate index.
 
     The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
     under ``bm25:{collection_id}:corpus`` with a 24h TTL, and a monotonically
@@ -100,7 +105,7 @@ def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk
 
     raw = redis_client.get(corpus_key)
     corpus: list[list[str]] = json.loads(raw) if raw else []
-    corpus.extend([chunk.metadata.document_id, chunk.text] for chunk in chunks)
+    corpus.extend([chunk.id, chunk.metadata.document_id, chunk.text] for chunk in chunks)
 
     redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
     redis_client.incr(version_key)
@@ -116,7 +121,7 @@ def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, docu
     """
     
     corpus = get_corpus(redis_client, corpus_config)
-    pruned = [entry for entry in corpus.data if entry[0] != document_id]
+    pruned = [entry for entry in corpus.data if entry[1] != document_id]
     if len(pruned) == len(corpus.data):
         return
     redis_client.set(corpus_config.corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)

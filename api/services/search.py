@@ -24,7 +24,7 @@ from api.services.redis.redis import get_corpus, get_corpus_version
 
 _DEFAULT_FAN_OUT = 4
 
-# Version-keyed in-process cache: collection_id → (version, index, doc_ids)
+# Version-keyed in-process cache: collection_id → (version, index, chunk_ids)
 _bm25_cache: dict[str, tuple[int, BM25Okapi, list[str]]] = {}
 
 
@@ -90,7 +90,7 @@ def _get_bm25_scores(
         query: The search query string to score against.
 
     Returns:
-        A mapping of document_id to BM25 score for every entry in the corpus.
+        A mapping of chunk_id to BM25 score for every entry in the corpus.
         Returns an empty dict when the corpus is empty or unavailable.
     """
     version = get_corpus_version(redis_client, corpus_config)
@@ -100,20 +100,20 @@ def _get_bm25_scores(
         corpus = get_corpus(redis_client, corpus_config)
         if not corpus.data:
             return {}
-        doc_ids = corpus.doc_ids
+        chunk_ids = corpus.chunk_ids
         tokenized = corpus.tokenized
         index = BM25Okapi(tokenized)
-        _bm25_cache[collection_id] = (version, index, doc_ids)
+        _bm25_cache[collection_id] = (version, index, chunk_ids)
         debug(
             "rebuilt BM25 index for collection %s at version %d (%d entries)",
             collection_id,
             version,
-            len(doc_ids),
+            len(chunk_ids),
         )
     else:
-        _, index, doc_ids = cached
+        _, index, chunk_ids = cached
     scores: list[float] = index.get_scores(query.lower().split()).tolist()
-    return dict(zip(doc_ids, scores, strict=True))
+    return dict(zip(chunk_ids, scores, strict=True))
 
 
 def _reciprocal_rank_fusion(
@@ -152,18 +152,18 @@ def _reciprocal_rank_fusion(
 
 
 def _rank_by_bm25(results: list[SearchResult], scores: dict[str, float]) -> list[SearchResult]:
-    """Return results sorted by BM25 score (keyed by metadata document_id).
+    """Return results sorted by BM25 score (keyed by chunk_id).
 
     Args:
         results: Candidate search results from the vector store.
-        scores: BM25 scores keyed by document_id.
+        scores: BM25 scores keyed by chunk_id.
 
     Returns:
-        Results sorted descending by their document's BM25 score.
+        Results sorted descending by the chunk's BM25 score.
     """
     return sorted(
         results,
-        key=lambda r: scores.get(str(r.metadata.get("document_id", "")), 0.0),
+        key=lambda r: scores.get(r.chunk_id, 0.0),
         reverse=True,
     )
 
@@ -297,6 +297,46 @@ async def _get_collection_info(db: AsyncSession, col_id: str) -> dict[str, str] 
     }
 
 
+async def _fan_out_to_collection(
+    col_id: str,
+    query_vector: list[float],
+    request: SearchRequest,
+    *,
+    db: AsyncSession,
+    vector_store: VectorStoreAdapter,
+    redis_client: Any,
+    fan_out: int,
+) -> tuple[list[SearchResult], CollectionStat, SearchMode] | None:
+    """Search one collection, annotate provenance, and return results + stat.
+
+    Args:
+        col_id: Collection UUID to search.
+        query_vector: Pre-computed query embedding.
+        request: Full search request (top_k, hybrid, filters, etc.).
+        db: Async database session for metadata lookup.
+        vector_store: Vector similarity search adapter.
+        redis_client: Redis client for BM25 corpus.
+        fan_out: Candidate multiplier applied before filtering.
+
+    Returns:
+        (annotated_results, stat, mode) or None if collection not found.
+    """
+    info = await _get_collection_info(db, col_id)
+    if info is None:
+        return None
+    col_results, col_mode, retrieved, returned = search_collection(
+        col_id, query_vector, request.query, request.top_k,
+        fan_out=fan_out, hybrid=request.hybrid, alpha=request.hybrid_alpha,
+        filters=request.filters, vector_store=vector_store, redis_client=redis_client,
+    )
+    _apply_provenance(col_results, col_id, info)
+    stat = CollectionStat(
+        name=info["collection_name"], workspace_name=info["workspace_name"],
+        retrieved_before_filter=retrieved, returned_after_filter=returned,
+    )
+    return col_results, stat, col_mode
+
+
 async def multi_collection_search(
     request: SearchRequest,
     *,
@@ -308,8 +348,8 @@ async def multi_collection_search(
     """Search across one or more collections and merge results.
 
     Embeds the query once, fans out to each requested collection via
-    search_collection, merges results with a global score sort, and computes
-    per-collection stats.
+    _fan_out_to_collection, merges results with a global score sort, and
+    computes per-collection stats.
 
     Args:
         request: Parsed SearchRequest from the caller.
@@ -329,21 +369,16 @@ async def multi_collection_search(
     stats: dict[str, CollectionStat] = {}
     mode = SearchMode.HYBRID if request.hybrid else SearchMode.SEMANTIC
     for col_id in request.collection_ids:
-        info = await _get_collection_info(db, col_id)
-        if info is None:
-            continue
-        col_results, col_mode, retrieved, returned = search_collection(
-            col_id, query_vector, request.query, request.top_k,
-            fan_out=fan_out, hybrid=request.hybrid, alpha=request.hybrid_alpha,
-            filters=request.filters, vector_store=vector_store, redis_client=redis_client,
+        hit = await _fan_out_to_collection(
+            col_id, query_vector, request,
+            db=db, vector_store=vector_store, redis_client=redis_client, fan_out=fan_out,
         )
+        if hit is None:
+            continue
+        col_results, stat, col_mode = hit
         if col_mode == SearchMode.SEMANTIC_ONLY:
             mode = SearchMode.SEMANTIC_ONLY
-        _apply_provenance(col_results, col_id, info)
-        stats[col_id] = CollectionStat(
-            name=info["collection_name"], workspace_name=info["workspace_name"],
-            retrieved_before_filter=retrieved, returned_after_filter=returned,
-        )
+        stats[col_id] = stat
         all_results.extend(col_results)
     final = _merge_and_rank(all_results)[:request.top_k]
     _update_top_k_stats(final, stats)
