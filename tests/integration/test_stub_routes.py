@@ -27,16 +27,3 @@ async def test_metrics_stub_returns_200(client):
 async def test_mcp_sse_stub_returns_200(client):
     r = await client.get("/mcp/sse")
     assert r.status_code == 200
-
-
-async def test_search_returns_501(client):
-    r = await client.post(
-        "/search", json={"query": "hi", "collection_ids": ["col_x"]}
-    )
-    assert r.status_code == 501
-
-
-async def test_search_validation_error_returns_422(client):
-    # Empty collection_ids violates min_length=1.
-    r = await client.post("/search", json={"query": "hi", "collection_ids": []})
-    assert r.status_code == 422
