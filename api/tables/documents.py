@@ -18,5 +18,6 @@ documents = Table(
     Column("chunk_count", Integer, nullable=True),
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
+    Column("status", String, nullable=True),
     Index("documents_collection_idx", "collection_id"),
 )
