@@ -13,7 +13,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
-from api.models.redis import Corpus, CorpusConfig
+from api.models.redis import CorpusConfig
 from api.services.redis.redis import get_corpus
 from worker.celery_app import celery_app
 from worker.config import get_config
@@ -115,13 +115,12 @@ def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, docu
     No-op when the corpus key is absent or the document has no entries.
     """
     
-    raw = get_corpus(redis_client, corpus_config)
-    corpus: Corpus = Corpus(raw)
-    pruned = [entry for entry in corpus if entry[0] != document_id]
-    if len(pruned) == len(corpus):
+    corpus = get_corpus(redis_client, corpus_config)
+    pruned = [entry for entry in corpus.data if entry[0] != document_id]
+    if len(pruned) == len(corpus.data):
         return
-    redis_client.set(corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
-    redis_client.incr(version_key)
+    redis_client.set(corpus_config.corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
+    redis_client.incr(corpus_config.version_key)
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +262,7 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
     redis_client = _redis()
     try:
         _vector_store().delete_document(collection_id, document_id)
-        _delete_from_bm25_index(redis_client, collection_id, document_id)
+        _delete_from_bm25_index(redis_client, CorpusConfig(collection_id), document_id)
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
             db.commit()

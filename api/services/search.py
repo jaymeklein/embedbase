@@ -1,23 +1,35 @@
+"""Search service: BM25 helpers, single-collection search, multi-collection fan-out."""
+
+from time import monotonic
 from typing import Any
 
-from api.services.bm25 import score_semantic, score_structured
 from rank_bm25 import BM25Okapi
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
 from api.models.redis import CorpusConfig
-from api.models.search import SearchFilters, SearchResult
+from api.models.search import (
+    CollectionStat,
+    SearchFilters,
+    SearchMode,
+    SearchRequest,
+    SearchResponse,
+    SearchResult,
+    SourceProvenance,
+)
+from api.services.bm25 import score_semantic, score_structured
 from api.services.logs import debug
 from api.services.redis.redis import get_corpus, get_corpus_version
+
+_DEFAULT_FAN_OUT = 4
 
 # Version-keyed in-process cache: collection_id → (version, index, doc_ids)
 _bm25_cache: dict[str, tuple[int, BM25Okapi, list[str]]] = {}
 
 
-def _get_cached(collection_id: str) -> tuple | None:
+def _get_cached(collection_id: str) -> tuple[int, BM25Okapi, list[str]] | None:
     return _bm25_cache.get(collection_id)
-
-
-def _has_cached(cached: Any, version: int) -> bool:
-    return cached is not None and cached[0] == version
 
 
 def _matches(result: SearchResult, filters: SearchFilters) -> bool:
@@ -30,27 +42,20 @@ def _matches(result: SearchResult, filters: SearchFilters) -> bool:
     Returns:
         True if the result matches all provided filters, otherwise False.
     """
-
     language = filters.language
     filename = filters.filename
     tags = filters.tags
 
     if not language and not filename and not tags:
         return True
-
     if language and result.metadata.get("language") != language:
         return False
-
     if filename and result.metadata.get("filename") != filename:
         return False
-
     if tags:
         result_tags = set(result.metadata.get("tags", []))
-        filter_tags = set(tags)
-
-        if not filter_tags.issubset(result_tags):
+        if not set(tags).issubset(result_tags):
             return False
-
     return True
 
 
@@ -66,7 +71,6 @@ def apply_filters(results: list[SearchResult], filters: SearchFilters | None) ->
     """
     if not filters:
         return results
-
     return [result for result in results if _matches(result, filters)]
 
 
@@ -91,18 +95,15 @@ def _get_bm25_scores(
     """
     version = get_corpus_version(redis_client, corpus_config)
     collection_id = corpus_config.collection_id
-
     cached = _get_cached(collection_id)
-    if not _has_cached(cached, version):
+    if cached is None or cached[0] != version:
         corpus = get_corpus(redis_client, corpus_config)
         if not corpus.data:
             return {}
-
         doc_ids = corpus.doc_ids
         tokenized = corpus.tokenized
         index = BM25Okapi(tokenized)
         _bm25_cache[collection_id] = (version, index, doc_ids)
-
         debug(
             "rebuilt BM25 index for collection %s at version %d (%d entries)",
             collection_id,
@@ -111,7 +112,6 @@ def _get_bm25_scores(
         )
     else:
         _, index, doc_ids = cached
-
     scores: list[float] = index.get_scores(query.lower().split()).tolist()
     return dict(zip(doc_ids, scores, strict=True))
 
@@ -122,45 +122,234 @@ def _reciprocal_rank_fusion(
     alpha: float = 0.7,
     k: int = 60,
 ) -> list[SearchResult]:
+    """Merge two ranked lists using Reciprocal Rank Fusion.
+
+    Args:
+        vector_results: Results ranked by semantic similarity.
+        bm25_results: Results ranked by BM25 keyword score.
+        alpha: Weight for the semantic ranking (1-alpha goes to BM25).
+        k: RRF damping constant (default 60).
+
+    Returns:
+        A merged, re-ranked list of SearchResult objects.
+    """
     scored_semantic = score_semantic(vector_results, alpha, k)
     scored_structured = score_structured(bm25_results, alpha, k)
-
-    scored_semantic_dict = {result.chunk_id: result for result in scored_semantic}
-    scored_structured_dict = {result.chunk_id: result for result in scored_structured}
-
-    all_chunk_ids = set(scored_semantic_dict.keys()) | set(scored_structured_dict.keys())
-    for chunk_id in all_chunk_ids:
-        semantic_chunk = scored_semantic_dict.get(chunk_id)
-        structured_chunk = scored_structured_dict.get(chunk_id)
-
-        semantic_score = semantic_chunk.score if semantic_chunk else 0
-        structured_score = structured_chunk.score if structured_chunk else 0
-
-        final_score = semantic_score + structured_score
-        if chunk_id in scored_semantic_dict:
-            scored_semantic_dict[chunk_id].score = final_score
-        elif chunk_id in scored_structured_dict:
-            scored_structured_dict[chunk_id].score = final_score
-
-    final_dict = {**scored_structured_dict, **scored_semantic_dict}
-    ordered = sorted(final_dict.values(), key=lambda r: r.score, reverse=True)
-    ranked = enumerate(ordered, start=1)
-    for rank, result in ranked:
+    sem_dict = {r.chunk_id: r for r in scored_semantic}
+    bm25_dict = {r.chunk_id: r for r in scored_structured}
+    for chunk_id in set(sem_dict) | set(bm25_dict):
+        sem = sem_dict.get(chunk_id)
+        bm = bm25_dict.get(chunk_id)
+        final = (sem.score if sem else 0.0) + (bm.score if bm else 0.0)
+        if chunk_id in sem_dict:
+            sem_dict[chunk_id].score = final
+        else:
+            bm25_dict[chunk_id].score = final
+    ordered = sorted({**bm25_dict, **sem_dict}.values(), key=lambda r: r.score, reverse=True)
+    for rank, result in enumerate(ordered, start=1):
         result.rank = rank
     return ordered
 
 
-def search_collection() -> None:
-    """Search in a single collection and return ranked results.
+def _rank_by_bm25(results: list[SearchResult], scores: dict[str, float]) -> list[SearchResult]:
+    """Return results sorted by BM25 score (keyed by metadata document_id).
+
+    Args:
+        results: Candidate search results from the vector store.
+        scores: BM25 scores keyed by document_id.
 
     Returns:
-        None
+        Results sorted descending by their document's BM25 score.
     """
+    return sorted(
+        results,
+        key=lambda r: scores.get(str(r.metadata.get("document_id", "")), 0.0),
+        reverse=True,
+    )
 
 
-def multi_collection_search() -> None:
-    """Search across multiple collections and merge the results.
+def search_collection(
+    collection_id: str,
+    query_vector: list[float],
+    query: str,
+    top_k: int,
+    *,
+    fan_out: int = _DEFAULT_FAN_OUT,
+    hybrid: bool = True,
+    alpha: float = 0.7,
+    filters: SearchFilters | None = None,
+    vector_store: VectorStoreAdapter,
+    redis_client: Any,
+) -> tuple[list[SearchResult], SearchMode, int, int]:
+    """Search a single collection and return ranked results.
+
+    Args:
+        collection_id: The collection to search.
+        query_vector: Pre-computed embedding of the query.
+        query: Raw query text (used for BM25 tokenisation).
+        top_k: Maximum number of results to return after filtering.
+        fan_out: Multiplier for pre-filter candidate retrieval (clamped to 1–10).
+        hybrid: Whether to combine semantic and BM25 rankings via RRF.
+        alpha: Semantic weight in RRF (passed through to score_semantic).
+        filters: Optional metadata filters applied after ranking.
+        vector_store: Adapter for vector similarity search.
+        redis_client: Sync Redis client used to load the BM25 corpus.
 
     Returns:
-        None
+        Tuple of (results, search_mode, retrieved_before_filter, returned_after_filter).
     """
+    candidates = vector_store.search(
+        collection_id, query_vector, top_k * min(max(fan_out, 1), 10)
+    )
+    mode = SearchMode.SEMANTIC if not hybrid else SearchMode.HYBRID
+    results: list[SearchResult] = candidates
+    if hybrid:
+        bm25_scores = _get_bm25_scores(redis_client, CorpusConfig(collection_id), query)
+        if bm25_scores:
+            results = _reciprocal_rank_fusion(candidates, _rank_by_bm25(candidates, bm25_scores), alpha)
+        else:
+            mode = SearchMode.SEMANTIC_ONLY
+    retrieved = len(results)
+    filtered = apply_filters(results, filters)
+    return filtered[:top_k], mode, retrieved, len(filtered)
+
+
+def _apply_provenance(
+    results: list[SearchResult], col_id: str, info: dict[str, str]
+) -> None:
+    """Attach SourceProvenance to each result in-place.
+
+    Args:
+        results: Results to annotate.
+        col_id: Collection UUID.
+        info: Mapping with keys collection_name, workspace_id, workspace_name.
+    """
+    for r in results:
+        r.source = SourceProvenance(
+            collection_id=col_id,
+            collection_name=info["collection_name"],
+            workspace_id=info["workspace_id"],
+            workspace_name=info["workspace_name"],
+            document_id=r.metadata.get("document_id"),
+            filename=r.metadata.get("filename"),
+            page_number=r.metadata.get("page_number"),
+        )
+
+
+def _merge_and_rank(all_results: list[SearchResult]) -> list[SearchResult]:
+    """Return a new list sorted by score descending with sequential ranks assigned.
+
+    Copies each result via model_copy() so the originals are not mutated.
+
+    Args:
+        all_results: Results from one or more collections.
+
+    Returns:
+        New sorted list of copied SearchResult objects with rank fields set.
+    """
+    ordered = sorted(
+        (r.model_copy() for r in all_results), key=lambda r: r.score, reverse=True
+    )
+    for rank, r in enumerate(ordered, start=1):
+        r.rank = rank
+    return ordered
+
+
+def _update_top_k_stats(final: list[SearchResult], stats: dict[str, CollectionStat]) -> None:
+    """Increment contributed_to_top_k for each collection that appears in final.
+
+    Args:
+        final: Truncated top-k result list.
+        stats: Per-collection stats dict to update in-place.
+    """
+    for r in final:
+        source = r.source
+        if source is not None and source.collection_id in stats:
+            stats[source.collection_id].contributed_to_top_k += 1
+
+
+async def _get_collection_info(db: AsyncSession, col_id: str) -> dict[str, str] | None:
+    """Fetch collection name and workspace metadata from the database.
+
+    Args:
+        db: Active async database session.
+        col_id: Collection UUID to look up.
+
+    Returns:
+        Dict with collection_name, workspace_id, workspace_name, or None if not found.
+    """
+    from api.db import collections as col_t
+    from api.db import workspaces as ws_t
+
+    row = (
+        await db.execute(
+            select(col_t.c.name, col_t.c.workspace_id, ws_t.c.name.label("workspace_name"))
+            .join(ws_t, col_t.c.workspace_id == ws_t.c.id)
+            .where(col_t.c.id == col_id)
+        )
+    ).fetchone()
+    if row is None:
+        return None
+    return {
+        "collection_name": str(row.name),
+        "workspace_id": str(row.workspace_id),
+        "workspace_name": str(row.workspace_name),
+    }
+
+
+async def multi_collection_search(
+    request: SearchRequest,
+    *,
+    db: AsyncSession,
+    embedder: EmbeddingAdapter,
+    vector_store: VectorStoreAdapter,
+    redis_client: Any,
+) -> SearchResponse:
+    """Search across one or more collections and merge results.
+
+    Embeds the query once, fans out to each requested collection via
+    search_collection, merges results with a global score sort, and computes
+    per-collection stats.
+
+    Args:
+        request: Parsed SearchRequest from the caller.
+        db: Async database session for metadata look-ups.
+        embedder: Embedding adapter used to vectorise the query.
+        vector_store: Vector store adapter for similarity search.
+        redis_client: Sync Redis client for BM25 corpus access.
+
+    Returns:
+        SearchResponse with ranked results, stats, and timing fields.
+    """
+    t0 = monotonic()
+    query_vector = embedder.embed(request.query)
+    embed_ms = int((monotonic() - t0) * 1000)
+    fan_out = request.fan_out if request.fan_out is not None else _DEFAULT_FAN_OUT
+    all_results: list[SearchResult] = []
+    stats: dict[str, CollectionStat] = {}
+    mode = SearchMode.HYBRID if request.hybrid else SearchMode.SEMANTIC
+    for col_id in request.collection_ids:
+        info = await _get_collection_info(db, col_id)
+        if info is None:
+            continue
+        col_results, col_mode, retrieved, returned = search_collection(
+            col_id, query_vector, request.query, request.top_k,
+            fan_out=fan_out, hybrid=request.hybrid, alpha=request.hybrid_alpha,
+            filters=request.filters, vector_store=vector_store, redis_client=redis_client,
+        )
+        if col_mode == SearchMode.SEMANTIC_ONLY:
+            mode = SearchMode.SEMANTIC_ONLY
+        _apply_provenance(col_results, col_id, info)
+        stats[col_id] = CollectionStat(
+            name=info["collection_name"], workspace_name=info["workspace_name"],
+            retrieved_before_filter=retrieved, returned_after_filter=returned,
+        )
+        all_results.extend(col_results)
+    final = _merge_and_rank(all_results)[:request.top_k]
+    _update_top_k_stats(final, stats)
+    total_ms = int((monotonic() - t0) * 1000)
+    return SearchResponse(
+        results=final, collection_stats=stats, query_embedding_ms=embed_ms,
+        search_ms=total_ms - embed_ms, total_ms=total_ms,
+        search_mode=mode, under_delivered=len(final) < request.top_k,
+    )

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from api.db import init_db
-from api.dependencies import set_embedding_adapter, set_vector_store
+from api.dependencies import set_embedding_adapter, set_redis_client, set_vector_store
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import collections, config, documents, health, mcp, search, workspaces
@@ -69,6 +69,16 @@ async def lifespan(app: FastAPI):
         logger.info("vector store ready", backend=app_config.vector_store.backend)
     except Exception as exc:
         logger.error("vector store unavailable", error=str(exc))
+
+    # 5. Initialise Redis client (sync; used by BM25 search path)
+    try:
+        import redis as redis_lib
+
+        r = redis_lib.Redis.from_url(settings.redis_url, decode_responses=True)
+        set_redis_client(r)
+        logger.info("redis client ready", url=settings.redis_url)
+    except Exception as exc:
+        logger.error("redis client unavailable", error=str(exc))
 
     logger.info("EmbedBase API ready")
     yield
