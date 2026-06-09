@@ -21,3 +21,4 @@ mcp>=1.0.0
 rank-bm25>=0.2.2
 chardet>=5.2.0
 mistune>=3.0.0
+tiktoken>=0.7.0
