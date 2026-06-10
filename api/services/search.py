@@ -1,5 +1,6 @@
 """Search service: BM25 helpers, single-collection search, multi-collection fan-out."""
 
+import asyncio
 from time import monotonic
 from typing import Any
 
@@ -236,22 +237,34 @@ def _apply_provenance(
         )
 
 
-def _merge_and_rank(all_results: list[SearchResult]) -> list[SearchResult]:
-    """Return a new list sorted by score descending with sequential ranks assigned.
+_RRF_K = 60
 
-    Copies each result via model_copy() so the originals are not mutated.
+
+def _merge_collections_rrf(per_collection: list[list[SearchResult]]) -> list[SearchResult]:
+    """Fuse per-collection result lists with second-level Reciprocal Rank Fusion.
+
+    Each collection's results are already rank-ordered. Re-scoring every result
+    by ``1 / (k + rank_within_collection)`` and globally sorting normalises the
+    differing raw-score scales across backends (e.g. Chroma/pgvector
+    ``1 - distance`` vs Qdrant's native similarity) so no single collection's
+    score range dominates the merge. Results are copied via model_copy() so the
+    per-collection originals are not mutated.
 
     Args:
-        all_results: Results from one or more collections.
+        per_collection: One rank-ordered result list per collection.
 
     Returns:
-        New sorted list of copied SearchResult objects with rank fields set.
+        New, globally re-ranked list of copied SearchResult objects.
     """
-    ordered = sorted(
-        (r.model_copy() for r in all_results), key=lambda r: r.score, reverse=True
-    )
-    for rank, r in enumerate(ordered, start=1):
-        r.rank = rank
+    fused: list[SearchResult] = []
+    for results in per_collection:
+        for rank, result in enumerate(results, start=1):
+            copy = result.model_copy()
+            copy.score = 1.0 / (_RRF_K + rank)
+            fused.append(copy)
+    ordered = sorted(fused, key=lambda r: r.score, reverse=True)
+    for rank, result in enumerate(ordered, start=1):
+        result.rank = rank
     return ordered
 
 
@@ -268,73 +281,105 @@ def _update_top_k_stats(final: list[SearchResult], stats: dict[str, CollectionSt
             stats[source.collection_id].contributed_to_top_k += 1
 
 
-async def _get_collection_info(db: AsyncSession, col_id: str) -> dict[str, str] | None:
-    """Fetch collection name and workspace metadata from the database.
+async def _get_collections_info(
+    db: AsyncSession, col_ids: list[str]
+) -> dict[str, dict[str, str]]:
+    """Batch-fetch collection + workspace metadata for the given collection ids.
+
+    A single query (rather than one per collection) keeps all DB access on the
+    event loop, so the per-collection searches can safely fan out to threads
+    without sharing the AsyncSession across them.
 
     Args:
         db: Active async database session.
-        col_id: Collection UUID to look up.
+        col_ids: Collection ids to look up.
 
     Returns:
-        Dict with collection_name, workspace_id, workspace_name, or None if not found.
+        Mapping of collection id → {collection_name, workspace_id, workspace_name};
+        unknown ids are simply absent from the mapping.
     """
     from api.db import collections as col_t
     from api.db import workspaces as ws_t
 
-    row = (
+    rows = (
         await db.execute(
-            select(col_t.c.name, col_t.c.workspace_id, ws_t.c.name.label("workspace_name"))
+            select(
+                col_t.c.id, col_t.c.name, col_t.c.workspace_id,
+                ws_t.c.name.label("workspace_name"),
+            )
             .join(ws_t, col_t.c.workspace_id == ws_t.c.id)
-            .where(col_t.c.id == col_id)
+            .where(col_t.c.id.in_(col_ids))
         )
-    ).fetchone()
-    if row is None:
-        return None
+    ).fetchall()
     return {
-        "collection_name": str(row.name),
-        "workspace_id": str(row.workspace_id),
-        "workspace_name": str(row.workspace_name),
+        str(row.id): {
+            "collection_name": str(row.name),
+            "workspace_id": str(row.workspace_id),
+            "workspace_name": str(row.workspace_name),
+        }
+        for row in rows
     }
 
 
-async def _fan_out_to_collection(
+def _fan_out_one(
     col_id: str,
     query_vector: list[float],
     request: SearchRequest,
     *,
-    db: AsyncSession,
     vector_store: VectorStoreAdapter,
     redis_client: Any,
     fan_out: int,
-) -> tuple[list[SearchResult], CollectionStat, SearchMode] | None:
-    """Search one collection, annotate provenance, and return results + stat.
+) -> tuple[list[SearchResult], SearchMode, int, int]:
+    """Thread target: run one collection's search (no DB access on this thread).
 
     Args:
-        col_id: Collection UUID to search.
+        col_id: Collection to search.
         query_vector: Pre-computed query embedding.
         request: Full search request (top_k, hybrid, filters, etc.).
-        db: Async database session for metadata lookup.
         vector_store: Vector similarity search adapter.
-        redis_client: Redis client for BM25 corpus.
+        redis_client: Redis client for the BM25 corpus.
         fan_out: Candidate multiplier applied before filtering.
 
     Returns:
-        (annotated_results, stat, mode) or None if collection not found.
+        (results, mode, retrieved_before_filter, returned_after_filter).
     """
-    info = await _get_collection_info(db, col_id)
-    if info is None:
-        return None
-    col_results, col_mode, retrieved, returned = search_collection(
+    return search_collection(
         col_id, query_vector, request.query, request.top_k,
         fan_out=fan_out, hybrid=request.hybrid, alpha=request.hybrid_alpha,
         filters=request.filters, vector_store=vector_store, redis_client=redis_client,
     )
-    _apply_provenance(col_results, col_id, info)
-    stat = CollectionStat(
-        name=info["collection_name"], workspace_name=info["workspace_name"],
-        retrieved_before_filter=retrieved, returned_after_filter=returned,
-    )
-    return col_results, stat, col_mode
+
+
+def _collect_results(
+    known: list[str],
+    outcomes: list[tuple[list[SearchResult], SearchMode, int, int]],
+    infos: dict[str, dict[str, str]],
+) -> tuple[list[list[SearchResult]], dict[str, CollectionStat], SearchMode | None]:
+    """Annotate provenance, build per-collection stats, and detect fallback mode.
+
+    Args:
+        known: Collection ids that resolved, aligned with ``outcomes``.
+        outcomes: Per-collection ``_fan_out_one`` return tuples.
+        infos: Collection metadata keyed by collection id.
+
+    Returns:
+        (per_collection_results, stats, fallback) where ``fallback`` is
+        SEMANTIC_ONLY if any collection fell back, otherwise None.
+    """
+    stats: dict[str, CollectionStat] = {}
+    per_collection: list[list[SearchResult]] = []
+    fallback: SearchMode | None = None
+    for cid, (results, col_mode, retrieved, returned) in zip(known, outcomes, strict=True):
+        info = infos[cid]
+        _apply_provenance(results, cid, info)
+        stats[cid] = CollectionStat(
+            name=info["collection_name"], workspace_name=info["workspace_name"],
+            retrieved_before_filter=retrieved, returned_after_filter=returned,
+        )
+        if col_mode == SearchMode.SEMANTIC_ONLY:
+            fallback = SearchMode.SEMANTIC_ONLY
+        per_collection.append(results)
+    return per_collection, stats, fallback
 
 
 async def multi_collection_search(
@@ -345,11 +390,12 @@ async def multi_collection_search(
     vector_store: VectorStoreAdapter,
     redis_client: Any,
 ) -> SearchResponse:
-    """Search across one or more collections and merge results.
+    """Search across one or more collections and merge with second-level RRF.
 
-    Embeds the query once, fans out to each requested collection via
-    _fan_out_to_collection, merges results with a global score sort, and
-    computes per-collection stats.
+    Embeds the query once, batch-loads collection metadata, fans out to each
+    collection concurrently via ``asyncio.gather`` (each search runs in a worker
+    thread so the blocking vector-store/BM25 calls do not stall the event loop),
+    then fuses the per-collection results with Reciprocal Rank Fusion.
 
     Args:
         request: Parsed SearchRequest from the caller.
@@ -365,22 +411,18 @@ async def multi_collection_search(
     query_vector = embedder.embed(request.query)
     embed_ms = int((monotonic() - t0) * 1000)
     fan_out = request.fan_out if request.fan_out is not None else _DEFAULT_FAN_OUT
-    all_results: list[SearchResult] = []
-    stats: dict[str, CollectionStat] = {}
-    mode = SearchMode.HYBRID if request.hybrid else SearchMode.SEMANTIC
-    for col_id in request.collection_ids:
-        hit = await _fan_out_to_collection(
-            col_id, query_vector, request,
-            db=db, vector_store=vector_store, redis_client=redis_client, fan_out=fan_out,
+    infos = await _get_collections_info(db, request.collection_ids)
+    known = [cid for cid in request.collection_ids if cid in infos]
+    outcomes = await asyncio.gather(*[
+        asyncio.to_thread(
+            _fan_out_one, cid, query_vector, request,
+            vector_store=vector_store, redis_client=redis_client, fan_out=fan_out,
         )
-        if hit is None:
-            continue
-        col_results, stat, col_mode = hit
-        if col_mode == SearchMode.SEMANTIC_ONLY:
-            mode = SearchMode.SEMANTIC_ONLY
-        stats[col_id] = stat
-        all_results.extend(col_results)
-    final = _merge_and_rank(all_results)[:request.top_k]
+        for cid in known
+    ])
+    per_collection, stats, fallback = _collect_results(known, list(outcomes), infos)
+    mode = fallback or (SearchMode.HYBRID if request.hybrid else SearchMode.SEMANTIC)
+    final = _merge_collections_rrf(per_collection)[: request.top_k]
     _update_top_k_stats(final, stats)
     total_ms = int((monotonic() - t0) * 1000)
     return SearchResponse(
