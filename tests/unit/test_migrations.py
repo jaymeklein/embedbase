@@ -12,8 +12,12 @@ import sqlalchemy as sa
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, inspect
+from sqlalchemy.pool import NullPool
 
 from api.tables import metadata
+
+# Ephemeral per-test SQLite files: NullPool closes each connection on return so
+# no sqlite3.Connection lingers in a pool to be GC'd unclosed (ResourceWarning).
 
 _API_DIR = Path(__file__).parent.parent.parent / "api"
 _VERSIONS_DIR = _API_DIR / "alembic" / "versions"
@@ -26,7 +30,7 @@ def _apply_migrations(db_path: str) -> None:
     its upgrade() function under an Alembic Operations context. Avoids the
     async env.py path to keep tests hermetic and fast.
     """
-    engine = create_engine(f"sqlite:///{db_path}")
+    engine = create_engine(f"sqlite:///{db_path}", poolclass=NullPool)
     with engine.connect() as conn:
         ctx = MigrationContext.configure(conn)
         for migration_file in sorted(_VERSIONS_DIR.glob("[0-9]*.py")):
@@ -52,10 +56,10 @@ def test_migration_schema_matches_metadata(tmp_path):
     """
     db_a = str(tmp_path / "alembic.db")
     _apply_migrations(db_a)
-    insp_a = inspect(create_engine(f"sqlite:///{db_a}"))
+    insp_a = inspect(create_engine(f"sqlite:///{db_a}", poolclass=NullPool))
 
     db_b = str(tmp_path / "metadata.db")
-    engine_b = create_engine(f"sqlite:///{db_b}")
+    engine_b = create_engine(f"sqlite:///{db_b}", poolclass=NullPool)
     metadata.create_all(engine_b)
     insp_b = inspect(engine_b)
 
@@ -76,7 +80,7 @@ def test_migration_indexes_exist(tmp_path):
     """Expected indexes must be present after all migrations run."""
     db_path = str(tmp_path / "idx.db")
     _apply_migrations(db_path)
-    insp = inspect(create_engine(f"sqlite:///{db_path}"))
+    insp = inspect(create_engine(f"sqlite:///{db_path}", poolclass=NullPool))
 
     idx_names = {
         idx["name"]
