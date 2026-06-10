@@ -8,7 +8,7 @@ import pytest
 from api.models.search import SearchFilters, SearchMode, SearchRequest, SearchResult
 from api.services.search import (
     _apply_provenance,
-    _merge_and_rank,
+    _merge_collections_rrf,
     _rank_by_bm25,
     _update_top_k_stats,
     multi_collection_search,
@@ -97,25 +97,33 @@ def test_rank_by_bm25_missing_chunk_id_scores_zero():
 
 
 # ---------------------------------------------------------------------------
-# _merge_and_rank
+# _merge_collections_rrf (second-level RRF)
 # ---------------------------------------------------------------------------
 
 
-def test_merge_and_rank_assigns_sequential_ranks():
-    results = [_result("a", score=0.5), _result("b", score=0.9), _result("c", score=0.1)]
-    merged = _merge_and_rank(results)
+def test_merge_collections_rrf_assigns_sequential_ranks():
+    # One collection, already rank-ordered → fused order follows input order.
+    per_collection = [[_result("a"), _result("b"), _result("c")]]
+    merged = _merge_collections_rrf(per_collection)
     assert [r.rank for r in merged] == [1, 2, 3]
-    assert merged[0].chunk_id == "b"
+    assert merged[0].chunk_id == "a"
 
 
-def test_merge_and_rank_empty_list():
-    assert _merge_and_rank([]) == []
+def test_merge_collections_rrf_empty():
+    assert _merge_collections_rrf([]) == []
 
 
-def test_merge_and_rank_does_not_mutate_originals():
-    originals = [_result("a", score=0.5), _result("b", score=0.9)]
+def test_merge_collections_rrf_interleaves_by_rank():
+    # Each collection's top hit must outrank either collection's second hit.
+    per_collection = [[_result("a1"), _result("a2")], [_result("b1"), _result("b2")]]
+    merged = _merge_collections_rrf(per_collection)
+    assert {merged[0].chunk_id, merged[1].chunk_id} == {"a1", "b1"}
+
+
+def test_merge_collections_rrf_does_not_mutate_originals():
+    originals = [_result("a"), _result("b")]
     original_ranks = [r.rank for r in originals]
-    _merge_and_rank(originals)
+    _merge_collections_rrf([originals])
     assert [r.rank for r in originals] == original_ranks
 
 
@@ -289,14 +297,15 @@ def test_search_collection_filters_applied_after_ranking():
 
 
 def _make_db_mock(collection_name: str = "my-col", workspace_id: str = "ws1",
-                  workspace_name: str = "my-ws") -> AsyncMock:
+                  workspace_name: str = "my-ws", col_id: str = "col1") -> AsyncMock:
     row = MagicMock()
+    row.id = col_id
     row.name = collection_name
     row.workspace_id = workspace_id
     row.workspace_name = workspace_name
 
     execute_result = MagicMock()
-    execute_result.fetchone.return_value = row
+    execute_result.fetchall.return_value = [row]
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=execute_result)
@@ -347,7 +356,7 @@ async def test_multi_collection_search_skips_unknown_collection():
     search_module._bm25_cache.clear()
 
     execute_result = MagicMock()
-    execute_result.fetchone.return_value = None
+    execute_result.fetchall.return_value = []
     db = AsyncMock()
     db.execute = AsyncMock(return_value=execute_result)
 
