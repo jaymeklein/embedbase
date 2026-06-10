@@ -12,6 +12,7 @@ pytest.importorskip("chardet")
 
 from sqlalchemy import create_engine, insert, select  # noqa: E402
 from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
+from sqlalchemy.pool import NullPool  # noqa: E402
 
 from api.models.config import AppConfig  # noqa: E402
 from api.tables import documents, job_records, metadata  # noqa: E402
@@ -51,7 +52,9 @@ class FakeRedis:
 
 
 def _factory(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'ingest.db'}", future=True)
+    # NullPool: throwaway test DB — close connections on return, never pool them
+    # (avoids an unclosed sqlite3.Connection ResourceWarning at engine GC).
+    engine = create_engine(f"sqlite:///{tmp_path / 'ingest.db'}", future=True, poolclass=NullPool)
     metadata.create_all(engine)
     return sessionmaker(engine, class_=Session, expire_on_commit=False)
 
