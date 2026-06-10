@@ -12,6 +12,7 @@ from api.dependencies import set_embedding_adapter, set_redis_client, set_vector
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import collections, config, documents, health, mcp, search, workspaces
+from api.services.config_env import overlay_vector_store_env
 from api.settings import settings
 
 logger = structlog.get_logger()
@@ -21,16 +22,19 @@ def _load_app_config() -> AppConfig:
     config_path = Path("/app/config.yaml")
     if not config_path.exists():
         config_path = Path("config.yaml")
-        
+
+    data: dict = {}
     if config_path.exists():
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
-        try:
-            return AppConfig.model_validate(data)
-        except ValidationError as exc:
-            raise ValueError(f"Invalid config.yaml:\n{exc}") from exc
-    
-    return AppConfig()
+
+    # Env vars (e.g. from docker-compose.postgres.yml) override the file so the
+    # vector-store backend + secrets can be selected without editing config.yaml.
+    data = overlay_vector_store_env(data)
+    try:
+        return AppConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ValueError(f"Invalid config.yaml:\n{exc}") from exc
 
 
 @asynccontextmanager
