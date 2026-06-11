@@ -23,7 +23,9 @@ from api.settings import settings
 
 def _raw_key_from_scope(scope: Scope) -> str | None:
     """Extract the API key from ``Authorization``/``X-API-Key`` request headers."""
-    headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+    # ASGI header bytes are latin-1 per HTTP; decoding as UTF-8 would raise on a
+    # malformed byte and surface a 500 instead of a clean 401.
+    headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
     x_api_key = headers.get("x-api-key")
     if x_api_key:
         return x_api_key.strip()
