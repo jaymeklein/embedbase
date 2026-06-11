@@ -1,4 +1,7 @@
-# Worker runtime dependencies — runs the full parse → chunk → embed → store pipeline.
+# Worker runtime dependencies (light) — messaging, config, lightweight search.
+# Heavy ML/ingestion deps (torch, chromadb, parsers, vector-store drivers) live
+# in worker/requirements-ml.txt and install in a separate Docker layer gated by
+# the INSTALL_ML build-arg, so changes here never trigger a torch reinstall.
 celery[redis]>=5.4.0
 redis>=5.0.0
 watchfiles>=0.13          # hot-reload wrapper for dev (replaces removed --autoreload)
@@ -9,24 +12,8 @@ PyYAML>=6.0.1
 # Shared DB schema (sync engine over the same SQLite file)
 sqlalchemy[asyncio]>=2.0.0
 
-# Ingestion pipeline (Delivery 2)
+# Lightweight ingestion helpers (tokenisation, BM25, encoding + markdown parsing)
 tiktoken>=0.7.0
 rank-bm25>=0.2.2
-sentence-transformers>=3.0.0
-chromadb>=0.5.3
-PyMuPDF>=1.24.0
 chardet>=5.2.0
 mistune>=3.0.0
-pandas>=2.2.0
-tree-sitter>=0.21.0
-tree-sitter-python>=0.21.0
-tree-sitter-javascript>=0.21.0
-tree-sitter-typescript>=0.21.0
-tree-sitter-go>=0.21.0
-tree-sitter-rust>=0.21.0
-tree-sitter-java>=0.21.0
-
-# Vector store backends (Delivery 3) — lazy-imported by the adapters.
-asyncpg>=0.29.0
-pgvector>=0.2.5
-qdrant-client>=1.9.0
