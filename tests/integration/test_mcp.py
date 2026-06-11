@@ -220,6 +220,28 @@ async def test_ingest_document_rejects_unknown_extension(seeded, tmp_path):
     assert exc.value.status_code == 415
 
 
+async def test_ingest_document_missing_file_is_404(seeded, tmp_path):
+    from fastapi import HTTPException
+
+    factory, _ = seeded
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.ingest_document(
+                collection_id="colA", file_path=str(tmp_path / "ghost.txt"), db=db
+            )
+    assert exc.value.status_code == 404
+
+
+async def test_delete_document_unknown_id_is_404(seeded):
+    from fastapi import HTTPException
+
+    factory, _ = seeded
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.delete_document(document_id="doc_nope", db=db)
+    assert exc.value.status_code == 404
+
+
 # ── Auth + rate limiting (ASGI middleware) ────────────────────────────────────
 
 
@@ -259,3 +281,37 @@ async def test_rate_limit_rejects_61st_request_with_429():
         statuses = [(await ac.get("/sse", headers=headers)).status_code for _ in range(61)]
     assert statuses[:60] == [200] * 60
     assert statuses[60] == 429
+
+
+def test_malformed_header_bytes_decode_without_error():
+    # A high byte (0xE9) in the auth header is valid latin-1 but invalid UTF-8;
+    # the extractor must not raise (which would surface a 500 instead of a 401).
+    from api.services.mcp.middleware import _raw_key_from_scope
+
+    scope = {"type": "http", "headers": [(b"authorization", b"Bearer \xe9key")]}
+    assert _raw_key_from_scope(scope) == "\xe9key"
+
+
+# ── Mount wiring ──────────────────────────────────────────────────────────────
+
+
+def test_mount_app_skips_when_disabled():
+    from fastapi import FastAPI
+
+    from api.models.config import MCPConfig
+    from api.services.mcp.server import mount_app
+
+    app = FastAPI()
+    mount_app(app, MCPConfig(enabled=False))
+    assert "/mcp" not in {getattr(r, "path", "") for r in app.routes}
+
+
+def test_mount_app_mounts_when_enabled():
+    from fastapi import FastAPI
+
+    from api.models.config import MCPConfig
+    from api.services.mcp.server import mount_app
+
+    app = FastAPI()
+    mount_app(app, MCPConfig(enabled=True))
+    assert "/mcp" in {getattr(r, "path", "") for r in app.routes}
