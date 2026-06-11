@@ -39,7 +39,7 @@ class _FakeOllamaClient:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         pass
 
-    async def __aenter__(self) -> "_FakeOllamaClient":
+    async def __aenter__(self) -> _FakeOllamaClient:
         return self
 
     async def __aexit__(self, *args: Any) -> bool:
