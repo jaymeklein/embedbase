@@ -1,0 +1,21 @@
+version: "3.9"
+
+# GPU acceleration override (NVIDIA RTX only). Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# Requires the NVIDIA Container Toolkit on the host. The default CPU stack is
+# unaffected — worker/Dockerfile has zero NVIDIA dependencies. Select the device
+# in config.yaml via `parsers.docling_device: cuda` (or `auto`).
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile.gpu
+    image: embedbase/worker-gpu:1.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
