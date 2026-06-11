@@ -113,7 +113,10 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(search.router)
     app.include_router(config.router)
-    app.include_router(mcp.router)
+
+    # MCP server (Delivery 4) — a mounted SSE ASGI sub-app, not a normal router.
+    # Mount last so its /mcp prefix never shadows the REST routes above.
+    mcp.mount_mcp(app, _load_app_config().mcp)
 
     return app
 

@@ -186,7 +186,7 @@ def _run_ingestion(
         session.commit()
 
     # --- Parse → chunk -------------------------------------------------------
-    parser = get_parser(file_type, config.chunking)
+    parser = get_parser(file_type, config.chunking, parsers=config.parsers)
     chunks = parser.parse(file_path, document_id)
 
     # --- Embed (batched) → upsert -------------------------------------------
