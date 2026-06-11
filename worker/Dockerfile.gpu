@@ -1,0 +1,53 @@
+# GPU worker image (NVIDIA RTX only) — docling layout/OCR on CUDA.
+#
+# Build:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml build worker
+# Run:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# The CPU worker/Dockerfile is the default and has ZERO NVIDIA dependencies; this
+# file is only used via the gpu compose override. Match the cu1XX index URL below
+# to the host driver: run `nvidia-smi`, then pick the wheel from
+# https://pytorch.org/get-started/locally/.
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
+
+# Python 3.12 (project target) + build tooling for flash-attn.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common build-essential libffi-dev git \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-dev python3.12-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.12 /usr/local/bin/python \
+    && python -m ensurepip --upgrade
+
+# Core worker deps (light layer, mirrors the CPU image).
+COPY worker/requirements.txt .
+RUN python -m pip install --no-cache-dir -r requirements.txt
+
+# CUDA build of torch (replaces the CPU wheel), then docling + Flash Attention 2.
+# flash-attn compiles against the CUDA toolkit and needs an NVIDIA GPU at build.
+RUN python -m pip install --no-cache-dir torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu128 \
+    && python -m pip install --no-cache-dir docling flash-attn
+
+# Remaining ML/ingestion adapter deps (sentence-transformers, chroma, parsers,
+# vector-store drivers). torch is already the CUDA build above, so it is reused.
+COPY worker/requirements-ml.txt .
+RUN python -m pip install --no-cache-dir -r requirements-ml.txt
+
+# Pre-download embedding + docling models so the first ingest is fast.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+ARG EMBEDBASE_DOCLING_MODELS=true
+RUN if [ "$EMBEDBASE_DOCLING_MODELS" = "true" ]; then \
+        python -c "from docling.document_converter import DocumentConverter; DocumentConverter()"; \
+    fi
+ENV HF_HUB_OFFLINE=1
+
+COPY api ./api
+COPY worker ./worker
+
+CMD celery -A worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-2}

@@ -27,7 +27,9 @@ OUT = REPO / "docs" / "openapi.yaml"
 def main() -> None:
     schema = create_app().openapi()
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUT, "w") as fh:
+    # Write UTF-8 explicitly — on Windows the default encoding is cp1252, which
+    # would corrupt any non-ASCII description and break read_text() on Linux/CI.
+    with open(OUT, "w", encoding="utf-8") as fh:
         yaml.dump(schema, fh, allow_unicode=True, sort_keys=False)
     print(f"Written {OUT.relative_to(REPO)}")
 

@@ -46,7 +46,7 @@ def test_all_routers_are_wired():
         "/documents",
         "/search",
         "/config",
-        "/mcp/sse",
+        "/mcp",  # MCP SSE app mounted here (SSE served at /mcp/sse)
     }
     missing = expected - paths
     assert not missing, f"router paths missing: {missing}"
@@ -100,7 +100,11 @@ def test_docker_compose_has_all_services():
 
 
 def test_compose_overrides_parse():
-    for name in ("docker-compose.postgres.yml", "docker-compose.qdrant.yml"):
+    for name in (
+        "docker-compose.postgres.yml",
+        "docker-compose.qdrant.yml",
+        "docker-compose.gpu.yml",
+    ):
         data = yaml.safe_load((REPO / name).read_text())
         assert "services" in data
 
