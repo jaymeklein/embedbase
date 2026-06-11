@@ -24,6 +24,5 @@ async def test_metrics_stub_returns_200(client):
     assert r.status_code == 200
 
 
-async def test_mcp_sse_stub_returns_200(client):
-    r = await client.get("/mcp/sse")
-    assert r.status_code == 200
+# /mcp is no longer a stub — Delivery 4 mounts the real MCP SSE server there.
+# Its auth + behaviour are covered by tests/integration/test_mcp.py.

@@ -26,7 +26,11 @@ async def upload_document(
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload and enqueue a document for ingestion."""
+    """Upload and enqueue a document for ingestion.
+
+    Accepted formats: PDF, TXT, Markdown, source code (py/js/ts/go/rs/java etc.),
+    CSV, JSON, and -- via the docling parser -- DOCX and PPTX.
+    """
     await doc_svc.resolve_collection(db, col_id, ws_id)
     return await doc_svc.ingest(db, col_id, file, principal)
 
