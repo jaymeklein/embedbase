@@ -610,6 +610,12 @@ paths:
       tags:
       - documents
       summary: Upload Document
+      description: 'Upload and enqueue a document for ingestion.
+
+
+        Accepted formats: PDF, TXT, Markdown, source code (py/js/ts/go/rs/java etc.),
+
+        CSV, JSON, and -- via the docling parser -- DOCX and PPTX.'
       operationId: upload_document_workspaces__ws_id__collections__col_id__documents_post
       parameters:
       - name: ws_id
@@ -662,6 +668,7 @@ paths:
       tags:
       - documents
       summary: List Documents
+      description: List all documents in a collection with their ingestion status.
       operationId: list_documents_workspaces__ws_id__collections__col_id__documents_get
       parameters:
       - name: ws_id
@@ -709,6 +716,7 @@ paths:
       tags:
       - documents
       summary: Get Document Status
+      description: Return the latest ingestion job status for a document.
       operationId: get_document_status_workspaces__ws_id__collections__col_id__documents__doc_id__status_get
       parameters:
       - name: ws_id
@@ -762,6 +770,7 @@ paths:
       tags:
       - documents
       summary: Delete Document
+      description: Delete a document and enqueue async vector-store cleanup.
       operationId: delete_document_workspaces__ws_id__collections__col_id__documents__doc_id__delete
       parameters:
       - name: ws_id
@@ -812,6 +821,8 @@ paths:
       tags:
       - documents
       summary: Upload Document Flat
+      description: Upload a document by collection ID without the nested workspace
+        path.
       operationId: upload_document_flat_documents_post
       parameters:
       - name: authorization
@@ -853,6 +864,8 @@ paths:
       tags:
       - documents
       summary: Delete Document Flat
+      description: Delete a document by ID without the nested workspace/collection
+        path.
       operationId: delete_document_flat_documents__doc_id__delete
       parameters:
       - name: doc_id
@@ -891,13 +904,38 @@ paths:
       tags:
       - search
       summary: Search
+      description: "Run a hybrid (semantic + BM25) search across one or more collections.\n\
+        \nArgs:\n    request: Search parameters including query, collection IDs, and\
+        \ filters.\n    db: Injected async database session for collection metadata.\n\
+        \    _principal: Authenticated master principal (enforces auth, value unused).\n\
+        \    embedder: Embedding adapter injected via Depends.\n    vector_store:\
+        \ Vector store adapter injected via Depends.\n    redis_client: Redis client\
+        \ injected via Depends (raises 503 if not ready).\n\nReturns:\n    SearchResponse\
+        \ with ranked results and per-collection stats."
       operationId: search_search_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SearchRequest'
-        required: true
       responses:
         '200':
           description: Successful Response
@@ -971,18 +1009,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /mcp/sse:
-    get:
-      tags:
-      - mcp
-      summary: Mcp Sse
-      operationId: mcp_sse_mcp_sse_get
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
 components:
   schemas:
     APIKeyCreate:
@@ -993,6 +1019,7 @@ components:
           default: ''
       type: object
       title: APIKeyCreate
+      description: Body for POST /workspaces/{ws_id}/collections/{col_id}/keys.
     AppConfig:
       properties:
         embedding:
@@ -1031,6 +1058,17 @@ components:
             code:
               fallback_window_lines: 50
               max_symbol_tokens: 4096
+        parsers:
+          $ref: '#/components/schemas/ParserConfig'
+          default:
+            pdf_backend: pymupdf
+            docling_ocr: false
+            docling_ocr_engine: easyocr
+            docling_tables: true
+            docling_device: cpu
+            docling_flash_attention: false
+            docling_ocr_batch_size: 8
+            docling_layout_batch_size: 8
         search:
           $ref: '#/components/schemas/SearchConfig'
           default:
@@ -1144,6 +1182,7 @@ components:
       required:
       - name
       title: CollectionCreate
+      description: Body for POST /workspaces/{ws_id}/collections.
     CollectionStat:
       properties:
         name:
@@ -1193,6 +1232,7 @@ components:
           title: Icon
       type: object
       title: CollectionUpdate
+      description: Body for PATCH /workspaces/{ws_id}/collections/{col_id}.
     CsvChunkConfig:
       properties:
         rows_per_chunk:
@@ -1268,6 +1308,42 @@ components:
           default: 20
       type: object
       title: MCPConfig
+    ParserConfig:
+      properties:
+        pdf_backend:
+          type: string
+          title: Pdf Backend
+          default: pymupdf
+        docling_ocr:
+          type: boolean
+          title: Docling Ocr
+          default: false
+        docling_ocr_engine:
+          type: string
+          title: Docling Ocr Engine
+          default: easyocr
+        docling_tables:
+          type: boolean
+          title: Docling Tables
+          default: true
+        docling_device:
+          type: string
+          title: Docling Device
+          default: cpu
+        docling_flash_attention:
+          type: boolean
+          title: Docling Flash Attention
+          default: false
+        docling_ocr_batch_size:
+          type: integer
+          title: Docling Ocr Batch Size
+          default: 8
+        docling_layout_batch_size:
+          type: integer
+          title: Docling Layout Batch Size
+          default: 8
+      type: object
+      title: ParserConfig
     PgvectorConfig:
       properties:
         host:
@@ -1357,6 +1433,13 @@ components:
           title: Tags
       type: object
       title: SearchFilters
+    SearchMode:
+      type: string
+      enum:
+      - hybrid
+      - semantic
+      - semantic_only
+      title: SearchMode
     SearchRequest:
       properties:
         query:
@@ -1424,8 +1507,7 @@ components:
           title: Total Ms
           default: 0
         search_mode:
-          type: string
-          title: Search Mode
+          $ref: '#/components/schemas/SearchMode'
           default: hybrid
         under_delivered:
           type: boolean
@@ -1588,6 +1670,7 @@ components:
       required:
       - name
       title: WorkspaceCreate
+      description: Body for POST /workspaces.
     WorkspaceUpdate:
       properties:
         name:
@@ -1612,3 +1695,4 @@ components:
           title: Icon
       type: object
       title: WorkspaceUpdate
+      description: Body for PATCH /workspaces/{ws_id}.
