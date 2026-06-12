@@ -30,6 +30,11 @@ _VECTOR_STORE_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 _INT_KEYS = frozenset({"port"})
 
+# (env var name, nested path within the parsers section).
+_PARSER_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("DOCLING_ARTIFACTS_PATH", ("docling_artifacts_path",)),
+)
+
 
 def overlay_vector_store_env(data: dict[str, Any]) -> dict[str, Any]:
     """Overlay vector-store env vars onto the ``vector_store`` section of ``data``.
@@ -51,6 +56,29 @@ def overlay_vector_store_env(data: dict[str, Any]) -> dict[str, Any]:
         value = os.environ.get(env_name)
         if value:
             _set_nested(vector_store, path, value)
+    return data
+
+
+def overlay_parser_env(data: dict[str, Any]) -> dict[str, Any]:
+    """Overlay parser env vars onto the ``parsers`` section of ``data``.
+
+    Mirrors :func:`overlay_vector_store_env`: only env vars that are set (and
+    non-empty) take effect, so the docling models/artifacts directory can be
+    pinned from ``.env`` without editing ``config.yaml``.
+
+    Args:
+        data: Raw config mapping (e.g. parsed from config.yaml), possibly empty.
+
+    Returns:
+        The same mapping, mutated in place with the overrides applied.
+    """
+    parsers = data.setdefault("parsers", {})
+    if not isinstance(parsers, dict):
+        return data
+    for env_name, path in _PARSER_ENV:
+        value = os.environ.get(env_name)
+        if value:
+            _set_nested(parsers, path, value)
     return data
 
 

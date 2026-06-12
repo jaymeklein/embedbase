@@ -10,8 +10,10 @@ dependency installed. The conversion pipeline is built on the first
 :meth:`parse` call.
 
 Pipeline construction is written against docling's documented API.
-# verified against docling docs (docling>=2.0): DocumentConverter, HybridChunker,
-# PdfPipelineOptions, AcceleratorOptions — not pinned in api/requirements.txt.
+# verified against docling==2.102.0 / docling-core==2.82.0 (exercised locally):
+# DocumentConverter, HybridChunker, PdfPipelineOptions, AcceleratorOptions,
+# ChunkingSerializerProvider + MarkdownTableSerializer. Heavy optional path, so
+# docling is not pinned in api/requirements.txt.
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ class DoclingParser:
         flash_attention: bool = False,
         ocr_batch_size: int = 8,
         layout_batch_size: int = 8,
+        artifacts_path: str | None = None,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         max_tokens: int = 512,
     ) -> None:
@@ -58,6 +61,9 @@ class DoclingParser:
             flash_attention: Use Flash Attention 2 (RTX 30/40 + ``flash-attn``).
             ocr_batch_size: OCR batch size (bump to ~64 on GPU).
             layout_batch_size: Layout-model batch size (bump to ~64 on GPU).
+            artifacts_path: Local directory holding the docling models; when set,
+                docling loads from here instead of the default HuggingFace cache
+                (offline / pinned models). ``None`` keeps docling's default.
             model_name: HF tokenizer used to size chunks to the embedder budget.
             max_tokens: Maximum tokens per chunk.
 
@@ -76,6 +82,7 @@ class DoclingParser:
         self._flash_attention = flash_attention
         self._ocr_batch_size = ocr_batch_size
         self._layout_batch_size = layout_batch_size
+        self._artifacts_path = artifacts_path
         self._model_name = model_name
         self._max_tokens = max_tokens
         self._converter: Any = None
@@ -119,7 +126,29 @@ class DoclingParser:
                 setattr(opts, attr, value)
         if self._ocr and self._ocr_engine != "easyocr":
             opts.ocr_options = self._ocr_options()
+        if self._artifacts_path:
+            opts.artifacts_path = self._artifacts_path
         return opts
+
+    def _chunk_serializer_provider(self) -> Any:
+        """Build a chunk serializer that renders tables as Markdown, not triplets.
+
+        docling's ``HybridChunker`` defaults to a *triplet* table serializer
+        (``"col = value"`` prose). The docling path is selected precisely when
+        table structure matters, so the embedded chunk should keep the Markdown
+        table (pipe-delimited) intact for retrieval.
+        """
+        from docling_core.transforms.chunker.hierarchical_chunker import (
+            ChunkingDocSerializer,
+            ChunkingSerializerProvider,
+        )
+        from docling_core.transforms.serializer.markdown import MarkdownTableSerializer
+
+        class _MarkdownTableProvider(ChunkingSerializerProvider):
+            def get_serializer(self, doc: Any) -> Any:
+                return ChunkingDocSerializer(doc=doc, table_serializer=MarkdownTableSerializer())
+
+        return _MarkdownTableProvider()
 
     def _build_pipeline(self) -> None:
         """Construct the docling converter + chunker (lazy, heavy import)."""
@@ -146,7 +175,9 @@ class DoclingParser:
         tokenizer = HuggingFaceTokenizer.from_pretrained(
             model_name=self._model_name, max_tokens=self._max_tokens
         )
-        self._chunker = HybridChunker(tokenizer=tokenizer, merge_peers=True)
+        self._chunker = HybridChunker(
+            tokenizer=tokenizer, merge_peers=True, serializer_provider=self._chunk_serializer_provider()
+        )
 
     def parse(self, file_path: str, document_id: str) -> list[Chunk]:
         """Convert ``file_path`` to a list of heading-aware :class:`Chunk` objects.
