@@ -6,14 +6,15 @@ revision will cause test_migration_schema_matches_metadata to fail.
 """
 
 import importlib.util
+import sqlite3
 from pathlib import Path
 
-import sqlalchemy as sa
 from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.pool import NullPool
 
+import api.db as db
 from api.tables import metadata
 
 # Ephemeral per-test SQLite files: NullPool closes each connection on return so
@@ -91,3 +92,30 @@ def test_migration_indexes_exist(tmp_path):
     assert "collections_workspace_idx" in idx_names
     assert "api_keys_prefix_idx" in idx_names
     assert "documents_collection_idx" in idx_names
+
+
+def test_real_runner_commits_migrations_to_disk(tmp_path, monkeypatch):
+    """The production async runner must COMMIT — not roll back — migrations.
+
+    The helpers above apply revisions directly; this one drives the real
+    ``db._run_migrations_sync()`` -> ``command.upgrade`` -> ``env.run_migrations_online``
+    path used at startup. It regresses the bug where migrations ran in a
+    transaction SQLite discarded on close, leaving an empty schema on disk.
+    """
+    db_file = tmp_path / "runner.db"
+    monkeypatch.setattr(db, "_async_db_url", lambda: f"sqlite+aiosqlite:///{db_file.as_posix()}")
+
+    db._run_migrations_sync()
+
+    assert db_file.exists()
+    conn = sqlite3.connect(str(db_file))
+    try:
+        doc_cols = [row[1] for row in conn.execute("PRAGMA table_info(documents)")]
+        versions = [row[0] for row in conn.execute("SELECT version_num FROM alembic_version")]
+    finally:
+        conn.close()
+
+    # 0003 (Add documents.status) must persist and a head revision must be
+    # stamped — both are wiped out when the migration work is rolled back.
+    assert "status" in doc_cols
+    assert versions
