@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 from api.models.config import AppConfig
-from api.services.config_env import overlay_vector_store_env
+from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 
 
 @lru_cache(maxsize=1)
@@ -25,4 +25,4 @@ def get_config() -> AppConfig:
             with open(candidate) as fh:
                 data = yaml.safe_load(fh) or {}
             break
-    return AppConfig.model_validate(overlay_vector_store_env(data))
+    return AppConfig.model_validate(overlay_parser_env(overlay_vector_store_env(data)))
