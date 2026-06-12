@@ -14,7 +14,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool, text
+from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Alembic config object — provides access to values within alembic.ini
@@ -69,12 +69,14 @@ async def run_migrations_online() -> None:
     )
 
     async with connectable.connect() as connection:
-        # Apply SQLite pragmas before running migrations
-        await connection.execute(text("PRAGMA journal_mode=WAL"))
-        await connection.execute(text("PRAGMA synchronous=NORMAL"))
-        await connection.execute(text("PRAGMA foreign_keys=ON"))
         # Bridge async connection into Alembic's sync migration context
         await connection.run_sync(do_run_migrations)
+        # Persist explicitly. ``.connect()`` autobegins a transaction; Alembic's
+        # own commit (over the run_sync-bridged sync connection) does not always
+        # propagate to this outer async connection, so SQLite rolls the work back
+        # on close and the migrations are silently lost. The runtime engine in
+        # api/db.py applies the WAL/foreign-key pragmas for normal operation.
+        await connection.commit()
 
     await connectable.dispose()
 
