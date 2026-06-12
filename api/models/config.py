@@ -98,6 +98,11 @@ class ParserConfig(BaseModel):
     docling_flash_attention: bool = False  # RTX 30/40 series; needs flash-attn
     docling_ocr_batch_size: int = 8  # bump to ~64 on GPU
     docling_layout_batch_size: int = 8  # bump to ~64 on GPU
+    # Local directory holding the docling layout/OCR/table models. When set, docling
+    # loads models from here instead of the default HuggingFace cache — pin it for
+    # offline/air-gapped runs or a mounted models volume. Overridable via the
+    # DOCLING_ARTIFACTS_PATH env var (.env). None -> docling's default cache.
+    docling_artifacts_path: str | None = None
 
 
 class MCPConfig(BaseModel):

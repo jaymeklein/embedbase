@@ -47,6 +47,7 @@ class DoclingParser:
         flash_attention: bool = False,
         ocr_batch_size: int = 8,
         layout_batch_size: int = 8,
+        artifacts_path: str | None = None,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         max_tokens: int = 512,
     ) -> None:
@@ -60,6 +61,9 @@ class DoclingParser:
             flash_attention: Use Flash Attention 2 (RTX 30/40 + ``flash-attn``).
             ocr_batch_size: OCR batch size (bump to ~64 on GPU).
             layout_batch_size: Layout-model batch size (bump to ~64 on GPU).
+            artifacts_path: Local directory holding the docling models; when set,
+                docling loads from here instead of the default HuggingFace cache
+                (offline / pinned models). ``None`` keeps docling's default.
             model_name: HF tokenizer used to size chunks to the embedder budget.
             max_tokens: Maximum tokens per chunk.
 
@@ -78,6 +82,7 @@ class DoclingParser:
         self._flash_attention = flash_attention
         self._ocr_batch_size = ocr_batch_size
         self._layout_batch_size = layout_batch_size
+        self._artifacts_path = artifacts_path
         self._model_name = model_name
         self._max_tokens = max_tokens
         self._converter: Any = None
@@ -121,6 +126,8 @@ class DoclingParser:
                 setattr(opts, attr, value)
         if self._ocr and self._ocr_engine != "easyocr":
             opts.ocr_options = self._ocr_options()
+        if self._artifacts_path:
+            opts.artifacts_path = self._artifacts_path
         return opts
 
     def _chunk_serializer_provider(self) -> Any:
