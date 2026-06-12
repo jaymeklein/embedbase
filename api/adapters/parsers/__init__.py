@@ -61,7 +61,9 @@ def _build_docling_parser(ext: str, parsers: ParserConfig) -> ParserAdapter:
 
     if ext in DOCLING_EXTENSIONS:
         # SimplePipeline path — fast, no OCR / layout model needed.
-        return DoclingParser(device=parsers.docling_device)
+        return DoclingParser(
+            device=parsers.docling_device, artifacts_path=parsers.docling_artifacts_path
+        )
     return DoclingParser(
         ocr=parsers.docling_ocr,
         ocr_engine=parsers.docling_ocr_engine,
@@ -70,6 +72,7 @@ def _build_docling_parser(ext: str, parsers: ParserConfig) -> ParserAdapter:
         flash_attention=parsers.docling_flash_attention,
         ocr_batch_size=parsers.docling_ocr_batch_size,
         layout_batch_size=parsers.docling_layout_batch_size,
+        artifacts_path=parsers.docling_artifacts_path,
     )
 
 

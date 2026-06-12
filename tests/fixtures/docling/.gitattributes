@@ -1,0 +1,5 @@
+# Docling test fixtures are binary documents — never apply EOL normalization
+# (autocrlf would corrupt them on checkout, breaking parsing on Linux CI).
+*.pdf binary
+*.docx binary
+*.pptx binary
