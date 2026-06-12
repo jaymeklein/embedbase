@@ -32,6 +32,7 @@ def test_parser_config_defaults():
     assert cfg.docling_tables is True
     assert cfg.docling_device == "cpu"
     assert cfg.docling_flash_attention is False
+    assert cfg.docling_artifacts_path is None
 
 
 def test_app_config_has_parsers_section():
@@ -93,6 +94,41 @@ def test_cuda_with_gpu_constructs(monkeypatch):
 def test_constructing_cpu_parser_does_not_import_docling():
     DoclingParser(device="cpu")
     assert "docling" not in sys.modules  # lazy — heavy import deferred to parse()
+
+
+# ── Artifacts path (configurable docling models location) ─────────────────────
+
+
+class _FakePipelineOptions:
+    """Stands in for docling's ``PdfPipelineOptions`` (no heavy import)."""
+
+    def __init__(self, **kwargs: object) -> None: ...
+
+
+def test_get_parser_passes_artifacts_path_to_docling():
+    cfg = ParserConfig(pdf_backend="docling", docling_artifacts_path="/models/docling")
+    # Both the PDF path and office formats route to docling and must receive the path.
+    pdf = get_parser(".pdf", parsers=cfg)
+    docx = get_parser(".docx", parsers=cfg)
+
+    assert isinstance(pdf, DoclingParser)
+    assert isinstance(docx, DoclingParser)
+    assert pdf._artifacts_path == "/models/docling"
+    assert docx._artifacts_path == "/models/docling"
+
+
+def test_pdf_pipeline_options_sets_artifacts_path_when_configured(monkeypatch):
+    parser = DoclingParser(artifacts_path="/models/docling")
+    monkeypatch.setattr(parser, "_accelerator_options", lambda: object())
+    opts = parser._pdf_pipeline_options(_FakePipelineOptions)
+    assert opts.artifacts_path == "/models/docling"
+
+
+def test_pdf_pipeline_options_omits_artifacts_path_when_unset(monkeypatch):
+    parser = DoclingParser()  # default: None
+    monkeypatch.setattr(parser, "_accelerator_options", lambda: object())
+    opts = parser._pdf_pipeline_options(_FakePipelineOptions)
+    assert not hasattr(opts, "artifacts_path")
 
 
 # ── parse() chunk mapping (fake converter + chunker) ──────────────────────────
