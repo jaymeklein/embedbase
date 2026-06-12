@@ -10,8 +10,10 @@ dependency installed. The conversion pipeline is built on the first
 :meth:`parse` call.
 
 Pipeline construction is written against docling's documented API.
-# verified against docling docs (docling>=2.0): DocumentConverter, HybridChunker,
-# PdfPipelineOptions, AcceleratorOptions — not pinned in api/requirements.txt.
+# verified against docling==2.102.0 / docling-core==2.82.0 (exercised locally):
+# DocumentConverter, HybridChunker, PdfPipelineOptions, AcceleratorOptions,
+# ChunkingSerializerProvider + MarkdownTableSerializer. Heavy optional path, so
+# docling is not pinned in api/requirements.txt.
 """
 
 from __future__ import annotations
@@ -121,6 +123,26 @@ class DoclingParser:
             opts.ocr_options = self._ocr_options()
         return opts
 
+    def _chunk_serializer_provider(self) -> Any:
+        """Build a chunk serializer that renders tables as Markdown, not triplets.
+
+        docling's ``HybridChunker`` defaults to a *triplet* table serializer
+        (``"col = value"`` prose). The docling path is selected precisely when
+        table structure matters, so the embedded chunk should keep the Markdown
+        table (pipe-delimited) intact for retrieval.
+        """
+        from docling_core.transforms.chunker.hierarchical_chunker import (
+            ChunkingDocSerializer,
+            ChunkingSerializerProvider,
+        )
+        from docling_core.transforms.serializer.markdown import MarkdownTableSerializer
+
+        class _MarkdownTableProvider(ChunkingSerializerProvider):
+            def get_serializer(self, doc: Any) -> Any:
+                return ChunkingDocSerializer(doc=doc, table_serializer=MarkdownTableSerializer())
+
+        return _MarkdownTableProvider()
+
     def _build_pipeline(self) -> None:
         """Construct the docling converter + chunker (lazy, heavy import)."""
         from docling.chunking import HybridChunker
@@ -146,7 +168,9 @@ class DoclingParser:
         tokenizer = HuggingFaceTokenizer.from_pretrained(
             model_name=self._model_name, max_tokens=self._max_tokens
         )
-        self._chunker = HybridChunker(tokenizer=tokenizer, merge_peers=True)
+        self._chunker = HybridChunker(
+            tokenizer=tokenizer, merge_peers=True, serializer_provider=self._chunk_serializer_provider()
+        )
 
     def parse(self, file_path: str, document_id: str) -> list[Chunk]:
         """Convert ``file_path`` to a list of heading-aware :class:`Chunk` objects.
