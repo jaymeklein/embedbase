@@ -6,6 +6,7 @@ import { useAuth } from './auth/AuthContext'
 import { UnlockScreen } from './auth/UnlockScreen'
 import Dashboard from './pages/Dashboard'
 import Workspaces from './pages/Workspaces'
+import Collections from './pages/Collections'
 
 /** Placeholder screen until each page lands in a later Delivery 5 phase. */
 function ComingSoon({ name }: { name: string }) {
@@ -31,7 +32,7 @@ export default function App() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/workspaces" element={<Workspaces />} />
-        <Route path="/workspaces/:wsId" element={<ComingSoon name="Collections" />} />
+        <Route path="/workspaces/:wsId" element={<Collections />} />
         <Route
           path="/workspaces/:wsId/collections/:colId"
           element={<ComingSoon name="Documents" />}
