@@ -26,6 +26,8 @@ export const qk = {
   workspaces: ['workspaces'] as const,
   workspace: (id: string) => ['workspace', id] as const,
   collections: (wsId: string) => ['workspaces', wsId, 'collections'] as const,
+  collection: (wsId: string, colId: string) =>
+    ['workspaces', wsId, 'collections', colId] as const,
   documents: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'documents'] as const,
   apiKeys: (wsId: string, colId: string) =>
@@ -58,12 +60,21 @@ export function useCollections(wsId: string) {
   })
 }
 
+/** Ingestion states that are still in flight and warrant active polling. */
+const ACTIVE_STATUSES = ['pending', 'processing', 'deleting']
+
 export function useDocuments(wsId: string, colId: string) {
   return useQuery({
     queryKey: qk.documents(wsId, colId),
     queryFn: () => api.listDocuments(wsId, colId),
     enabled: Boolean(wsId) && Boolean(colId),
     retry: false,
+    // Poll only while a document is mid-ingestion; stop once all settle.
+    refetchInterval: (query) => {
+      const docs = query.state.data
+      if (!docs) return false
+      return docs.some((d) => d.status && ACTIVE_STATUSES.includes(d.status)) ? 2000 : false
+    },
   })
 }
 
@@ -231,5 +242,54 @@ export function useRevokeApiKey(wsId: string, colId: string) {
   return useMutation({
     mutationFn: (keyId: string) => api.revokeApiKey(wsId, colId, keyId),
     onSuccess: invalidate,
+  })
+}
+
+export function useCollection(wsId: string, colId: string) {
+  return useQuery({
+    queryKey: qk.collection(wsId, colId),
+    queryFn: () => api.getCollection(wsId, colId),
+    enabled: Boolean(wsId) && Boolean(colId),
+    retry: false,
+  })
+}
+
+/**
+ * Refresh a collection's document list plus its document-count aggregate after
+ * an upload or delete.
+ */
+function useInvalidateDocuments(wsId: string, colId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) }),
+      queryClient.invalidateQueries({ queryKey: qk.collections(wsId) }),
+    ])
+  }
+}
+
+export function useUploadDocument(wsId: string, colId: string) {
+  const invalidate = useInvalidateDocuments(wsId, colId)
+  return useMutation({
+    mutationFn: (file: File) => api.uploadDocument(wsId, colId, file),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDeleteDocument(wsId: string, colId: string) {
+  const invalidate = useInvalidateDocuments(wsId, colId)
+  return useMutation({
+    mutationFn: (docId: string) => api.deleteDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+/** Fetch a single document's latest job record on demand (e.g. a failure reason). */
+export function useDocumentStatus(wsId: string, colId: string, docId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: [...qk.documents(wsId, colId), docId, 'status'] as const,
+    queryFn: () => api.getDocumentStatus(wsId, colId, docId),
+    enabled: enabled && Boolean(docId),
+    retry: false,
   })
 }
