@@ -8,6 +8,7 @@ import Dashboard from './pages/Dashboard'
 import Workspaces from './pages/Workspaces'
 import Collections from './pages/Collections'
 import Documents from './pages/Documents'
+import Search from './pages/Search'
 
 /** Placeholder screen until each page lands in a later Delivery 5 phase. */
 function ComingSoon({ name }: { name: string }) {
@@ -35,7 +36,7 @@ export default function App() {
         <Route path="/workspaces" element={<Workspaces />} />
         <Route path="/workspaces/:wsId" element={<Collections />} />
         <Route path="/workspaces/:wsId/collections/:colId" element={<Documents />} />
-        <Route path="/search" element={<ComingSoon name="Search" />} />
+        <Route path="/search" element={<Search />} />
         <Route path="/settings" element={<ComingSoon name="Settings" />} />
       </Route>
     </Routes>
