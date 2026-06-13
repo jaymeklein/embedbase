@@ -10,6 +10,9 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './client'
 import type {
+  ApiKeyCreate,
+  CollectionCreate,
+  CollectionUpdate,
   DocumentSummary,
   SearchRequest,
   SearchResponse,
@@ -156,6 +159,77 @@ export function useDeleteWorkspace() {
   const invalidate = useInvalidateWorkspaces()
   return useMutation({
     mutationFn: (id: string) => api.deleteWorkspace(id),
+    onSuccess: invalidate,
+  })
+}
+
+/**
+ * Refresh a workspace's collection list plus the workspace aggregates, since a
+ * collection create/delete changes the parent's `collection_count`.
+ */
+function useInvalidateCollections(wsId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.collections(wsId) }),
+      queryClient.invalidateQueries({ queryKey: qk.workspaces }),
+      queryClient.invalidateQueries({ queryKey: qk.workspace(wsId) }),
+    ])
+  }
+}
+
+export function useCreateCollection(wsId: string) {
+  const invalidate = useInvalidateCollections(wsId)
+  return useMutation({
+    mutationFn: (body: CollectionCreate) => api.createCollection(wsId, body),
+    onSuccess: invalidate,
+  })
+}
+
+export function useUpdateCollection(wsId: string) {
+  const invalidate = useInvalidateCollections(wsId)
+  return useMutation({
+    mutationFn: ({ colId, body }: { colId: string; body: CollectionUpdate }) =>
+      api.updateCollection(wsId, colId, body),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDeleteCollection(wsId: string) {
+  const invalidate = useInvalidateCollections(wsId)
+  return useMutation({
+    mutationFn: (colId: string) => api.deleteCollection(wsId, colId),
+    onSuccess: invalidate,
+  })
+}
+
+export function useApiKeys(wsId: string, colId: string) {
+  return useQuery({
+    queryKey: qk.apiKeys(wsId, colId),
+    queryFn: () => api.listApiKeys(wsId, colId),
+    enabled: Boolean(wsId) && Boolean(colId),
+    retry: false,
+  })
+}
+
+/** Invalidate the key list for one collection after a mint/revoke. */
+function useInvalidateApiKeys(wsId: string, colId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return () => queryClient.invalidateQueries({ queryKey: qk.apiKeys(wsId, colId) })
+}
+
+export function useMintApiKey(wsId: string, colId: string) {
+  const invalidate = useInvalidateApiKeys(wsId, colId)
+  return useMutation({
+    mutationFn: (body: ApiKeyCreate) => api.mintApiKey(wsId, colId, body),
+    onSuccess: invalidate,
+  })
+}
+
+export function useRevokeApiKey(wsId: string, colId: string) {
+  const invalidate = useInvalidateApiKeys(wsId, colId)
+  return useMutation({
+    mutationFn: (keyId: string) => api.revokeApiKey(wsId, colId, keyId),
     onSuccess: invalidate,
   })
 }
