@@ -1,41 +1,164 @@
+/**
+ * Typed, authenticated API client for the EmbedBase backend.
+ *
+ * Every request injects the master key as `Authorization: Bearer <key>`. A 401
+ * triggers `notifyUnauthorized()` so the app can lock and return to the unlock
+ * screen, then throws an {@link ApiError} carrying the status code.
+ */
+
+import { getMasterKey, notifyUnauthorized } from './tokenStore'
+import type {
+  ApiKey,
+  Collection,
+  CollectionCreate,
+  CollectionUpdate,
+  DocumentSummary,
+  Health,
+  JobStatus,
+  MintedApiKey,
+  ApiKeyCreate,
+  SearchRequest,
+  SearchResponse,
+  UploadAccepted,
+  Workspace,
+  WorkspaceCreate,
+  WorkspaceDetail,
+  WorkspaceUpdate,
+} from './types'
+
 const BASE = '/api'
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail ?? `HTTP ${res.status}`)
+/** Error carrying the HTTP status so callers can branch on `401` etc. */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = 'ApiError'
   }
-  if (res.status === 204) return undefined as T
-  return res.json()
 }
 
+interface RequestOptions {
+  method?: string
+  /** JSON-serialisable body, or a `FormData` for multipart uploads. */
+  body?: unknown
+  signal?: AbortSignal
+}
+
+/** Build headers with auth + the right content-type for the body kind. */
+function buildHeaders(body: unknown): { headers: Headers; payload: BodyInit | undefined } {
+  const headers = new Headers()
+  const key = getMasterKey()
+  if (key) headers.set('Authorization', `Bearer ${key}`)
+
+  if (body instanceof FormData) {
+    // Let the browser set `multipart/form-data` + boundary — never force JSON.
+    return { headers, payload: body }
+  }
+  if (body !== undefined) {
+    headers.set('Content-Type', 'application/json')
+    return { headers, payload: JSON.stringify(body) }
+  }
+  return { headers, payload: undefined }
+}
+
+/** Extract FastAPI's `{detail}` message, falling back to a status string. */
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const data: unknown = await res.json()
+    if (data && typeof data === 'object' && 'detail' in data) {
+      const detail = (data as { detail: unknown }).detail
+      if (typeof detail === 'string') return detail
+    }
+  } catch {
+    // Non-JSON body — fall through to the generic message.
+  }
+  return `Request failed (HTTP ${res.status})`
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { method = 'GET', body, signal } = options
+  const { headers, payload } = buildHeaders(body)
+
+  const res = await fetch(`${BASE}${path}`, { method, headers, body: payload, signal })
+
+  if (res.status === 401) {
+    notifyUnauthorized()
+    throw new ApiError(401, 'Master key rejected. Please unlock again.')
+  }
+  if (!res.ok) {
+    throw new ApiError(res.status, await errorMessage(res))
+  }
+  if (res.status === 204) return undefined as T
+  return (await res.json()) as T
+}
+
+const enc = encodeURIComponent
+
 export const api = {
-  // Workspaces
-  listWorkspaces: () => request<any[]>('/workspaces'),
-  createWorkspace: (body: object) => request('/workspaces', { method: 'POST', body: JSON.stringify(body) }),
-  getWorkspace: (id: string) => request<any>(`/workspaces/${id}`),
-  updateWorkspace: (id: string, body: object) => request(`/workspaces/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-  deleteWorkspace: (id: string) => request(`/workspaces/${id}`, { method: 'DELETE' }),
+  // ── Workspaces ────────────────────────────────────────────────────────────
+  listWorkspaces: () => request<Workspace[]>('/workspaces'),
+  createWorkspace: (body: WorkspaceCreate) =>
+    request<Workspace>('/workspaces', { method: 'POST', body }),
+  getWorkspace: (id: string) => request<WorkspaceDetail>(`/workspaces/${enc(id)}`),
+  updateWorkspace: (id: string, body: WorkspaceUpdate) =>
+    request<Workspace>(`/workspaces/${enc(id)}`, { method: 'PATCH', body }),
+  deleteWorkspace: (id: string) =>
+    request<void>(`/workspaces/${enc(id)}`, { method: 'DELETE' }),
 
-  // Collections
-  listCollections: (wsId: string) => request<any[]>(`/workspaces/${wsId}/collections`),
-  createCollection: (wsId: string, body: object) => request(`/workspaces/${wsId}/collections`, { method: 'POST', body: JSON.stringify(body) }),
-  deleteCollection: (wsId: string, colId: string) => request(`/workspaces/${wsId}/collections/${colId}`, { method: 'DELETE' }),
+  // ── Collections ───────────────────────────────────────────────────────────
+  listCollections: (wsId: string) =>
+    request<Collection[]>(`/workspaces/${enc(wsId)}/collections`),
+  createCollection: (wsId: string, body: CollectionCreate) =>
+    request<Collection>(`/workspaces/${enc(wsId)}/collections`, { method: 'POST', body }),
+  getCollection: (wsId: string, colId: string) =>
+    request<Collection>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}`),
+  updateCollection: (wsId: string, colId: string, body: CollectionUpdate) =>
+    request<Collection>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}`, {
+      method: 'PATCH',
+      body,
+    }),
+  deleteCollection: (wsId: string, colId: string) =>
+    request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}`, { method: 'DELETE' }),
 
-  // API keys
-  createApiKey: (wsId: string, colId: string, body: object) =>
-    request(`/workspaces/${wsId}/collections/${colId}/keys`, { method: 'POST', body: JSON.stringify(body) }),
-  listApiKeys: (wsId: string, colId: string) => request<any[]>(`/workspaces/${wsId}/collections/${colId}/keys`),
+  // ── API keys ──────────────────────────────────────────────────────────────
+  listApiKeys: (wsId: string, colId: string) =>
+    request<ApiKey[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys`),
+  mintApiKey: (wsId: string, colId: string, body: ApiKeyCreate) =>
+    request<MintedApiKey>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys`, {
+      method: 'POST',
+      body,
+    }),
   revokeApiKey: (wsId: string, colId: string, keyId: string) =>
-    request(`/workspaces/${wsId}/collections/${colId}/keys/${keyId}`, { method: 'DELETE' }),
+    request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys/${enc(keyId)}`, {
+      method: 'DELETE',
+    }),
 
-  // Search
-  search: (body: object) => request<any>('/search', { method: 'POST', body: JSON.stringify(body) }),
+  // ── Documents ─────────────────────────────────────────────────────────────
+  listDocuments: (wsId: string, colId: string) =>
+    request<DocumentSummary[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`),
+  uploadDocument: (wsId: string, colId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<UploadAccepted>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`,
+      { method: 'POST', body: form },
+    )
+  },
+  getDocumentStatus: (wsId: string, colId: string, docId: string) =>
+    request<JobStatus>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/status`,
+    ),
+  deleteDocument: (wsId: string, colId: string, docId: string) =>
+    request<void>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}`,
+      { method: 'DELETE' },
+    ),
 
-  // Health
-  healthz: () => request<any>('/healthz'),
+  // ── Search ────────────────────────────────────────────────────────────────
+  search: (body: SearchRequest) => request<SearchResponse>('/search', { method: 'POST', body }),
+
+  // ── System ────────────────────────────────────────────────────────────────
+  healthz: () => request<Health>('/healthz'),
 }
