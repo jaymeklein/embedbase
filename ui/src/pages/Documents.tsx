@@ -1,0 +1,252 @@
+import { useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
+import { AlertCircle, ChevronRight, FileText, Trash2 } from 'lucide-react'
+import {
+  useCollection,
+  useDeleteDocument,
+  useDocumentStatus,
+  useDocuments,
+  useUploadDocument,
+  useWorkspace,
+} from '../api/hooks'
+import type { DocumentSummary } from '../api/types'
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  EmptyState,
+  QueryError,
+  Skeleton,
+  StatusBadge,
+  useToast,
+} from '../components/ui'
+import { UploadZone } from '../components/documents/UploadZone'
+import { formatBytes, timeAgo } from '../lib/format'
+
+/** Largest file accepted before an upload is attempted (client-side guard). */
+const MAX_FILE_SIZE_MB = 50
+
+/** Documents within a collection: upload, live ingestion status, and delete. */
+export default function Documents() {
+  const { wsId = '', colId = '' } = useParams()
+  const workspace = useWorkspace(wsId)
+  const collection = useCollection(wsId, colId)
+  const { data, isLoading, isError, error, refetch } = useDocuments(wsId, colId)
+
+  const toast = useToast()
+  const uploadMut = useUploadDocument(wsId, colId)
+  const deleteMut = useDeleteDocument(wsId, colId)
+  const [uploading, setUploading] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
+
+  const handleFiles = async (files: File[]) => {
+    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    const valid: File[] = []
+    for (const f of files) {
+      if (f.size > maxBytes) {
+        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
+      } else {
+        valid.push(f)
+      }
+    }
+    if (valid.length === 0) return
+    setUploading(true)
+    let ok = 0
+    for (const f of valid) {
+      try {
+        await uploadMut.mutateAsync(f)
+        ok += 1
+      } catch (e) {
+        toast.error(`${f.name}: ${(e as Error).message}`)
+      }
+    }
+    setUploading(false)
+    if (ok > 0) toast.success(`${ok} file${ok === 1 ? '' : 's'} queued for ingestion.`)
+  }
+
+  const handleDelete = () => {
+    if (!deleteTarget) return
+    const doc = deleteTarget
+    deleteMut.mutate(doc.document_id, {
+      onSuccess: () => {
+        toast.success(`Deleted “${doc.filename}”.`)
+        setDeleteTarget(null)
+      },
+      onError: (e) => toast.error(e.message),
+    })
+  }
+
+  return (
+    <div className="animate-fade-in space-y-6">
+      <nav className="flex items-center gap-1.5 text-xs text-ink-muted">
+        <Link to="/workspaces" className="hover:text-ink">
+          Workspaces
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
+          {workspace.data?.name ?? '…'}
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <span className="text-ink">{collection.data?.name ?? '…'}</span>
+      </nav>
+
+      <header>
+        <h1 className="text-xl font-semibold tracking-tight text-ink">Documents</h1>
+        <p className="mt-1 text-[13px] text-ink-muted">
+          Upload files to ingest them into this collection.
+        </p>
+      </header>
+
+      <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
+
+      <DocumentList
+        wsId={wsId}
+        colId={colId}
+        data={data}
+        isLoading={isLoading}
+        isError={isError}
+        message={error?.message}
+        onRetry={() => void refetch()}
+        onDelete={setDeleteTarget}
+      />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete document"
+        message={
+          deleteTarget
+            ? `Delete “${deleteTarget.filename}”? Its chunks and indexed vectors are removed. This cannot be undone.`
+            : ''
+        }
+        loading={deleteMut.isPending}
+        onConfirm={handleDelete}
+        onClose={() => setDeleteTarget(null)}
+      />
+    </div>
+  )
+}
+
+/** Render the document list across its loading / error / empty / data states. */
+function DocumentList({
+  wsId,
+  colId,
+  data,
+  isLoading,
+  isError,
+  message,
+  onRetry,
+  onDelete,
+}: {
+  wsId: string
+  colId: string
+  data: DocumentSummary[] | undefined
+  isLoading: boolean
+  isError: boolean
+  message?: string
+  onRetry: () => void
+  onDelete: (doc: DocumentSummary) => void
+}) {
+  if (isLoading) {
+    return (
+      <Card className="divide-y divide-border">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center justify-between p-4">
+            <Skeleton className="h-4 w-56" />
+            <Skeleton className="h-5 w-20 rounded-full" />
+          </div>
+        ))}
+      </Card>
+    )
+  }
+  if (isError) {
+    return <QueryError title="Could not load documents" message={message} onRetry={onRetry} />
+  }
+  if (!data || data.length === 0) {
+    return (
+      <EmptyState
+        icon={<FileText className="h-6 w-6" />}
+        title="No documents yet"
+        description="Drop files into the area above to start ingesting them."
+      />
+    )
+  }
+  return (
+    <Card className="divide-y divide-border">
+      {data.map((doc) => (
+        <DocumentRow key={doc.document_id} wsId={wsId} colId={colId} doc={doc} onDelete={onDelete} />
+      ))}
+    </Card>
+  )
+}
+
+/** A single document row: metadata, live status, an optional failure reason, delete. */
+function DocumentRow({
+  wsId,
+  colId,
+  doc,
+  onDelete,
+}: {
+  wsId: string
+  colId: string
+  doc: DocumentSummary
+  onDelete: (doc: DocumentSummary) => void
+}) {
+  const [showError, setShowError] = useState(false)
+  const failed = doc.status === 'failed'
+  return (
+    <div className="p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <FileText className="h-4 w-4 shrink-0 text-ink-faint" />
+          <div className="min-w-0">
+            <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
+            <p className="text-xs text-ink-faint">
+              {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)} · updated{' '}
+              {timeAgo(doc.updated_at)}
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {failed && (
+            <button
+              type="button"
+              onClick={() => setShowError((v) => !v)}
+              className="text-xs font-medium text-err hover:underline"
+            >
+              {showError ? 'Hide' : 'Why?'}
+            </button>
+          )}
+          <StatusBadge status={doc.status ?? 'pending'} />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Delete ${doc.filename}`}
+            onClick={() => onDelete(doc)}
+            className="h-7 w-7 px-0 hover:text-err"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+      {failed && showError && (
+        <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
+      )}
+    </div>
+  )
+}
+
+/** Lazily fetch and show a failed document's ingestion error. */
+function FailureReason({ wsId, colId, docId }: { wsId: string; colId: string; docId: string }) {
+  const { data, isLoading, isError } = useDocumentStatus(wsId, colId, docId, true)
+  const text = isLoading
+    ? 'Loading error…'
+    : isError
+      ? 'Could not load the error detail.'
+      : (data?.error ?? 'No error detail recorded.')
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-control border border-err/30 bg-err/5 px-3 py-2">
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-err" />
+      <p className="break-words text-xs text-ink-muted">{text}</p>
+    </div>
+  )
+}
