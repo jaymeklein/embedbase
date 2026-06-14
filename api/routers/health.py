@@ -1,29 +1,14 @@
-import time
-
 from fastapi import APIRouter
 
 from api.dependencies import get_embedding_adapter, get_vector_store
-from api.settings import settings
+from api.services.health import build_health
 
 router = APIRouter(tags=["system"])
-
-_start_time = time.time()
 
 
 @router.get("/healthz")
 async def healthz():
-    embedding_adapter = get_embedding_adapter()
-    return {
-        "status": "ok",
-        "service": "api",
-        "version": "1.0.0",
-        "vector_store": settings.vector_store,
-        "vector_store_connected": get_vector_store() is not None,
-        "embedding_provider": settings.embedding_provider,
-        "embedding_model": settings.embedding_model,
-        "embedding_model_loaded": embedding_adapter is not None,
-        "uptime_seconds": int(time.time() - _start_time),
-    }
+    return await build_health(get_vector_store(), get_embedding_adapter())
 
 
 @router.get("/metrics")

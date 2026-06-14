@@ -30,6 +30,14 @@ class ChromaAdapter:
             )
         return self._client
 
+    def ping(self) -> bool:
+        """Return True if the Chroma server answers a heartbeat."""
+        try:
+            self._get_client().heartbeat()
+            return True
+        except Exception:
+            return False
+
     def upsert(self, collection_id: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:
         client = self._get_client()
         col = client.get_or_create_collection(

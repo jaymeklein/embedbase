@@ -142,6 +142,21 @@ class PgvectorAdapter:
                 )
         return self._pool
 
+    # -- liveness -----------------------------------------------------------
+
+    def ping(self) -> bool:
+        """Return True if PostgreSQL answers a trivial query."""
+        try:
+            self._runner.run(self._ping())
+            return True
+        except Exception:
+            return False
+
+    async def _ping(self) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+
     # -- upsert -------------------------------------------------------------
 
     async def _upsert(self, collection_id: str, chunks: list[Chunk],

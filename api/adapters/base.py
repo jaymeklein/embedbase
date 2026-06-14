@@ -30,6 +30,10 @@ class EmbeddingAdapter(Protocol):
 class VectorStoreAdapter(Protocol):
     """Stores and retrieves embedded chunks by collection namespace."""
 
+    def ping(self) -> bool:
+        """Return True if the backing store answers a liveness round-trip."""
+        ...
+
     def upsert(
         self,
         collection_id: str,

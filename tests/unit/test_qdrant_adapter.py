@@ -77,7 +77,8 @@ class _Record:
 
 
 class FakeClient:
-    def __init__(self, exists=True, query_result=None, scroll_pages=None):
+    def __init__(self, exists=True, query_result=None, scroll_pages=None,
+                 raise_on_list=False):
         self._exists = exists
         self.created = None
         self.upserted = None
@@ -86,6 +87,12 @@ class FakeClient:
         self._query_result = query_result
         self._scroll_pages = scroll_pages or [([], None)]
         self._scroll_idx = 0
+        self._raise_on_list = raise_on_list
+
+    def get_collections(self):
+        if self._raise_on_list:
+            raise RuntimeError("server down")
+        return _Rec(collections=[])
 
     def collection_exists(self, name):
         return self._exists
@@ -116,6 +123,17 @@ def _adapter(client):
     a = QdrantAdapter(host="h", port=6333, dimensions=3)
     a._client = client
     return a
+
+
+# --- ping -------------------------------------------------------------------
+
+
+def test_ping_true_when_collections_listed():
+    assert _adapter(FakeClient()).ping() is True
+
+
+def test_ping_false_when_client_errors():
+    assert _adapter(FakeClient(raise_on_list=True)).ping() is False
 
 
 # --- upsert -----------------------------------------------------------------
