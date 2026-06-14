@@ -39,10 +39,16 @@ class FakeCollection:
 
 
 class FakeClient:
-    def __init__(self, collection=None, raise_on_get=False):
+    def __init__(self, collection=None, raise_on_get=False, raise_on_heartbeat=False):
         self._collection = collection or FakeCollection()
         self._raise_on_get = raise_on_get
+        self._raise_on_heartbeat = raise_on_heartbeat
         self.deleted_collection = None
+
+    def heartbeat(self):
+        if self._raise_on_heartbeat:
+            raise RuntimeError("server down")
+        return 1
 
     def get_or_create_collection(self, name, metadata=None):
         return self._collection
@@ -60,6 +66,14 @@ def _adapter(client):
     a = ChromaAdapter(host="h", port=1)
     a._client = client
     return a
+
+
+def test_ping_true_when_heartbeat_succeeds():
+    assert _adapter(FakeClient()).ping() is True
+
+
+def test_ping_false_when_heartbeat_errors():
+    assert _adapter(FakeClient(raise_on_heartbeat=True)).ping() is False
 
 
 def test_upsert_passes_ids_embeddings_documents_metadatas():
