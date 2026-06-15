@@ -28,11 +28,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY worker/requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-# CUDA build of torch (replaces the CPU wheel), then docling + Flash Attention 2.
-# flash-attn compiles against the CUDA toolkit and needs an NVIDIA GPU at build.
+# CUDA build of torch (replaces the CPU wheel), then docling. The cu128 wheels
+# support every CUDA GPU from Turing (sm_75, e.g. RTX 2060 Super) upward.
 RUN python -m pip install --no-cache-dir torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu128 \
-    && python -m pip install --no-cache-dir docling flash-attn
+    && python -m pip install --no-cache-dir docling
+
+# Flash Attention 2 is OPTIONAL and Ampere-only: it needs compute capability
+# >= 8.0 (RTX 30/40 series). Turing cards (RTX 20 series, e.g. the 2060 Super at
+# 7.5) do NOT support it — leave this OFF (the default) and use standard CUDA
+# attention. Enabling it also requires the CUDA *devel* toolchain (nvcc) to
+# compile the kernel, which this runtime base image omits; build on a devel base.
+# Only set this on an Ampere+ card:
+#   docker compose ... build --build-arg INSTALL_FLASH_ATTN=true worker
+ARG INSTALL_FLASH_ATTN=false
+RUN if [ "$INSTALL_FLASH_ATTN" = "true" ]; then \
+        python -m pip install --no-cache-dir flash-attn --no-build-isolation; \
+    fi
 
 # Remaining ML/ingestion adapter deps (sentence-transformers, chroma, parsers,
 # vector-store drivers). torch is already the CUDA build above, so it is reused.
