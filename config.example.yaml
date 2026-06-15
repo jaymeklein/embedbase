@@ -17,7 +17,7 @@ vector_store:
   backend: chroma  # chroma | pgvector | qdrant
   chroma:
     host: chroma
-    port: 8001
+    port: 8000
   pgvector:
     host: postgres
     port: 5432
@@ -68,6 +68,9 @@ mcp:
   rate_limit_rpm: 60
   max_results: 20
 
-logging:
-  level: info   # debug | info | warning | error
-  format: json  # json | text
+# Upload size cap (MB). Editable in the config page.
+max_file_size_mb: 50
+
+# NOTE: logging (LOG_LEVEL / LOG_FORMAT), the Celery broker (REDIS_URL), the
+# SQLite path (DATABASE_PATH), CORS, ports and the master key are deploy/bootstrap
+# settings and live in .env, not here.

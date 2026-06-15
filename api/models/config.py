@@ -113,11 +113,6 @@ class MCPConfig(BaseModel):
     max_results: int = 20
 
 
-class LoggingConfig(BaseModel):
-    level: str = "info"
-    format: str = "json"
-
-
 class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
@@ -125,7 +120,14 @@ class AppConfig(BaseModel):
     parsers: ParserConfig = ParserConfig()
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
-    logging: LoggingConfig = LoggingConfig()
+    # Upload size cap (app-domain, editable via the config page). Distinct from
+    # deploy/bootstrap config, which stays in .env.
+    max_file_size_mb: int = 50
+
+    @property
+    def max_file_size_bytes(self) -> int:
+        """The upload cap in bytes (``max_file_size_mb`` × 1 MiB)."""
+        return self.max_file_size_mb * 1024 * 1024
 
     @classmethod
     def model_validate(cls, obj: Any, /, **kwargs: Any) -> "AppConfig":  # type: ignore[override]
