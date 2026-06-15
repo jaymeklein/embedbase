@@ -89,19 +89,25 @@ async def create_collection(
     return {**values, "document_count": 0, "chunk_count": 0}
 
 
-async def list_collections(ws_id: str, db: AsyncSession) -> list[dict[str, Any]]:
-    """Return a workspace's collections with their document counts.
+async def list_collections(
+    ws_id: str, db: AsyncSession, tags: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """Return a workspace's collections with document counts and assigned tags.
 
     Args:
         ws_id: Parent workspace ID.
         db: Active async database session.
+        tags: Optional tag names; only collections carrying *all* of them are
+            returned (AND filter).
 
     Returns:
-        One mapping per collection including ``document_count``.
+        One mapping per collection including ``document_count`` and ``tags``.
 
     Raises:
         HTTPException: 404 when the workspace is absent.
     """
+    from api.services.tags import attach_tags, matching_entity_ids
+
     await require_workspace(ws_id, db)
     stmt = (
         select(col_t, func.count(doc_t.c.id).label("document_count"))
@@ -110,8 +116,10 @@ async def list_collections(ws_id: str, db: AsyncSession) -> list[dict[str, Any]]
         .group_by(col_t.c.id)
         .order_by(col_t.c.created_at)
     )
-    result = await db.execute(stmt)
-    return [dict(row._mapping) for row in result.fetchall()]
+    if tags:
+        stmt = stmt.where(col_t.c.id.in_(await matching_entity_ids("collection", tags, db)))
+    rows = [dict(row._mapping) for row in (await db.execute(stmt)).fetchall()]
+    return await attach_tags("collection", rows, "id", db)
 
 
 async def _fetch_collection(col_id: str, db: AsyncSession) -> dict[str, Any]:
