@@ -25,3 +25,8 @@ celery_app.conf.update(
     task_soft_time_limit=540,      # 9 min soft limit (raises SoftTimeLimitExceeded)
     broker_connection_retry_on_startup=True,
 )
+
+# Side-effect import: registers the worker_process_init signal that starts the
+# per-process config hot-reload listener. F401 is intentional — the module is
+# imported for its decorator registration, not a referenced symbol.
+from worker import config_reload  # noqa: F401,E402  signal registration on worker boot
