@@ -1,21 +1,26 @@
-from fastapi import APIRouter, HTTPException
+import asyncio
+
+from fastapi import APIRouter, Depends
 
 from api.models.config import AppConfig
+from api.services import config_service
+from api.services.auth import require_master
 
-router = APIRouter(prefix="/config", tags=["config"])
+# Config carries secrets and mutates runtime state — master key required.
+router = APIRouter(prefix="/config", tags=["config"], dependencies=[Depends(require_master)])
 
 
 @router.get("")
 async def get_config():
-    # Full implementation in Delivery 6
-    raise HTTPException(501, "Config endpoint implemented in Delivery 6")
+    return config_service.get_masked_config()
 
 
 @router.put("")
-async def update_config(config: AppConfig):
-    raise HTTPException(501, "Config reload implemented in Delivery 6")
+async def update_config(payload: AppConfig):
+    # Off the event loop: building adapters can load the embedding model (blocking).
+    return await asyncio.to_thread(config_service.apply_config, payload)
 
 
 @router.get("/reload-status/{version_id}")
 async def get_reload_status(version_id: str):
-    raise HTTPException(501, "Config reload status implemented in Delivery 6")
+    return config_service.get_reload_status(version_id)
