@@ -42,3 +42,18 @@ export function formatDate(iso: string): string {
   if (Number.isNaN(ms)) return '—'
   return DATE_FMT.format(ms)
 }
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB']
+
+/** Render a byte count as a compact human size (`1.2 MB`, `456 KB`). */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024
+    unit += 1
+  }
+  return `${value.toFixed(1)} ${BYTE_UNITS[unit]}`
+}
