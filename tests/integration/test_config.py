@@ -9,6 +9,7 @@ import pytest
 from api import dependencies
 from api.models.config import AppConfig, EmbeddingConfig
 from api.services import config_service as cs
+from tests.unit.fake_redis import FakeRedis
 
 
 class _FakeEmbed:
@@ -27,6 +28,7 @@ def _seed_and_reset_config():
     dependencies._app_config = None
     dependencies._embedding_adapter = None
     dependencies._vector_store = None
+    dependencies._redis_client = None
     cs._reload_status.clear()
 
 
@@ -59,3 +61,34 @@ async def test_config_put_applies_and_returns_version(master_client, monkeypatch
 
 async def test_reload_status_unknown_returns_404(master_client):
     assert (await master_client.get("/config/reload-status/nope")).status_code == 404
+
+
+async def test_config_put_propagates_to_workers(master_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(cs, "resolve_embedding", lambda _c: _FakeEmbed())
+    monkeypatch.setattr(cs, "resolve_store", lambda _c, _d: _FakeStore())
+    monkeypatch.setattr(cs, "_config_path", lambda: tmp_path / "config.yaml")
+    redis = FakeRedis(subscribers=1, worker_acks={"worker:w1": "ok"})
+    dependencies.set_redis_client(redis)
+
+    payload = AppConfig(embedding=EmbeddingConfig(provider="ollama", model="nomic")).model_dump()
+    r = await master_client.put("/config", json=payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "applied"
+    assert body["acked_workers"] == 1
+
+    status = await master_client.get(f"/config/reload-status/{body['version_id']}")
+    assert status.json()["status"] == "applied"
+
+
+async def test_config_put_rolls_back_on_worker_error_returns_409(master_client, monkeypatch, tmp_path):
+    monkeypatch.setattr(cs, "resolve_embedding", lambda _c: _FakeEmbed())
+    monkeypatch.setattr(cs, "resolve_store", lambda _c, _d: _FakeStore())
+    monkeypatch.setattr(cs, "_config_path", lambda: tmp_path / "config.yaml")
+    (tmp_path / "config.yaml").write_text("embedding:\n  provider: original\n", encoding="utf-8")
+    dependencies.set_redis_client(FakeRedis(subscribers=1, worker_acks={"worker:w1": "error: boom"}))
+
+    payload = AppConfig(embedding=EmbeddingConfig(provider="ollama")).model_dump()
+    r = await master_client.put("/config", json=payload)
+    assert r.status_code == 409
+    assert "original" in (tmp_path / "config.yaml").read_text(encoding="utf-8")
