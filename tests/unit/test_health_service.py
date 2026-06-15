@@ -39,3 +39,22 @@ async def test_build_health_includes_version_and_uptime():
     data = await build_health(None, None)
     assert data["version"] == "1.0.0"
     assert data["uptime_seconds"] >= 0
+
+
+async def test_build_health_reads_display_values_from_config():
+    from api.models.config import AppConfig, EmbeddingConfig, VectorStoreConfig
+
+    config = AppConfig(
+        embedding=EmbeddingConfig(provider="ollama", model="nomic-embed-text"),
+        vector_store=VectorStoreConfig(backend="qdrant"),
+    )
+    data = await build_health(None, None, config)
+    assert data["vector_store"] == "qdrant"
+    assert data["embedding_provider"] == "ollama"
+    assert data["embedding_model"] == "nomic-embed-text"
+
+
+async def test_build_health_defaults_display_values_without_config():
+    data = await build_health(None, None)
+    assert data["vector_store"] == "unknown"
+    assert data["embedding_provider"] == "unknown"
