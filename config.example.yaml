@@ -39,6 +39,19 @@ chunking:
     max_symbol_tokens: 4096
     fallback_window_lines: 50
 
+parsers:
+  pdf_backend: pymupdf       # "pymupdf" (fast, text PDFs) | "docling" (OCR + tables)
+  docling_ocr: false         # OCR scanned / image-only pages
+  docling_ocr_engine: easyocr  # "easyocr" | "tesseract" | "rapidocr"
+  docling_tables: true       # recognise table structure (emitted as Markdown)
+  # docling_artifacts_path:         # local docling models dir; env override: DOCLING_ARTIFACTS_PATH
+  # --- GPU acceleration (NVIDIA RTX only) — defaults are CPU-safe everywhere ---
+  # docling_device: cpu             # "cpu" | "cuda" | "auto"
+  # docling_flash_attention: false  # RTX 30/40 series only; requires flash-attn
+  # docling_ocr_batch_size: 64      # bump to 64 on GPU (default 8 for CPU)
+  # docling_layout_batch_size: 64
+# .docx and .pptx are always parsed by docling (no lightweight adapter exists).
+
 search:
   default_top_k: 5
   max_top_k: 20

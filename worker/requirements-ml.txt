@@ -22,3 +22,9 @@ tree-sitter-java>=0.21.0
 asyncpg>=0.29.0
 pgvector>=0.2.5
 qdrant-client>=1.9.0
+
+# Docling parser (Delivery 4, optional heavy path) — OCR + table extraction for
+# PDFs and DOCX/PPTX ingestion. Pulls torch + EasyOCR models (~500 MB first run).
+# Lives here (not worker/requirements.txt) so it stays in the heavy ML layer that
+# CI skips via INSTALL_ML=false — keeping it light would defeat the layer split.
+docling>=2.0.0

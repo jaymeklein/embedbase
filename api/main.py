@@ -12,7 +12,7 @@ from api.dependencies import set_embedding_adapter, set_redis_client, set_vector
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import collections, config, documents, health, mcp, search, workspaces
-from api.services.config_env import overlay_vector_store_env
+from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 from api.settings import settings
 
 logger = structlog.get_logger()
@@ -28,9 +28,10 @@ def _load_app_config() -> AppConfig:
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
 
-    # Env vars (e.g. from docker-compose.postgres.yml) override the file so the
-    # vector-store backend + secrets can be selected without editing config.yaml.
-    data = overlay_vector_store_env(data)
+    # Env vars (e.g. from docker-compose.postgres.yml or .env) override the file so
+    # the vector-store backend + secrets and the docling models path can be selected
+    # without editing config.yaml.
+    data = overlay_parser_env(overlay_vector_store_env(data))
     try:
         return AppConfig.model_validate(data)
     except ValidationError as exc:
@@ -113,7 +114,10 @@ def create_app() -> FastAPI:
     app.include_router(documents.router)
     app.include_router(search.router)
     app.include_router(config.router)
-    app.include_router(mcp.router)
+
+    # MCP server (Delivery 4) — a mounted SSE ASGI sub-app, not a normal router.
+    # Mount last so its /mcp prefix never shadows the REST routes above.
+    mcp.mount_mcp(app, _load_app_config().mcp)
 
     return app
 

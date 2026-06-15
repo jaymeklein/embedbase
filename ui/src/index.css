@@ -1,3 +1,50 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* "Quiet Utility" design tokens. RGB channels (not hex) so Tailwind opacity
+     modifiers like bg-ink/20 resolve to rgb(var(--ink) / 0.2). */
+  :root {
+    --canvas: 252 252 251;
+    --surface: 255 255 255;
+    --border: 232 232 230;
+
+    --ink: 26 26 24;
+    --ink-muted: 107 107 104;
+    --ink-faint: 154 154 150;
+
+    --accent: 43 92 230;
+    --accent-hover: 30 71 196;
+    --accent-weak: 238 242 254;
+
+    --ok: 30 142 90;
+    --warn: 178 107 0;
+    --pending: 107 107 104;
+    --err: 192 56 43;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: rgb(var(--canvas));
+    color: rgb(var(--ink));
+    font-family: 'Public Sans Variable', ui-sans-serif, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+  }
+}

@@ -88,6 +88,23 @@ class SearchConfig(BaseModel):
     bm25_cache_ttl: int = 60
 
 
+class ParserConfig(BaseModel):
+    pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
+    docling_ocr: bool = False  # enable OCR for scanned pages
+    docling_ocr_engine: str = "easyocr"  # "easyocr" | "tesseract" | "rapidocr"
+    docling_tables: bool = True  # table structure recognition
+    # GPU acceleration (NVIDIA RTX only) — safe CPU defaults everywhere else.
+    docling_device: str = "cpu"  # "cpu" | "cuda" | "auto"
+    docling_flash_attention: bool = False  # RTX 30/40 series; needs flash-attn
+    docling_ocr_batch_size: int = 8  # bump to ~64 on GPU
+    docling_layout_batch_size: int = 8  # bump to ~64 on GPU
+    # Local directory holding the docling layout/OCR/table models. When set, docling
+    # loads models from here instead of the default HuggingFace cache — pin it for
+    # offline/air-gapped runs or a mounted models volume. Overridable via the
+    # DOCLING_ARTIFACTS_PATH env var (.env). None -> docling's default cache.
+    docling_artifacts_path: str | None = None
+
+
 class MCPConfig(BaseModel):
     enabled: bool = True
     rate_limit_rpm: int = 60
@@ -103,6 +120,7 @@ class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
     chunking: ChunkingConfig = ChunkingConfig()
+    parsers: ParserConfig = ParserConfig()
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
     logging: LoggingConfig = LoggingConfig()
