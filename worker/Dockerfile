@@ -23,6 +23,16 @@ RUN if [ "$INSTALL_ML" = "true" ]; then \
         pip install --no-cache-dir -r requirements-ml.txt; \
     fi
 
+# Native runtime libs for docling's OpenCV dependency (cv2): libGL.so.1 and
+# libgthread/glib. python:3.12-slim omits them, so without this docling fails at
+# import with "libGL.so.1: cannot open shared object file" on .docx/.pptx or the
+# docling PDF backend. Gated on INSTALL_ML so the slim CI image stays slim.
+RUN if [ "$INSTALL_ML" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            libgl1 libglib2.0-0 \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
 # Pre-download the default embedding model at build time (the worker runs the
 # embedding step). Skipped when INSTALL_ML=false (the model would be unavailable
 # anyway). Override EMBEDDING_MODEL at runtime to use a different one (rebuild required).
