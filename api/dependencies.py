@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
 from api.db import AsyncSessionLocal
+from api.models.config import AppConfig
 
 # ---------------------------------------------------------------------------
 # Adapter singletons — set once in lifespan(), read everywhere via Depends()
@@ -14,6 +15,18 @@ from api.db import AsyncSessionLocal
 _embedding_adapter: EmbeddingAdapter | None = None
 _vector_store: VectorStoreAdapter | None = None
 _redis_client: Any = None
+_app_config: AppConfig | None = None
+
+
+def set_app_config(config: AppConfig) -> None:
+    """Register the live application config (set in lifespan, swapped on reload)."""
+    global _app_config
+    _app_config = config
+
+
+def get_app_config() -> AppConfig | None:
+    """Return the live application config (None before lifespan completes)."""
+    return _app_config
 
 
 def set_embedding_adapter(adapter: EmbeddingAdapter) -> None:

@@ -21,6 +21,7 @@ from api.adapters.parsers import SUPPORTED_EXTENSIONS
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
+from api.dependencies import get_app_config
 from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.upload import stream_upload_with_size_guard
@@ -106,7 +107,9 @@ async def ingest(
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
     dest = Path(settings.upload_dir) / col_id / f"{doc_id}{ext}"
-    size = await stream_upload_with_size_guard(file, dest)
+    config = get_app_config()
+    max_bytes = config.max_file_size_bytes if config else None
+    size = await stream_upload_with_size_guard(file, dest, max_bytes=max_bytes)
     return await _persist_and_enqueue(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
         filename=filename, ext=ext, size=size, file_path=str(dest),
