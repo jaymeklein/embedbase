@@ -8,7 +8,9 @@ from fastapi import HTTPException
 
 from api import dependencies
 from api.models.config import AppConfig, EmbeddingConfig, VectorStoreConfig
+from api.services import config_reload as cr
 from api.services import config_service as cs
+from tests.unit.fake_redis import FakeRedis
 
 
 class _FakeEmbed:
@@ -25,12 +27,21 @@ def _reset_state():
     dependencies._app_config = None
     dependencies._embedding_adapter = None
     dependencies._vector_store = None
+    dependencies._redis_client = None
     cs._reload_status.clear()
     yield
     dependencies._app_config = None
     dependencies._embedding_adapter = None
     dependencies._vector_store = None
+    dependencies._redis_client = None
     cs._reload_status.clear()
+
+
+def _patch_adapters(monkeypatch, tmp_path):
+    """Monkeypatch adapter builders + the config path so apply touches no infra."""
+    monkeypatch.setattr(cs, "resolve_embedding", lambda _c: _FakeEmbed())
+    monkeypatch.setattr(cs, "resolve_store", lambda _c, _d: _FakeStore())
+    monkeypatch.setattr(cs, "_config_path", lambda: tmp_path / "config.yaml")
 
 
 # ── GET (masking) ─────────────────────────────────────────────────────────────
@@ -136,3 +147,56 @@ def test_get_reload_status_unknown_version_404():
     with pytest.raises(HTTPException) as exc:
         cs.get_reload_status("does-not-exist")
     assert exc.value.status_code == 404
+
+
+# ── apply_config (Phase 3 worker propagation) ─────────────────────────────────
+
+
+def test_apply_config_publishes_and_applies_when_workers_ack(tmp_path, monkeypatch):
+    _patch_adapters(monkeypatch, tmp_path)
+    redis = FakeRedis(subscribers=1, worker_acks={"worker:w1": "ok"})
+    dependencies.set_redis_client(redis)
+    dependencies.set_app_config(AppConfig())
+
+    result = cs.apply_config(AppConfig(embedding=EmbeddingConfig(provider="ollama")))
+
+    assert result["status"] == "applied"
+    assert result["acked_workers"] == 1
+    assert redis.published[0][0] == cr.RELOAD_CHANNEL  # workers were notified
+
+
+def test_apply_config_returns_pending_when_acks_outstanding(tmp_path, monkeypatch):
+    _patch_adapters(monkeypatch, tmp_path)
+    monkeypatch.setattr(cs, "_ACK_WAIT_SECONDS", 0.0)  # don't actually wait
+    dependencies.set_redis_client(FakeRedis(subscribers=2))  # no acks injected
+    dependencies.set_app_config(AppConfig())
+
+    result = cs.apply_config(AppConfig(embedding=EmbeddingConfig(provider="ollama")))
+
+    assert result["status"] == "pending"
+    assert result["expected_workers"] == 2
+
+
+def test_apply_config_rolls_back_on_worker_error(tmp_path, monkeypatch):
+    _patch_adapters(monkeypatch, tmp_path)
+    (tmp_path / "config.yaml").write_text("embedding:\n  provider: original\n", encoding="utf-8")
+    redis = FakeRedis(subscribers=1, worker_acks={"worker:w1": "error: bad model"})
+    dependencies.set_redis_client(redis)
+    dependencies.set_app_config(AppConfig(embedding=EmbeddingConfig(provider="sentence_transformers")))
+
+    with pytest.raises(HTTPException) as exc:
+        cs.apply_config(AppConfig(embedding=EmbeddingConfig(provider="ollama")))
+
+    assert exc.value.status_code == 409
+    # config.yaml restored from the .bak, and the API reverted to the prior provider.
+    assert "original" in (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert dependencies.get_app_config().embedding.provider == "sentence_transformers"
+    assert any(b'"rollback": true' in p[1].encode() for p in redis.published)
+
+
+def test_get_reload_status_reads_from_redis(monkeypatch):
+    redis = FakeRedis()
+    cr.init_status(redis, "v1", 1)
+    cr.record_worker_ack(redis, "v1", "ok")
+    dependencies.set_redis_client(redis)
+    assert cs.get_reload_status("v1")["status"] == "applied"
