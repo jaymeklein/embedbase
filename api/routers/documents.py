@@ -6,7 +6,7 @@ This file is routing-only: path registration, dependency resolution, delegation.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
@@ -39,6 +39,7 @@ async def upload_document(
 async def list_documents(
     ws_id: str,
     col_id: str,
+    tag: list[str] | None = Query(default=None),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -46,7 +47,7 @@ async def list_documents(
     await doc_svc.resolve_collection(db, col_id, ws_id)
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
-    return await doc_svc.list_documents(db, col_id)
+    return await doc_svc.list_documents(db, col_id, tags=tag)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status")
