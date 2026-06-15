@@ -47,13 +47,54 @@ async def resolve_collection(
     return row.workspace_id
 
 
+async def _persist_and_enqueue(
+    db: AsyncSession,
+    *,
+    col_id: str,
+    doc_id: str,
+    job_id: str,
+    filename: str,
+    ext: str,
+    size: int,
+    file_path: str,
+) -> dict:
+    """Insert the document + job rows and enqueue the ingest task.
+
+    Shared by the HTTP upload path (:func:`ingest`) and the MCP local-path path
+    (:func:`ingest_local_path`). Returns a dict suitable for a 202 response body.
+    """
+    now = _now()
+    await db.execute(
+        insert(doc_t).values(
+            id=doc_id, collection_id=col_id, filename=filename, file_type=ext,
+            file_size=size, chunk_count=None, created_at=now, updated_at=now,
+        )
+    )
+    await db.execute(
+        insert(job_t).values(
+            job_id=job_id, document_id=doc_id, collection_id=col_id, filename=filename,
+            file_type=ext, status="pending", created_at=now, updated_at=now,
+        )
+    )
+    await db.commit()
+
+    task_id = task_producer.enqueue_ingest(job_id, file_path, col_id, doc_id, ext)
+    if task_id:
+        await db.execute(
+            update(job_t).where(job_t.c.job_id == job_id).values(celery_task_id=task_id)
+        )
+        await db.commit()
+
+    return {
+        "job_id": job_id, "document_id": doc_id, "collection_id": col_id,
+        "filename": filename, "file_type": ext, "file_size": size, "status": "pending",
+    }
+
+
 async def ingest(
     db: AsyncSession, col_id: str, file: UploadFile, principal: Principal
 ) -> dict:
-    """Validate, stream, record, and enqueue a document for ingestion.
-
-    Returns a dict suitable for the 202 response body.
-    """
+    """Validate, stream, record, and enqueue an uploaded document for ingestion."""
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
 
@@ -65,52 +106,41 @@ async def ingest(
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
     dest = Path(settings.upload_dir) / col_id / f"{doc_id}{ext}"
-
     size = await stream_upload_with_size_guard(file, dest)
-
-    now = _now()
-    await db.execute(
-        insert(doc_t).values(
-            id=doc_id,
-            collection_id=col_id,
-            filename=filename,
-            file_type=ext,
-            file_size=size,
-            chunk_count=None,
-            created_at=now,
-            updated_at=now,
-        )
+    return await _persist_and_enqueue(
+        db, col_id=col_id, doc_id=doc_id, job_id=job_id,
+        filename=filename, ext=ext, size=size, file_path=str(dest),
     )
-    await db.execute(
-        insert(job_t).values(
-            job_id=job_id,
-            document_id=doc_id,
-            collection_id=col_id,
-            filename=filename,
-            file_type=ext,
-            status="pending",
-            created_at=now,
-            updated_at=now,
-        )
+
+
+async def ingest_local_path(
+    db: AsyncSession, col_id: str, file_path: str, principal: Principal
+) -> dict:
+    """Record + enqueue a container-local file for ingestion (MCP ingest tool).
+
+    Unlike :func:`ingest`, the bytes are already on disk at ``file_path`` (a path
+    the MCP client can see inside the container), so nothing is streamed.
+
+    Raises:
+        HTTPException: 403 if the principal cannot access the collection, 415 for
+            an unsupported extension, or 404 if ``file_path`` does not exist.
+    """
+    if not principal.can_access(col_id):
+        raise HTTPException(403, "API key not valid for this collection")
+
+    path = Path(file_path)
+    ext = path.suffix.lower()
+    if ext not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(415, f"Unsupported file type: {ext!r}")
+    if not path.is_file():
+        raise HTTPException(404, f"File not found: {file_path!r}")
+
+    doc_id = f"doc_{uuid4().hex[:12]}"
+    job_id = f"job_{uuid4().hex[:12]}"
+    return await _persist_and_enqueue(
+        db, col_id=col_id, doc_id=doc_id, job_id=job_id,
+        filename=path.name, ext=ext, size=path.stat().st_size, file_path=str(path),
     )
-    await db.commit()
-
-    task_id = task_producer.enqueue_ingest(job_id, str(dest), col_id, doc_id, ext)
-    if task_id:
-        await db.execute(
-            update(job_t).where(job_t.c.job_id == job_id).values(celery_task_id=task_id)
-        )
-        await db.commit()
-
-    return {
-        "job_id": job_id,
-        "document_id": doc_id,
-        "collection_id": col_id,
-        "filename": filename,
-        "file_type": ext,
-        "file_size": size,
-        "status": "pending",
-    }
 
 
 async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
