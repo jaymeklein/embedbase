@@ -1,4 +1,5 @@
 import contextlib
+import json
 from typing import Any
 
 from api.models.chunk import Chunk
@@ -38,6 +39,35 @@ class ChromaAdapter:
         except Exception:
             return False
 
+    @staticmethod
+    def _encode_metadata(meta: dict[str, Any]) -> dict[str, Any]:
+        """Make metadata Chroma-safe: drop None, JSON-encode list/dict values.
+
+        Chroma only accepts scalar (str/int/float/bool) metadata values, so a
+        ``None`` raises and a list (e.g. ``tags``) is rejected. ``_decode_metadata``
+        reverses the JSON encoding on read so filters still see real lists.
+        """
+        out: dict[str, Any] = {}
+        for key, value in meta.items():
+            if value is None:
+                continue
+            out[key] = json.dumps(value) if isinstance(value, (list, dict)) else value
+        return out
+
+    @staticmethod
+    def _decode_metadata(meta: dict[str, Any]) -> dict[str, Any]:
+        """Reverse ``_encode_metadata``: parse JSON-encoded list/dict strings back."""
+        out: dict[str, Any] = {}
+        for key, value in meta.items():
+            if isinstance(value, str) and value[:1] in "[{":
+                try:
+                    out[key] = json.loads(value)
+                except json.JSONDecodeError:
+                    out[key] = value
+            else:
+                out[key] = value
+        return out
+
     def upsert(self, collection_id: str, chunks: list[Chunk], vectors: list[list[float]]) -> None:
         client = self._get_client()
         col = client.get_or_create_collection(
@@ -48,7 +78,7 @@ class ChromaAdapter:
             ids=[c.id for c in chunks],
             embeddings=vectors,
             documents=[c.text for c in chunks],
-            metadatas=[c.metadata.model_dump() for c in chunks],
+            metadatas=[self._encode_metadata(c.metadata.model_dump()) for c in chunks],
         )
 
     def search(
@@ -82,7 +112,7 @@ class ChromaAdapter:
                 text=doc,
                 score=1.0 - dist,  # cosine distance → similarity
                 rank=rank,
-                metadata=meta or {},
+                metadata=self._decode_metadata(meta or {}),
             ))
         return out
 
