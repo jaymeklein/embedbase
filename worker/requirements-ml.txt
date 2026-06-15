@@ -4,7 +4,10 @@
 # torch/sentence-transformers reinstall is what made the worker CI build slow).
 # Skipped in CI smoke builds via --build-arg INSTALL_ML=false.
 sentence-transformers>=3.0.0
-chromadb>=0.5.3
+# Pin to EXACTLY the server version (chromadb/chroma:0.5.3). A 1.x client speaks
+# an incompatible v2 API, and even later 0.5.x clients (e.g. 0.5.23) call
+# endpoints the 0.5.3 server lacks (get_user_identity -> 404). See vault tests/.
+chromadb==0.5.3
 PyMuPDF>=1.24.0
 pandas>=2.2.0
 tree-sitter>=0.21.0
