@@ -86,8 +86,14 @@ def test_settings_load_and_derive():
     from api.settings import settings
 
     assert settings.master_api_key  # provided via env in conftest
-    assert settings.max_file_size_bytes == settings.max_file_size_mb * 1024 * 1024
     assert settings.cors_origins_list  # non-empty list
+
+
+def test_app_config_file_size_derivation():
+    from api.models.config import AppConfig
+
+    config = AppConfig(max_file_size_mb=50)
+    assert config.max_file_size_bytes == 50 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
