@@ -33,6 +33,7 @@ services:
       - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
       - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
       - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+      - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-}
     command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/api
     volumes:
       - embedbase_data:/data
@@ -75,6 +76,7 @@ services:
       - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
       - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
       - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
+      - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-}
     command: watchfiles "celery -A worker.celery_app worker --loglevel=info --concurrency=1" /app/worker
     volumes:
       - embedbase_data:/data
