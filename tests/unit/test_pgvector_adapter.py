@@ -82,6 +82,24 @@ def _adapter(conn, index_min_rows=100):
     return a
 
 
+# --- ping -------------------------------------------------------------------
+
+
+def test_ping_true_when_query_succeeds():
+    conn = FakeConn()
+    adapter = _adapter(conn)
+    assert adapter.ping() is True
+    assert any("SELECT 1" in sql for sql, _ in conn.execute_calls)
+
+
+def test_ping_false_when_query_errors():
+    class _BoomConn(FakeConn):
+        async def execute(self, sql, *args):
+            raise RuntimeError("db down")
+
+    assert _adapter(_BoomConn()).ping() is False
+
+
 # --- upsert -----------------------------------------------------------------
 
 
