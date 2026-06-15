@@ -93,11 +93,13 @@ class ParserConfig(BaseModel):
     docling_ocr: bool = False  # enable OCR for scanned pages
     docling_ocr_engine: str = "easyocr"  # "easyocr" | "tesseract" | "rapidocr"
     docling_tables: bool = True  # table structure recognition
-    # GPU acceleration (NVIDIA RTX only) — safe CPU defaults everywhere else.
-    docling_device: str = "cpu"  # "cpu" | "cuda" | "auto"
-    docling_flash_attention: bool = False  # RTX 30/40 series; needs flash-attn
-    docling_ocr_batch_size: int = 8  # bump to ~64 on GPU
-    docling_layout_batch_size: int = 8  # bump to ~64 on GPU
+    # GPU acceleration — "auto" (default) detects the GPU and configures the
+    # device, flash attention, and batch sizes automatically; no env/config flags
+    # needed. Set "cpu"/"cuda" to pin a device and the knobs below explicitly.
+    docling_device: str = "auto"  # "auto" | "cpu" | "cuda"
+    docling_flash_attention: bool = False  # ignored under "auto"; Ampere-only (RTX 30/40)
+    docling_ocr_batch_size: int = 8  # ignored under "auto" (detection picks 64 on GPU)
+    docling_layout_batch_size: int = 8  # ignored under "auto" (detection picks 64 on GPU)
     # Local directory holding the docling layout/OCR/table models. When set, docling
     # loads models from here instead of the default HuggingFace cache — pin it for
     # offline/air-gapped runs or a mounted models volume. Overridable via the

@@ -18,13 +18,24 @@ Pipeline construction is written against docling's documented API.
 
 from __future__ import annotations
 
+import importlib.util
+import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from api.models.chunk import Chunk, ChunkMetadata
 
+logger = logging.getLogger(__name__)
+
 SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".pptx"]
 _VALID_DEVICES = ("cpu", "cuda", "auto")
+# Flash Attention 2 requires Ampere or newer; Turing (RTX 20 series, incl. the
+# 2060 Super at 7.5) is below this and falls back to standard CUDA attention.
+_FLASH_ATTENTION_MIN_CAPABILITY = (8, 0)
+# Batch sizes: small CPU default vs a GPU-saturating batch when CUDA is detected.
+_CPU_BATCH_SIZE = 8
+_GPU_BATCH_SIZE = 64
 
 
 def _cuda_is_available() -> bool:
@@ -32,6 +43,94 @@ def _cuda_is_available() -> bool:
     import torch
 
     return bool(torch.cuda.is_available())
+
+
+def _cuda_compute_capability() -> tuple[int, int] | None:
+    """Return the active CUDA device's (major, minor) capability, or None.
+
+    Returns ``None`` when no CUDA device is visible. Imports torch lazily so the
+    module stays importable without the heavy dependency installed.
+    """
+    import torch
+
+    if not torch.cuda.is_available():
+        return None
+    return torch.cuda.get_device_capability()
+
+
+def _flash_attention_installed() -> bool:
+    """Return whether the ``flash_attn`` package is importable (no import side effect)."""
+    return importlib.util.find_spec("flash_attn") is not None
+
+
+@dataclass(frozen=True)
+class AcceleratorProfile:
+    """Resolved accelerator settings chosen for the host hardware."""
+
+    device: str
+    flash_attention: bool
+    batch_size: int
+
+
+_CPU_PROFILE = AcceleratorProfile(device="cpu", flash_attention=False, batch_size=_CPU_BATCH_SIZE)
+
+
+def detect_accelerator() -> AcceleratorProfile:
+    """Detect the best docling accelerator settings for the current host.
+
+    Picks CUDA whenever a GPU is visible to torch, and enables Flash Attention 2
+    only on Ampere+ GPUs (compute capability >= 8.0) that also have ``flash-attn``
+    installed — so a Turing card such as the RTX 2060 Super (7.5) auto-selects
+    CUDA without flash. Falls back to CPU when torch is missing or no GPU is
+    present, so it is always safe to call (no configuration required).
+
+    Returns:
+        The resolved :class:`AcceleratorProfile`.
+    """
+    try:
+        capability = _cuda_compute_capability()
+    except ImportError:
+        return _CPU_PROFILE
+    if capability is None:
+        return _CPU_PROFILE
+    flash = capability >= _FLASH_ATTENTION_MIN_CAPABILITY and _flash_attention_installed()
+    logger.info(
+        "docling accelerator auto-detected: device=cuda capability=%d.%d flash_attention=%s",
+        capability[0],
+        capability[1],
+        flash,
+    )
+    return AcceleratorProfile(device="cuda", flash_attention=flash, batch_size=_GPU_BATCH_SIZE)
+
+
+def _validate_accelerator(device: str, flash_attention: bool) -> None:
+    """Validate the device string and flash-attention support, failing fast.
+
+    Args:
+        device: Requested accelerator device (``cpu``/``cuda``/``auto``).
+        flash_attention: Whether Flash Attention 2 was requested.
+
+    Raises:
+        ValueError: For an invalid ``device``; ``device="cuda"`` with no CUDA
+            device; or ``flash_attention`` on a GPU below Ampere (compute
+            capability < 8.0), such as the Turing RTX 2060 Super.
+    """
+    if device not in _VALID_DEVICES:
+        raise ValueError(f"docling_device must be one of {_VALID_DEVICES}, got {device!r}")
+    if device == "cuda" and not _cuda_is_available():
+        raise ValueError("docling_device='cuda' but no CUDA device is available")
+    if not flash_attention:
+        return
+    capability = _cuda_compute_capability()
+    if capability is None:
+        raise ValueError("docling_flash_attention=True but no CUDA device is available")
+    if capability < _FLASH_ATTENTION_MIN_CAPABILITY:
+        major, minor = capability
+        raise ValueError(
+            "docling_flash_attention=True requires an Ampere or newer GPU "
+            f"(compute capability >= 8.0); found {major}.{minor}. Turing cards such "
+            "as the RTX 2060 Super (7.5) are unsupported — use standard CUDA attention."
+        )
 
 
 class DoclingParser:
@@ -43,10 +142,10 @@ class DoclingParser:
         ocr: bool = False,
         ocr_engine: str = "easyocr",
         table_structure: bool = True,
-        device: str = "cpu",
+        device: str = "auto",
         flash_attention: bool = False,
-        ocr_batch_size: int = 8,
-        layout_batch_size: int = 8,
+        ocr_batch_size: int = _CPU_BATCH_SIZE,
+        layout_batch_size: int = _CPU_BATCH_SIZE,
         artifacts_path: str | None = None,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         max_tokens: int = 512,
@@ -57,10 +156,12 @@ class DoclingParser:
             ocr: Enable OCR for scanned / image-only pages.
             ocr_engine: ``"easyocr"`` (default) | ``"tesseract"`` | ``"rapidocr"``.
             table_structure: Recognise table structure (emitted as Markdown).
-            device: ``"cpu"`` (default) | ``"cuda"`` | ``"auto"``.
+            device: ``"auto"`` (default — detect the GPU and configure flash
+                attention + batch sizes automatically) | ``"cpu"`` | ``"cuda"``.
             flash_attention: Use Flash Attention 2 (RTX 30/40 + ``flash-attn``).
-            ocr_batch_size: OCR batch size (bump to ~64 on GPU).
-            layout_batch_size: Layout-model batch size (bump to ~64 on GPU).
+                Ignored when ``device="auto"`` (detection decides).
+            ocr_batch_size: OCR batch size. Ignored when ``device="auto"``.
+            layout_batch_size: Layout-model batch size. Ignored when ``device="auto"``.
             artifacts_path: Local directory holding the docling models; when set,
                 docling loads from here instead of the default HuggingFace cache
                 (offline / pinned models). ``None`` keeps docling's default.
@@ -68,13 +169,18 @@ class DoclingParser:
             max_tokens: Maximum tokens per chunk.
 
         Raises:
-            ValueError: For an invalid ``device``, or ``device="cuda"`` when no
-                CUDA device is available (fails fast at construction).
+            ValueError: For an invalid ``device``; ``device="cuda"`` with no CUDA
+                device; or ``flash_attention`` on a GPU below Ampere (fails fast
+                at construction).
         """
-        if device not in _VALID_DEVICES:
-            raise ValueError(f"docling_device must be one of {_VALID_DEVICES}, got {device!r}")
-        if device == "cuda" and not _cuda_is_available():
-            raise ValueError("docling_device='cuda' but no CUDA device is available")
+        if device == "auto":
+            # Detection yields a hardware-consistent profile, so no validation.
+            profile = detect_accelerator()
+            device = profile.device
+            flash_attention = profile.flash_attention
+            ocr_batch_size = layout_batch_size = profile.batch_size
+        else:
+            _validate_accelerator(device, flash_attention)
         self._ocr = ocr
         self._ocr_engine = ocr_engine
         self._table_structure = table_structure
