@@ -8,7 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from api.db import init_db
-from api.dependencies import set_embedding_adapter, set_redis_client, set_vector_store
+from api.dependencies import (
+    set_app_config,
+    set_embedding_adapter,
+    set_redis_client,
+    set_vector_store,
+)
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import collections, config, documents, health, mcp, search, workspaces
@@ -45,6 +50,7 @@ async def lifespan(app: FastAPI):
     # 1. Load config.yaml
     app_config = _load_app_config()
     app.state.config = app_config
+    set_app_config(app_config)
     logger.info("config loaded", provider=app_config.embedding.provider,
                 vector_store=app_config.vector_store.backend)
 

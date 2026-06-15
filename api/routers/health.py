@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from api.dependencies import get_embedding_adapter, get_vector_store
+from api.dependencies import get_app_config, get_embedding_adapter, get_vector_store
 from api.services.health import build_health
 
 router = APIRouter(tags=["system"])
@@ -8,7 +8,7 @@ router = APIRouter(tags=["system"])
 
 @router.get("/healthz")
 async def healthz():
-    return await build_health(get_vector_store(), get_embedding_adapter())
+    return await build_health(get_vector_store(), get_embedding_adapter(), get_app_config())
 
 
 @router.get("/metrics")
