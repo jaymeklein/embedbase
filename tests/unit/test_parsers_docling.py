@@ -30,7 +30,7 @@ def test_parser_config_defaults():
     assert cfg.docling_ocr is False
     assert cfg.docling_ocr_engine == "easyocr"
     assert cfg.docling_tables is True
-    assert cfg.docling_device == "cpu"
+    assert cfg.docling_device == "auto"
     assert cfg.docling_flash_attention is False
     assert cfg.docling_artifacts_path is None
 
@@ -89,6 +89,106 @@ def test_cuda_with_gpu_constructs(monkeypatch):
     monkeypatch.setattr(mod, "_cuda_is_available", lambda: True)
     parser = mod.DoclingParser(device="cuda")
     assert parser._device == "cuda"
+
+
+def test_flash_attention_on_turing_raises(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_is_available", lambda: True)
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (7, 5))
+    with pytest.raises(ValueError, match="Ampere"):
+        mod.DoclingParser(device="cuda", flash_attention=True)
+
+
+def test_flash_attention_without_gpu_raises(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    # Explicit device (not "auto") so validation runs; flash requested with no GPU.
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: None)
+    with pytest.raises(ValueError, match="no CUDA device"):
+        mod.DoclingParser(device="cpu", flash_attention=True)
+
+
+def test_flash_attention_on_ampere_constructs(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_is_available", lambda: True)
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (8, 6))
+    parser = mod.DoclingParser(device="cuda", flash_attention=True)
+    assert parser._flash_attention is True
+
+
+# ── Auto-detection (zero-config GPU) ──────────────────────────────────────────
+
+
+def _raise_import_error():
+    raise ImportError("torch not installed")
+
+
+def test_detect_accelerator_falls_back_to_cpu_without_torch(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", _raise_import_error)
+    profile = mod.detect_accelerator()
+    assert profile == mod.AcceleratorProfile(device="cpu", flash_attention=False, batch_size=8)
+
+
+def test_detect_accelerator_cpu_when_no_gpu(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: None)
+    assert mod.detect_accelerator().device == "cpu"
+
+
+def test_detect_accelerator_turing_selects_cuda_without_flash(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (7, 5))
+    monkeypatch.setattr(mod, "_flash_attention_installed", lambda: True)
+    profile = mod.detect_accelerator()
+    assert profile.device == "cuda"
+    assert profile.flash_attention is False  # Turing 7.5 < Ampere 8.0
+    assert profile.batch_size == 64
+
+
+def test_detect_accelerator_ampere_enables_flash_when_installed(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (8, 6))
+    monkeypatch.setattr(mod, "_flash_attention_installed", lambda: True)
+    assert mod.detect_accelerator().flash_attention is True
+
+
+def test_detect_accelerator_ampere_without_flash_pkg(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (8, 6))
+    monkeypatch.setattr(mod, "_flash_attention_installed", lambda: False)
+    assert mod.detect_accelerator().flash_attention is False
+
+
+def test_auto_device_applies_detected_profile(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(
+        mod,
+        "detect_accelerator",
+        lambda: mod.AcceleratorProfile(device="cuda", flash_attention=True, batch_size=64),
+    )
+    parser = mod.DoclingParser(device="auto")
+    assert parser._device == "cuda"
+    assert parser._flash_attention is True
+    assert parser._ocr_batch_size == 64
+    assert parser._layout_batch_size == 64
+
+
+def test_auto_device_falls_back_to_cpu(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "detect_accelerator", lambda: mod._CPU_PROFILE)
+    parser = mod.DoclingParser(device="auto")
+    assert parser._device == "cpu"
+    assert parser._ocr_batch_size == 8
 
 
 def test_constructing_cpu_parser_does_not_import_docling():
