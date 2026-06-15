@@ -13,9 +13,10 @@ from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
-from api.settings import settings
-
 _CHUNK = 1024 * 1024  # 1 MiB read window
+# Fallback cap used only when no explicit limit is passed (e.g. before the live
+# AppConfig is available). Callers normally pass the editable config's value.
+_DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 
 
 class FileTooLargeError(HTTPException):
@@ -37,7 +38,7 @@ async def stream_upload_with_size_guard(
     fast-path rejection before reading any body, then re-checks the running total
     while streaming (the header is advisory and may be absent or wrong).
     """
-    limit = max_bytes if max_bytes is not None else settings.max_file_size_bytes
+    limit = max_bytes if max_bytes is not None else _DEFAULT_MAX_BYTES
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
