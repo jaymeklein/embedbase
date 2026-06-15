@@ -51,6 +51,15 @@ RUN if [ "$INSTALL_FLASH_ATTN" = "true" ]; then \
 COPY worker/requirements-ml.txt .
 RUN python -m pip install --no-cache-dir -r requirements-ml.txt
 
+# Native runtime libs for docling's OpenCV dependency (cv2): libGL.so.1 and
+# libgthread/glib. The CUDA runtime base omits them, so without this docling
+# fails at import with "libGL.so.1: cannot open shared object file". Installed
+# after the heavy pip layers (kept cache-friendly) but before the docling model
+# pre-download below, which imports cv2 at build time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Pre-download embedding + docling models so the first ingest is fast.
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 ARG EMBEDBASE_DOCLING_MODELS=true
