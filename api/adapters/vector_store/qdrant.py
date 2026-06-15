@@ -41,6 +41,14 @@ class QdrantAdapter:
             self._client = QdrantClient(host=self._host, port=self._port)
         return self._client
 
+    def ping(self) -> bool:
+        """Return True if the Qdrant server answers a collections listing."""
+        try:
+            self._get_client().get_collections()
+            return True
+        except Exception:
+            return False
+
     @staticmethod
     def _point_id(chunk_id: str) -> str:
         """Map a sha256 chunk id to a deterministic, Qdrant-valid UUID string."""

@@ -39,10 +39,16 @@ class FakeCollection:
 
 
 class FakeClient:
-    def __init__(self, collection=None, raise_on_get=False):
+    def __init__(self, collection=None, raise_on_get=False, raise_on_heartbeat=False):
         self._collection = collection or FakeCollection()
         self._raise_on_get = raise_on_get
+        self._raise_on_heartbeat = raise_on_heartbeat
         self.deleted_collection = None
+
+    def heartbeat(self):
+        if self._raise_on_heartbeat:
+            raise RuntimeError("server down")
+        return 1
 
     def get_or_create_collection(self, name, metadata=None):
         return self._collection
@@ -60,6 +66,35 @@ def _adapter(client):
     a = ChromaAdapter(host="h", port=1)
     a._client = client
     return a
+
+
+def test_encode_metadata_drops_none_and_encodes_lists():
+    encoded = ChromaAdapter._encode_metadata(
+        {"document_id": "d1", "page_number": None, "tags": ["a", "b"], "chunk_index": 0}
+    )
+    assert "page_number" not in encoded  # None dropped
+    assert encoded["document_id"] == "d1"
+    assert encoded["chunk_index"] == 0
+    assert encoded["tags"] == '["a", "b"]'  # list JSON-encoded to a scalar string
+
+
+def test_decode_metadata_restores_lists():
+    decoded = ChromaAdapter._decode_metadata({"tags": '["a", "b"]', "filename": "f.txt"})
+    assert decoded["tags"] == ["a", "b"]  # round-trips back to a list
+    assert decoded["filename"] == "f.txt"  # plain string untouched
+
+
+def test_encode_decode_round_trip_preserves_tags():
+    original = {"document_id": "d1", "tags": ["x", "y"]}
+    assert ChromaAdapter._decode_metadata(ChromaAdapter._encode_metadata(original)) == original
+
+
+def test_ping_true_when_heartbeat_succeeds():
+    assert _adapter(FakeClient()).ping() is True
+
+
+def test_ping_false_when_heartbeat_errors():
+    assert _adapter(FakeClient(raise_on_heartbeat=True)).ping() is False
 
 
 def test_upsert_passes_ids_embeddings_documents_metadatas():
