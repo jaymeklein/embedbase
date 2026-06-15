@@ -19,7 +19,18 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from api.settings import settings
-from api.tables import api_keys, collections, documents, job_records, metadata, workspaces
+from api.tables import (
+    api_keys,
+    collection_tags,
+    collections,
+    document_tags,
+    documents,
+    job_records,
+    metadata,
+    tags,
+    workspace_tags,
+    workspaces,
+)
 
 __all__ = [
     "metadata",
@@ -28,6 +39,10 @@ __all__ = [
     "api_keys",
     "documents",
     "job_records",
+    "tags",
+    "workspace_tags",
+    "collection_tags",
+    "document_tags",
     "engine",
     "AsyncSessionLocal",
     "init_db",
