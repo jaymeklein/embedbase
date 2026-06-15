@@ -45,10 +45,13 @@ parsers:
   docling_ocr_engine: easyocr  # "easyocr" | "tesseract" | "rapidocr"
   docling_tables: true       # recognise table structure (emitted as Markdown)
   # docling_artifacts_path:         # local docling models dir; env override: DOCLING_ARTIFACTS_PATH
-  # --- GPU acceleration (NVIDIA RTX only) — defaults are CPU-safe everywhere ---
-  # docling_device: cpu             # "cpu" | "cuda" | "auto"
-  # docling_flash_attention: false  # RTX 30/40 series only; requires flash-attn
-  # docling_ocr_batch_size: 64      # bump to 64 on GPU (default 8 for CPU)
+  # --- GPU acceleration — auto-detected, no config needed ---------------------
+  # docling_device defaults to "auto": it detects an NVIDIA GPU and sets the
+  # device, flash attention (Ampere+/RTX 30-40 only), and batch sizes for you.
+  # Override only to pin behaviour:
+  # docling_device: cuda            # "auto" (default) | "cpu" | "cuda"
+  # docling_flash_attention: false  # ignored under "auto"; Ampere-only
+  # docling_ocr_batch_size: 64      # ignored under "auto" (picks 64 on GPU)
   # docling_layout_batch_size: 64
 # .docx and .pptx are always parsed by docling (no lightweight adapter exists).
 

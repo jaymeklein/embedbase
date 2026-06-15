@@ -93,12 +93,23 @@ lazily on first use; pre-bake them with `--build-arg EMBEDBASE_DOCLING_MODELS=tr
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
 ```
 
-This requires the NVIDIA Container Toolkit and a CUDA-matched torch build. Check
-your driver with `nvidia-smi`, then pick the matching `cu1XX` wheel from
-[pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/) and
-set it in `worker/Dockerfile.gpu`. Enable the GPU in `config.yaml` with
-`parsers.docling_device: cuda` (or `auto` to fall back to CPU when no GPU is
-present). The default CPU stack has zero NVIDIA dependencies.
+This requires the NVIDIA Container Toolkit and a CUDA-matched torch build. The
+default `cu128` wheels in `worker/Dockerfile.gpu` cover every GPU from Turing/RTX
+20 upward; only swap the `cu1XX` wheel (see
+[pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/)) for
+an older driver. The default CPU stack has zero NVIDIA dependencies.
+
+**No config needed — the GPU is auto-detected.** `parsers.docling_device`
+defaults to `auto`: on startup the worker checks for a CUDA device and, if found,
+selects it and bumps the OCR/layout batch sizes (64) automatically; with no GPU
+it transparently falls back to CPU. Pin `cpu`/`cuda` only if you want to override
+detection.
+
+**Flash Attention 2 is Ampere-only** (compute capability ≥ 8.0 — RTX 30/40). It
+is auto-enabled under `auto` only when both the GPU supports it *and* `flash-attn`
+is installed (built via `--build-arg INSTALL_FLASH_ATTN=true`). Turing cards (RTX
+20 series, e.g. the 2060 Super at 7.5) auto-select CUDA without flash. Forcing
+`docling_flash_attention: true` on a sub-Ampere GPU fails fast with a clear error.
 
 ## WSL2 notes
 
