@@ -64,6 +64,24 @@ def _redis() -> Any:
     return _redis_singleton
 
 
+def reload_adapters() -> None:
+    """Rebuild the embedder + vector-store singletons from the current config.
+
+    Called by the config hot-reload listener after ``get_config.cache_clear()`` so
+    a live config change takes effect without restarting the worker. Building here
+    (rather than nulling the singletons for lazy rebuild) surfaces a bad config
+    immediately, so the listener can ack an error and the API can roll back.
+    """
+    global _embedder_singleton, _vector_store_singleton
+    from api.adapters.embeddings import get_embedding_adapter
+    from api.adapters.vector_store import get_vector_store
+
+    config = get_config()
+    embedder = get_embedding_adapter(config.embedding)
+    _embedder_singleton = embedder
+    _vector_store_singleton = get_vector_store(config.vector_store, embedder.dimensions)
+
+
 # ---------------------------------------------------------------------------
 # Job-record helpers
 # ---------------------------------------------------------------------------
