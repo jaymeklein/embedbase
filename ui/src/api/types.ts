@@ -106,6 +106,33 @@ export interface SuggestTagsResponse {
   suggestions: TagSuggestion[]
 }
 
+// ── Graph ─────────────────────────────────────────────────────────────────────
+
+/** A graph node: a file (document) or a tag hub. Mirrors `api/schemas/graph.py`. */
+export interface GraphNode {
+  id: string
+  label: string
+  kind: 'file' | 'tag'
+  heat: number
+  heat_pct: number
+  degree: number
+  meta: Record<string, unknown>
+}
+
+/** A `file → tag` edge. */
+export interface GraphEdge {
+  source: string
+  target: string
+}
+
+/** `GET .../graph` — nodes, edges, and a heat summary for a scope. */
+export interface GraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  tag_counts: Record<string, number>
+  max_heat: number
+}
+
 // ── API keys ────────────────────────────────────────────────────────────────
 
 /** Key metadata as returned by `GET .../keys` — never includes the secret. */
