@@ -95,6 +95,17 @@ export interface TagItems {
   documents: { id: string; filename: string; collection_id: string }[]
 }
 
+/** One AI-proposed tag with a confidence in `[0, 1]`. Ephemeral until applied. */
+export interface TagSuggestion {
+  name: string
+  confidence: number
+}
+
+/** `POST .../suggest-tags` — ephemeral candidates for review (nothing persisted). */
+export interface SuggestTagsResponse {
+  suggestions: TagSuggestion[]
+}
+
 // ── API keys ────────────────────────────────────────────────────────────────
 
 /** Key metadata as returned by `GET .../keys` — never includes the secret. */
