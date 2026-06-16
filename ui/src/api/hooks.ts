@@ -16,6 +16,9 @@ import type {
   DocumentSummary,
   SearchRequest,
   SearchResponse,
+  TagCreate,
+  TagMerge,
+  TagUpdate,
   WorkspaceCreate,
   WorkspaceUpdate,
 } from './types'
@@ -32,6 +35,9 @@ export const qk = {
     ['workspaces', wsId, 'collections', colId, 'documents'] as const,
   apiKeys: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'keys'] as const,
+  tags: (wsId: string) => ['workspaces', wsId, 'tags'] as const,
+  tagItems: (wsId: string, tagId: string) =>
+    ['workspaces', wsId, 'tags', tagId, 'items'] as const,
 }
 
 export function useHealth() {
@@ -280,6 +286,65 @@ export function useDeleteDocument(wsId: string, colId: string) {
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+// ── Tags ──────────────────────────────────────────────────────────────────
+
+export function useTags(wsId: string) {
+  return useQuery({
+    queryKey: qk.tags(wsId),
+    queryFn: () => api.listTags(wsId),
+    enabled: Boolean(wsId),
+    retry: false,
+  })
+}
+
+export function useTagItems(wsId: string, tagId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.tagItems(wsId, tagId),
+    queryFn: () => api.tagItems(wsId, tagId),
+    enabled: enabled && Boolean(wsId) && Boolean(tagId),
+    retry: false,
+  })
+}
+
+/** Refresh the workspace tag list after any tag-definition write. */
+function useInvalidateTags(wsId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return () => queryClient.invalidateQueries({ queryKey: qk.tags(wsId) })
+}
+
+export function useCreateTag(wsId: string) {
+  const invalidate = useInvalidateTags(wsId)
+  return useMutation({
+    mutationFn: (body: TagCreate) => api.createTag(wsId, body),
+    onSuccess: invalidate,
+  })
+}
+
+export function useUpdateTag(wsId: string) {
+  const invalidate = useInvalidateTags(wsId)
+  return useMutation({
+    mutationFn: ({ tagId, body }: { tagId: string; body: TagUpdate }) =>
+      api.updateTag(wsId, tagId, body),
+    onSuccess: invalidate,
+  })
+}
+
+export function useDeleteTag(wsId: string) {
+  const invalidate = useInvalidateTags(wsId)
+  return useMutation({
+    mutationFn: (tagId: string) => api.deleteTag(wsId, tagId),
+    onSuccess: invalidate,
+  })
+}
+
+export function useMergeTag(wsId: string) {
+  const invalidate = useInvalidateTags(wsId)
+  return useMutation({
+    mutationFn: (body: TagMerge) => api.mergeTags(wsId, body),
     onSuccess: invalidate,
   })
 }
