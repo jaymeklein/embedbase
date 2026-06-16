@@ -64,7 +64,7 @@ async def require_tag(ws_id: str, tag_id: str, db: AsyncSession) -> None:
         raise HTTPException(404, f"Tag {tag_id!r} not found")
 
 
-async def _require_document(col_id: str, doc_id: str, db: AsyncSession) -> None:
+async def require_document(col_id: str, doc_id: str, db: AsyncSession) -> None:
     """Raise 404 unless an active ``doc_id`` belongs to ``col_id``."""
     exists = (
         await db.execute(
@@ -280,7 +280,7 @@ async def assign_document_tag(
 ) -> None:
     """Attach a tag to a document in the collection."""
     await require_collection(ws_id, col_id, db)
-    await _require_document(col_id, doc_id, db)
+    await require_document(col_id, doc_id, db)
     await require_tag(ws_id, tag_id, db)
     await _assign("document", doc_id, tag_id, db)
 
@@ -290,7 +290,7 @@ async def unassign_document_tag(
 ) -> None:
     """Detach a tag from a document in the collection."""
     await require_collection(ws_id, col_id, db)
-    await _require_document(col_id, doc_id, db)
+    await require_document(col_id, doc_id, db)
     await require_tag(ws_id, tag_id, db)
     await _unassign("document", doc_id, tag_id, db)
 
