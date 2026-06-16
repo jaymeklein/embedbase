@@ -17,6 +17,7 @@ import type {
   JobStatus,
   MintedApiKey,
   ApiKeyCreate,
+  GraphResponse,
   SearchRequest,
   SearchResponse,
   SuggestTagsResponse,
@@ -202,6 +203,15 @@ export const api = {
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}`,
       { method: 'DELETE' },
     ),
+
+  // ── Graph ─────────────────────────────────────────────────────────────────
+  graph: (wsId: string, colId: string | null, linkTypes: string[] = ['tags']) => {
+    const base = colId
+      ? `/workspaces/${enc(wsId)}/collections/${enc(colId)}/graph`
+      : `/workspaces/${enc(wsId)}/graph`
+    const qs = linkTypes.map((t) => `link_types=${enc(t)}`).join('&')
+    return request<GraphResponse>(`${base}?${qs}`)
+  },
 
   // ── Search ────────────────────────────────────────────────────────────────
   search: (body: SearchRequest) => request<SearchResponse>('/search', { method: 'POST', body }),
