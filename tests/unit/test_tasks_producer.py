@@ -39,6 +39,23 @@ def test_enqueue_delete_sends_named_task(monkeypatch):
     assert captured["args"] == ["doc1", "col1"]
 
 
+def test_enqueue_sync_tags_sends_named_task(monkeypatch):
+    captured = {}
+
+    def fake_send(name, args=None):
+        captured["name"] = name
+        captured["args"] = args
+        return FakeResult()
+
+    monkeypatch.setattr(tp._producer, "send_task", fake_send)
+
+    task_id = tp.enqueue_sync_tags("doc1", "col1")
+    assert task_id == "task-123"
+    assert captured["name"] == "worker.tasks.sync_document_tags"
+    assert captured["args"] == ["doc1", "col1"]
+
+
 def test_task_name_constants():
     assert tp.INGEST_TASK == "worker.tasks.ingest_document"
     assert tp.DELETE_TASK == "worker.tasks.delete_document"
+    assert tp.SYNC_TAGS_TASK == "worker.tasks.sync_document_tags"

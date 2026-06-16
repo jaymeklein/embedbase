@@ -88,6 +88,7 @@ class FakeClient:
         self._scroll_pages = scroll_pages or [([], None)]
         self._scroll_idx = 0
         self._raise_on_list = raise_on_list
+        self.set_payload_call = None
 
     def get_collections(self):
         if self._raise_on_list:
@@ -106,6 +107,9 @@ class FakeClient:
 
     def query_points(self, collection_name, query, limit, with_payload):
         return self._query_result
+
+    def set_payload(self, collection_name, payload, points):
+        self.set_payload_call = (collection_name, payload, points)
 
     def delete(self, collection_name, points_selector):
         self.deleted_selector = (collection_name, points_selector)
@@ -210,6 +214,23 @@ def test_delete_collection_calls_client():
     adapter = _adapter(client)
     adapter.delete_collection("col1")
     assert client.deleted_collection == "col1"
+
+
+# --- set_document_tags ------------------------------------------------------
+
+
+def test_set_document_tags_sets_payload_filtered_by_document():
+    client = FakeClient()
+    adapter = _adapter(client)
+
+    adapter.set_document_tags("col1", "d1", ["x", "y"])
+
+    name, payload, points = client.set_payload_call
+    assert name == "col1"
+    assert payload == {"tags": ["x", "y"]}
+    cond = points.must[0]
+    assert cond.key == "document_id"
+    assert cond.match.value == "d1"
 
 
 # --- list_documents ---------------------------------------------------------

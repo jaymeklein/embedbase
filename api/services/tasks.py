@@ -24,6 +24,7 @@ _producer.conf.update(
 
 INGEST_TASK = "worker.tasks.ingest_document"
 DELETE_TASK = "worker.tasks.delete_document"
+SYNC_TAGS_TASK = "worker.tasks.sync_document_tags"
 
 
 def enqueue_ingest(
@@ -42,4 +43,10 @@ def enqueue_ingest(
 
 def enqueue_delete(document_id: str, collection_id: str) -> str | None:
     result = _producer.send_task(DELETE_TASK, args=[document_id, collection_id])
+    return getattr(result, "id", None)
+
+
+def enqueue_sync_tags(document_id: str, collection_id: str) -> str | None:
+    """Dispatch a search-bridge tag sync for one document to the worker."""
+    result = _producer.send_task(SYNC_TAGS_TASK, args=[document_id, collection_id])
     return getattr(result, "id", None)

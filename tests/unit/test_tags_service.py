@@ -17,6 +17,18 @@ from api.db import tags as tag_t
 from api.db import workspaces as ws_t
 from api.schemas.tags import TagMerge, TagUpdate
 from api.services import tags as svc
+from api.services import tasks as task_producer
+
+
+@pytest.fixture
+def sync_calls(monkeypatch):
+    """Record search-bridge syncs (overrides the conftest no-op stub)."""
+    recorded: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        task_producer, "enqueue_sync_tags",
+        lambda doc_id, col_id: recorded.append((doc_id, col_id)),
+    )
+    return recorded
 
 
 def _now() -> str:
@@ -259,6 +271,56 @@ async def test_assign_document_unknown_doc_404(db_session):
     with pytest.raises(HTTPException) as exc:
         await svc.assign_document_tag(ws, col, "doc_missing", tag["id"], db_session)
     assert exc.value.status_code == 404
+
+
+# ── search-bridge syncs on mutation ───────────────────────────────────────────
+
+async def test_assign_document_tag_syncs_that_document(db_session, sync_calls):
+    ws = await _mk_ws(db_session)
+    col = await _mk_col(db_session, ws)
+    doc = await _mk_doc(db_session, col)
+    tag = await svc.create_tag(ws, "t", None, db_session)
+    await svc.assign_document_tag(ws, col, doc, tag["id"], db_session)
+    assert sync_calls == [(doc, col)]
+
+
+async def test_assign_collection_tag_syncs_each_active_doc(db_session, sync_calls):
+    ws = await _mk_ws(db_session)
+    col = await _mk_col(db_session, ws)
+    await _mk_doc(db_session, col, "doc_a")
+    await _mk_doc(db_session, col, "doc_b")
+    tag = await svc.create_tag(ws, "t", None, db_session)
+    await svc.assign_collection_tag(ws, col, tag["id"], db_session)
+    assert sorted(sync_calls) == [("doc_a", col), ("doc_b", col)]
+
+
+async def test_rename_tag_syncs_workspace(db_session, sync_calls):
+    ws = await _mk_ws(db_session)
+    col = await _mk_col(db_session, ws)
+    doc = await _mk_doc(db_session, col)
+    tag = await svc.create_tag(ws, "old", None, db_session)
+    await svc.assign_document_tag(ws, col, doc, tag["id"], db_session)
+    sync_calls.clear()
+    await svc.update_tag(ws, tag["id"], TagUpdate(name="new"), db_session)
+    assert (doc, col) in sync_calls
+
+
+async def test_recolor_tag_does_not_sync(db_session, sync_calls):
+    ws = await _mk_ws(db_session)
+    tag = await svc.create_tag(ws, "t", None, db_session)
+    await svc.update_tag(ws, tag["id"], TagUpdate(color="#abc"), db_session)
+    assert sync_calls == []
+
+
+async def test_delete_tag_syncs_workspace(db_session, sync_calls):
+    ws = await _mk_ws(db_session)
+    col = await _mk_col(db_session, ws)
+    doc = await _mk_doc(db_session, col)
+    tag = await svc.create_tag(ws, "t", None, db_session)
+    await svc.assign_document_tag(ws, col, doc, tag["id"], db_session)
+    sync_calls.clear()
+    await svc.delete_tag(ws, tag["id"], db_session)
+    assert (doc, col) in sync_calls
 
 
 # ── merge ─────────────────────────────────────────────────────────────────────
