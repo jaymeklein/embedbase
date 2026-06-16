@@ -19,6 +19,7 @@ import type {
   ApiKeyCreate,
   SearchRequest,
   SearchResponse,
+  SuggestTagsResponse,
   Tag,
   TagCreate,
   TagItems,
@@ -156,6 +157,16 @@ export const api = {
     request<void>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/tags/${enc(tagId)}`,
       { method: 'DELETE' },
+    ),
+  suggestCollectionTags: (wsId: string, colId: string) =>
+    request<SuggestTagsResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/suggest-tags`,
+      { method: 'POST' },
+    ),
+  suggestDocumentTags: (wsId: string, colId: string, docId: string) =>
+    request<SuggestTagsResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/suggest-tags`,
+      { method: 'POST' },
     ),
 
   // ── API keys ──────────────────────────────────────────────────────────────

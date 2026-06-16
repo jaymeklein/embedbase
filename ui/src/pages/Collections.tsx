@@ -1,17 +1,20 @@
 import { useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
+import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Sparkles, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
+  useApplyTagsByName,
   useAssignCollectionTag,
   useCollections,
   useCreateCollection,
   useCreateTag,
   useDeleteCollection,
+  useSuggestCollectionTags,
   useUnassignCollectionTag,
   useUpdateCollection,
   useWorkspace,
 } from '../api/hooks'
 import type { Collection, CollectionUpdate } from '../api/types'
+import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
 import { TagFilterBar } from '../components/tags/TagFilterBar'
 import { TagPicker } from '../components/tags/TagPicker'
@@ -274,6 +277,26 @@ function CollectionCard({
   const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
   const onErr = (e: Error) => toast.error(e.message)
 
+  const suggestMut = useSuggestCollectionTags(wsId, col.id)
+  const applyTags = useApplyTagsByName(wsId)
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  const [applying, setApplying] = useState(false)
+
+  const openSuggest = () => {
+    setSuggestOpen(true)
+    suggestMut.mutate()
+  }
+  const handleApply = (names: string[]) => {
+    setApplying(true)
+    applyTags(names, (tagId) => assignMut.mutateAsync({ colId: col.id, tagId }))
+      .then(() => {
+        toast.success(`Applied ${names.length} tag${names.length === 1 ? '' : 's'}.`)
+        setSuggestOpen(false)
+      })
+      .catch((e) => onErr(e as Error))
+      .finally(() => setApplying(false))
+  }
+
   const handleCreate = (name: string) =>
     createMut.mutate(
       { name },
@@ -333,6 +356,25 @@ function CollectionCard({
           onAssign={(tagId) => assignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
           onUnassign={(tagId) => unassignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
           onCreate={handleCreate}
+        />
+        <button
+          type="button"
+          onClick={openSuggest}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-ink-muted transition-colors hover:border-accent hover:text-ink"
+        >
+          <Sparkles className="h-3 w-3" />
+          Suggest
+        </button>
+        {/* Kept inside the stop-propagation wrapper: the modal is portaled, but
+            React events bubble through the JSX tree to the card's navigate. */}
+        <SuggestTagsModal
+          open={suggestOpen}
+          onClose={() => setSuggestOpen(false)}
+          suggestions={suggestMut.data?.suggestions ?? []}
+          loading={suggestMut.isPending}
+          error={suggestMut.error?.message}
+          applying={applying}
+          onApply={handleApply}
         />
       </div>
       <div className="flex items-center justify-between">
