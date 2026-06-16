@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
 from api.db import AsyncSessionLocal
-from api.models.config import AppConfig
+from api.models.config import AppConfig, TaggingConfig
 
 # ---------------------------------------------------------------------------
 # Adapter singletons — set once in lifespan(), read everywhere via Depends()
@@ -27,6 +27,11 @@ def set_app_config(config: AppConfig) -> None:
 def get_app_config() -> AppConfig | None:
     """Return the live application config (None before lifespan completes)."""
     return _app_config
+
+
+def get_tagging_config() -> TaggingConfig:
+    """FastAPI dependency: the live tagging config, or defaults before lifespan."""
+    return (_app_config or AppConfig()).tagging
 
 
 def set_embedding_adapter(adapter: EmbeddingAdapter) -> None:

@@ -8,8 +8,10 @@ management-plane routers.
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_db
+from api.dependencies import get_db, get_tagging_config, require_redis_client
+from api.models.config import TaggingConfig
 from api.schemas.tags import TagCreate, TagMerge, TagUpdate
+from api.services import tag_suggest
 from api.services import tags as tag_svc
 from api.services.auth import require_master
 
@@ -99,3 +101,33 @@ async def unassign_document_tag(
     ws_id: str, col_id: str, doc_id: str, tag_id: str, db: AsyncSession = Depends(get_db)
 ):
     await tag_svc.unassign_document_tag(ws_id, col_id, doc_id, tag_id, db)
+
+
+# ── AI tag suggestions (ephemeral — nothing persisted until applied) ──────────
+
+
+@router.post("/collections/{col_id}/suggest-tags")
+async def suggest_collection_tags(
+    ws_id: str,
+    col_id: str,
+    db: AsyncSession = Depends(get_db),
+    redis: object = Depends(require_redis_client),
+    tagging: TaggingConfig = Depends(get_tagging_config),
+):
+    return await tag_suggest.suggest_collection_tags(
+        ws_id, col_id, db=db, redis=redis, tagging=tagging
+    )
+
+
+@router.post("/collections/{col_id}/documents/{doc_id}/suggest-tags")
+async def suggest_document_tags(
+    ws_id: str,
+    col_id: str,
+    doc_id: str,
+    db: AsyncSession = Depends(get_db),
+    redis: object = Depends(require_redis_client),
+    tagging: TaggingConfig = Depends(get_tagging_config),
+):
+    return await tag_suggest.suggest_document_tags(
+        ws_id, col_id, doc_id, db=db, redis=redis, tagging=tagging
+    )
