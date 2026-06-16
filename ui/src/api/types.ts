@@ -54,6 +54,38 @@ export interface Collection {
   chunk_count?: number
 }
 
+// ── Tags ────────────────────────────────────────────────────────────────────
+
+/** A tag row. Usage counts are always returned by the tag endpoints. */
+export interface Tag {
+  id: string
+  workspace_id: string
+  name: string
+  color: string | null
+  created_at: string
+  workspace_count: number
+  collection_count: number
+  document_count: number
+}
+
+export interface TagCreate {
+  name: string
+  color?: string | null
+}
+
+export type TagUpdate = Partial<{ name: string; color: string | null }>
+
+export interface TagMerge {
+  source_id: string
+  target_id: string
+}
+
+/** `GET .../tags/{id}/items` — the entities correlated under a tag. */
+export interface TagItems {
+  collections: { id: string; name: string }[]
+  documents: { id: string; filename: string; collection_id: string }[]
+}
+
 // ── API keys ────────────────────────────────────────────────────────────────
 
 /** Key metadata as returned by `GET .../keys` — never includes the secret. */
