@@ -4,7 +4,7 @@ import pytest
 
 from api.adapters.tagging import get_tag_suggester
 from api.adapters.tagging.keyword import KeywordTagSuggester
-from api.adapters.tagging.llm import LLMTagSuggester, _parse_tags
+from api.adapters.tagging.llm import LLMTagSuggester, _parse_suggestions
 from api.models.config import TaggingConfig, TagSuggesterConfig
 
 # ── KeywordTagSuggester ───────────────────────────────────────────────────────
@@ -33,37 +33,59 @@ def test_keyword_filters_stopwords_and_short_tokens():
     assert out == []
 
 
-# ── _parse_tags ───────────────────────────────────────────────────────────────
+# ── _parse_suggestions ────────────────────────────────────────────────────────
 
-def test_parse_tags_json_array():
-    assert _parse_tags('["python", "FastAPI", "python"]', 8) == ["python", "fastapi"]
-
-
-def test_parse_tags_comma_and_newline_fallback():
-    assert _parse_tags("python, fastapi\ntesting", 8) == ["python", "fastapi", "testing"]
+def test_parse_suggestions_objects_use_real_confidence():
+    raw = '[{"name": "Python", "confidence": 0.9}, {"name": "redis", "confidence": 0.4}]'
+    assert _parse_suggestions(raw, 8) == [("python", 0.9), ("redis", 0.4)]
 
 
-def test_parse_tags_respects_limit():
-    assert _parse_tags("a, b, c, d", 2) == ["a", "b"]
+def test_parse_suggestions_clamps_and_defaults_confidence():
+    raw = '[{"name": "a", "confidence": 1.5}, {"name": "b"}, {"name": "c", "confidence": "x"}]'
+    assert _parse_suggestions(raw, 8) == [("a", 1.0), ("b", 0.0), ("c", 0.0)]
 
 
-def test_parse_tags_extracts_array_from_prose():
-    assert _parse_tags('Sure! ["alpha", "beta"] hope this helps', 8) == ["alpha", "beta"]
+def test_parse_suggestions_dedupes_keeping_first():
+    raw = '[{"name": "python", "confidence": 0.9}, {"name": "Python", "confidence": 0.2}]'
+    assert _parse_suggestions(raw, 8) == [("python", 0.9)]
 
 
-def test_parse_tags_invalid_json_array_falls_back_to_split():
-    # Bracketed but not valid JSON -> JSONDecodeError -> delimiter fallback.
-    assert _parse_tags("[alpha, beta]", 8) == ["[alpha", "beta]"]
+def test_parse_suggestions_name_only_array_falls_back_to_rank():
+    out = _parse_suggestions('["alpha", "beta"]', 8)
+    assert [n for n, _ in out] == ["alpha", "beta"]
+    assert out[0][1] > out[1][1]  # rank-derived, declining
+
+
+def test_parse_suggestions_comma_newline_fallback():
+    out = _parse_suggestions("python, fastapi\ntesting", 8)
+    assert [n for n, _ in out] == ["python", "fastapi", "testing"]
+
+
+def test_parse_suggestions_respects_limit():
+    assert [n for n, _ in _parse_suggestions("a, b, c, d", 2)] == ["a", "b"]
+
+
+def test_parse_suggestions_extracts_array_from_prose():
+    out = _parse_suggestions('Sure! ["alpha", "beta"] hope this helps', 8)
+    assert [n for n, _ in out] == ["alpha", "beta"]
 
 
 # ── LLMTagSuggester ───────────────────────────────────────────────────────────
 
-def test_llm_suggest_parses_and_excludes_existing(monkeypatch):
+def test_llm_suggest_uses_real_confidence_and_excludes_existing(monkeypatch):
     sug = LLMTagSuggester("ollama", "llama3", None, None, max_tags=8)
-    monkeypatch.setattr(sug, "_complete", lambda prompt: '["python", "fastapi", "redis"]')
+    reply = '[{"name":"python","confidence":0.95},{"name":"redis","confidence":0.6}]'
+    monkeypatch.setattr(sug, "_complete", lambda prompt: reply)
     out = sug.suggest("some text", ["redis"])
+    assert [(s.name, s.confidence) for s in out] == [("python", 0.95)]
+
+
+def test_llm_suggest_name_only_reply_falls_back_to_rank(monkeypatch):
+    sug = LLMTagSuggester("ollama", "llama3", None, None, max_tags=8)
+    monkeypatch.setattr(sug, "_complete", lambda prompt: '["python", "fastapi"]')
+    out = sug.suggest("some text", [])
     assert [s.name for s in out] == ["python", "fastapi"]
-    assert out[0].confidence > out[1].confidence  # declining
+    assert out[0].confidence > out[1].confidence
 
 
 def test_llm_complete_ollama_endpoint(monkeypatch):
