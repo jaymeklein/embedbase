@@ -52,9 +52,18 @@ export interface Collection {
   document_count?: number
   /** Present only on `POST .../collections` (always 0 at creation). */
   chunk_count?: number
+  /** Assigned tags, echoed by `GET .../collections`. */
+  tags?: TagRef[]
 }
 
 // ── Tags ────────────────────────────────────────────────────────────────────
+
+/** A tag as echoed inline on a tagged entity (collection / document row). */
+export interface TagRef {
+  id: string
+  name: string
+  color: string | null
+}
 
 /** A tag row. Usage counts are always returned by the tag endpoints. */
 export interface Tag {
@@ -126,6 +135,8 @@ export interface DocumentSummary {
   created_at: string
   updated_at: string
   status: DocStatus | null
+  /** Assigned tags, echoed by `GET .../documents`. */
+  tags?: TagRef[]
 }
 
 /** `POST .../documents` (202) — the accepted-for-ingestion acknowledgement. */
