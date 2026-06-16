@@ -192,6 +192,21 @@ def test_delete_collection_removes_rows_and_index():
     assert any('DROP INDEX IF EXISTS "chunks_embedding_hnsw_col_abcd"' in s for s in sqls)
 
 
+# --- set_document_tags ------------------------------------------------------
+
+
+def test_set_document_tags_issues_jsonb_set_update():
+    conn = FakeConn()
+    adapter = _adapter(conn)
+
+    adapter.set_document_tags("col1", "d1", ["x", "y"])
+
+    sql, args = conn.execute_calls[0]
+    assert "UPDATE chunks SET metadata = jsonb_set(metadata, '{tags}'" in sql
+    assert "metadata->>'document_id'" in sql
+    assert args == ("col1", "d1", '["x", "y"]')
+
+
 # --- list_documents ---------------------------------------------------------
 
 

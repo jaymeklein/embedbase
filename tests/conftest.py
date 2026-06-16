@@ -25,6 +25,20 @@ async def _noop_lifespan(app):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_broker(monkeypatch):
+    """Stop any test from reaching a real Celery broker.
+
+    Tag assignment/rename/merge/delete now enqueue a per-document vector-store
+    sync via api.services.tag_bridge. Patching ``send_task`` (rather than the
+    named ``enqueue_*`` helpers) keeps those helpers real — tests that assert on
+    the producer or the bridge re-patch the layer they need, overriding this.
+    """
+    from api.services import tasks as task_producer
+
+    monkeypatch.setattr(task_producer._producer, "send_task", lambda *a, **k: None)
+
+
 @pytest.fixture
 async def db_session():
     """A bare in-memory AsyncSession with the full schema created.
