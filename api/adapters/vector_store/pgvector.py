@@ -245,6 +245,31 @@ class PgvectorAdapter:
         """
         return self._runner.run(self._search(collection_id, vector, top_k))
 
+    # -- tag sync -----------------------------------------------------------
+
+    async def _set_document_tags(
+        self, collection_id: str, document_id: str, tags: list[str]
+    ) -> None:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE chunks SET metadata = jsonb_set(metadata, '{tags}', $3::jsonb) "
+                "WHERE collection_id = $1 AND metadata->>'document_id' = $2",
+                collection_id, document_id, json.dumps(tags),
+            )
+
+    def set_document_tags(
+        self, collection_id: str, document_id: str, tags: list[str]
+    ) -> None:
+        """Rewrite the ``tags`` metadata key on every chunk of a document.
+
+        Args:
+            collection_id: Collection holding the document's chunks.
+            document_id: Document whose chunk tags to replace.
+            tags: New effective tag list to store.
+        """
+        self._runner.run(self._set_document_tags(collection_id, document_id, tags))
+
     # -- delete -------------------------------------------------------------
 
     async def _delete_document(self, collection_id: str, document_id: str) -> None:

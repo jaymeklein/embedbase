@@ -21,12 +21,17 @@ def _chunk(doc_id, idx, text):
 class FakeCollection:
     def __init__(self):
         self.upsert_kwargs = None
+        self.update_kwargs = None
         self.deleted_where = None
         self._query_result = None
         self._get_result = {"metadatas": []}
+        self._get_where_result = {"ids": [], "metadatas": []}
 
     def upsert(self, **kwargs):
         self.upsert_kwargs = kwargs
+
+    def update(self, **kwargs):
+        self.update_kwargs = kwargs
 
     def query(self, **kwargs):
         return self._query_result
@@ -34,8 +39,8 @@ class FakeCollection:
     def delete(self, where=None):
         self.deleted_where = where
 
-    def get(self, include=None):
-        return self._get_result
+    def get(self, where=None, include=None):
+        return self._get_where_result if where is not None else self._get_result
 
 
 class FakeClient:
@@ -146,6 +151,34 @@ def test_delete_collection():
     adapter = _adapter(client)
     adapter.delete_collection("col1")
     assert client.deleted_collection == "col1"
+
+
+def test_set_document_tags_overwrites_tags_preserving_metadata():
+    col = FakeCollection()
+    col._get_where_result = {
+        "ids": ["a", "b"],
+        "metadatas": [
+            {"document_id": "doc1", "filename": "f.txt", "tags": '["old"]'},
+            {"document_id": "doc1", "filename": "f.txt"},
+        ],
+    }
+    adapter = _adapter(FakeClient(col))
+
+    adapter.set_document_tags("col1", "doc1", ["x", "y"])
+
+    kw = col.update_kwargs
+    assert kw["ids"] == ["a", "b"]
+    # tags replaced (JSON-encoded) and other metadata preserved
+    assert kw["metadatas"][0]["tags"] == '["x", "y"]'
+    assert kw["metadatas"][0]["filename"] == "f.txt"
+    assert kw["metadatas"][1]["tags"] == '["x", "y"]'
+
+
+def test_set_document_tags_noop_when_no_chunks():
+    col = FakeCollection()  # default empty get → no ids
+    adapter = _adapter(FakeClient(col))
+    adapter.set_document_tags("col1", "doc-missing", ["x"])
+    assert col.update_kwargs is None
 
 
 def test_list_documents_aggregates_by_document():
