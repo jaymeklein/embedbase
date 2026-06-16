@@ -349,6 +349,64 @@ export function useMergeTag(wsId: string) {
   })
 }
 
+/** Refresh the collection list (echoed tags) + the tag list (usage counts). */
+function useInvalidateCollectionTags(wsId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.collections(wsId) }),
+      queryClient.invalidateQueries({ queryKey: qk.tags(wsId) }),
+    ])
+  }
+}
+
+export function useAssignCollectionTag(wsId: string) {
+  const invalidate = useInvalidateCollectionTags(wsId)
+  return useMutation({
+    mutationFn: ({ colId, tagId }: { colId: string; tagId: string }) =>
+      api.assignCollectionTag(wsId, colId, tagId),
+    onSuccess: invalidate,
+  })
+}
+
+export function useUnassignCollectionTag(wsId: string) {
+  const invalidate = useInvalidateCollectionTags(wsId)
+  return useMutation({
+    mutationFn: ({ colId, tagId }: { colId: string; tagId: string }) =>
+      api.unassignCollectionTag(wsId, colId, tagId),
+    onSuccess: invalidate,
+  })
+}
+
+/** Refresh the document list (echoed tags) + the tag list (usage counts). */
+function useInvalidateDocumentTags(wsId: string, colId: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) }),
+      queryClient.invalidateQueries({ queryKey: qk.tags(wsId) }),
+    ])
+  }
+}
+
+export function useAssignDocumentTag(wsId: string, colId: string) {
+  const invalidate = useInvalidateDocumentTags(wsId, colId)
+  return useMutation({
+    mutationFn: ({ docId, tagId }: { docId: string; tagId: string }) =>
+      api.assignDocumentTag(wsId, colId, docId, tagId),
+    onSuccess: invalidate,
+  })
+}
+
+export function useUnassignDocumentTag(wsId: string, colId: string) {
+  const invalidate = useInvalidateDocumentTags(wsId, colId)
+  return useMutation({
+    mutationFn: ({ docId, tagId }: { docId: string; tagId: string }) =>
+      api.unassignDocumentTag(wsId, colId, docId, tagId),
+    onSuccess: invalidate,
+  })
+}
+
 /** Fetch a single document's latest job record on demand (e.g. a failure reason). */
 export function useDocumentStatus(wsId: string, colId: string, docId: string, enabled: boolean) {
   return useQuery({
