@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
@@ -28,8 +28,12 @@ async def create_collection(
 
 
 @router.get("")
-async def list_collections(ws_id: str, db: AsyncSession = Depends(get_db)):
-    return await collection_svc.list_collections(ws_id, db)
+async def list_collections(
+    ws_id: str,
+    tag: list[str] | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    return await collection_svc.list_collections(ws_id, db, tags=tag)
 
 
 @router.get("/{col_id}")
