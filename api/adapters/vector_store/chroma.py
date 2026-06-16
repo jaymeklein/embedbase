@@ -116,6 +116,29 @@ class ChromaAdapter:
             ))
         return out
 
+    def set_document_tags(
+        self, collection_id: str, document_id: str, tags: list[str]
+    ) -> None:
+        """Rewrite the ``tags`` metadata on every chunk of a document.
+
+        Fetches each chunk's existing metadata, overwrites only the ``tags``
+        key, and updates in place so other metadata (document_id, filename, …)
+        is preserved — Chroma's ``update`` replaces, not merges, per-id metadata.
+
+        # verified against chromadb==0.5.3 via official docs (collection.get /
+        # collection.update) — github.com/chroma-core/chroma docs/collections
+        """
+        client = self._get_client()
+        with contextlib.suppress(Exception):
+            col = client.get_collection(name=collection_id)
+            existing = col.get(where={"document_id": document_id}, include=["metadatas"])
+            ids = existing["ids"]
+            if not ids:
+                return
+            metas = existing["metadatas"] or [{} for _ in ids]
+            updated = [self._encode_metadata({**(m or {}), "tags": tags}) for m in metas]
+            col.update(ids=ids, metadatas=updated)
+
     def delete_document(self, collection_id: str, document_id: str) -> None:
         client = self._get_client()
         with contextlib.suppress(Exception):
