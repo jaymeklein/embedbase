@@ -56,6 +56,16 @@ class VectorStoreAdapter(Protocol):
 
     def list_documents(self, collection_id: str) -> list[DocumentSummary]: ...
 
+    def set_document_tags(
+        self, collection_id: str, document_id: str, tags: list[str]
+    ) -> None:
+        """Replace the ``tags`` metadata on every stored chunk of a document.
+
+        The search bridge (D6) calls this when a document's effective tags
+        change so D3 ``apply_filters`` tag filtering returns the right chunks.
+        """
+        ...
+
 
 @runtime_checkable
 class TagSuggester(Protocol):
