@@ -24,6 +24,7 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import tags as tag_t
 from api.schemas.tags import TagMerge, TagUpdate
+from api.services import tag_bridge
 from api.services.collections import require_collection
 from api.services.workspaces import require_workspace
 
@@ -161,6 +162,8 @@ async def update_tag(
         except IntegrityError:
             await db.rollback()
             raise HTTPException(409, "A tag with that name already exists") from None
+    if "name" in updates:  # renamed → effective tag names on chunks changed
+        await tag_bridge.sync_workspace(ws_id, db)
     return (await _read_tags(ws_id, db, tag_id=tag_id))[0]
 
 
@@ -173,6 +176,7 @@ async def delete_tag(ws_id: str, tag_id: str, db: AsyncSession) -> None:
     await require_tag(ws_id, tag_id, db)
     await db.execute(delete(tag_t).where(tag_t.c.id == tag_id))
     await db.commit()
+    await tag_bridge.sync_workspace(ws_id, db)
 
 
 async def _repoint(join: Table, col: str, source: str, target: str, db: AsyncSession) -> None:
@@ -197,6 +201,7 @@ async def merge_tags(ws_id: str, body: TagMerge, db: AsyncSession) -> dict[str, 
         await _repoint(join, col, body.source_id, body.target_id, db)
     await db.execute(delete(tag_t).where(tag_t.c.id == body.source_id))
     await db.commit()
+    await tag_bridge.sync_workspace(ws_id, db)
     return (await _read_tags(ws_id, db, tag_id=body.target_id))[0]
 
 
@@ -245,54 +250,60 @@ async def _unassign(kind: str, entity_id: str, tag_id: str, db: AsyncSession) ->
 
 
 async def assign_workspace_tag(ws_id: str, tag_id: str, db: AsyncSession) -> None:
-    """Attach a tag to the workspace itself."""
+    """Attach a tag to the workspace itself and sync affected document chunks."""
     await require_workspace(ws_id, db)
     await require_tag(ws_id, tag_id, db)
     await _assign("workspace", ws_id, tag_id, db)
+    await tag_bridge.sync_workspace(ws_id, db)
 
 
 async def unassign_workspace_tag(ws_id: str, tag_id: str, db: AsyncSession) -> None:
-    """Detach a tag from the workspace itself."""
+    """Detach a tag from the workspace itself and sync affected document chunks."""
     await require_tag(ws_id, tag_id, db)
     await _unassign("workspace", ws_id, tag_id, db)
+    await tag_bridge.sync_workspace(ws_id, db)
 
 
 async def assign_collection_tag(
     ws_id: str, col_id: str, tag_id: str, db: AsyncSession
 ) -> None:
-    """Attach a tag to a collection in the workspace."""
+    """Attach a tag to a collection and sync its documents' chunks."""
     await require_collection(ws_id, col_id, db)
     await require_tag(ws_id, tag_id, db)
     await _assign("collection", col_id, tag_id, db)
+    await tag_bridge.sync_collection(col_id, db)
 
 
 async def unassign_collection_tag(
     ws_id: str, col_id: str, tag_id: str, db: AsyncSession
 ) -> None:
-    """Detach a tag from a collection in the workspace."""
+    """Detach a tag from a collection and sync its documents' chunks."""
     await require_collection(ws_id, col_id, db)
     await require_tag(ws_id, tag_id, db)
     await _unassign("collection", col_id, tag_id, db)
+    await tag_bridge.sync_collection(col_id, db)
 
 
 async def assign_document_tag(
     ws_id: str, col_id: str, doc_id: str, tag_id: str, db: AsyncSession
 ) -> None:
-    """Attach a tag to a document in the collection."""
+    """Attach a tag to a document and sync its chunks."""
     await require_collection(ws_id, col_id, db)
     await require_document(col_id, doc_id, db)
     await require_tag(ws_id, tag_id, db)
     await _assign("document", doc_id, tag_id, db)
+    await tag_bridge.sync_document(col_id, doc_id)
 
 
 async def unassign_document_tag(
     ws_id: str, col_id: str, doc_id: str, tag_id: str, db: AsyncSession
 ) -> None:
-    """Detach a tag from a document in the collection."""
+    """Detach a tag from a document and sync its chunks."""
     await require_collection(ws_id, col_id, db)
     await require_document(col_id, doc_id, db)
     await require_tag(ws_id, tag_id, db)
     await _unassign("document", doc_id, tag_id, db)
+    await tag_bridge.sync_document(col_id, doc_id)
 
 
 async def matching_entity_ids(
