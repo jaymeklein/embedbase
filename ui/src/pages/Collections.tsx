@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
   useCollections,
   useCreateCollection,
@@ -48,6 +48,7 @@ function changedFields(col: Collection, values: CollectionFormValues): Collectio
 /** Collections within a workspace: list, create, edit, delete, and key management. */
 export default function Collections() {
   const { wsId = '' } = useParams()
+  const navigate = useNavigate()
   const workspace = useWorkspace(wsId)
   const { data, isLoading, isError, error, refetch } = useCollections(wsId)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
@@ -115,10 +116,16 @@ export default function Collections() {
             Searchable document sets within this workspace.
           </p>
         </div>
-        <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-4 w-4" />
-          New collection
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
+            <TagsIcon className="h-4 w-4" />
+            Tags
+          </Button>
+          <Button onClick={() => setDialog({ kind: 'create' })}>
+            <Plus className="h-4 w-4" />
+            New collection
+          </Button>
+        </div>
       </header>
 
       <CollectionList
