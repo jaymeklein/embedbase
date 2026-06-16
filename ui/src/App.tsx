@@ -5,6 +5,7 @@ import { UnlockScreen } from './auth/UnlockScreen'
 import Dashboard from './pages/Dashboard'
 import Workspaces from './pages/Workspaces'
 import Collections from './pages/Collections'
+import Tags from './pages/Tags'
 import Documents from './pages/Documents'
 import Search from './pages/Search'
 import Settings from './pages/Settings'
@@ -19,6 +20,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/workspaces" element={<Workspaces />} />
         <Route path="/workspaces/:wsId" element={<Collections />} />
+        <Route path="/workspaces/:wsId/tags" element={<Tags />} />
         <Route path="/workspaces/:wsId/collections/:colId" element={<Documents />} />
         <Route path="/search" element={<Search />} />
         <Route path="/settings" element={<Settings />} />
