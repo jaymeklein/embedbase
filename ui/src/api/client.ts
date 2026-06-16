@@ -19,6 +19,11 @@ import type {
   ApiKeyCreate,
   SearchRequest,
   SearchResponse,
+  Tag,
+  TagCreate,
+  TagItems,
+  TagMerge,
+  TagUpdate,
   UploadAccepted,
   Workspace,
   WorkspaceCreate,
@@ -121,6 +126,19 @@ export const api = {
     }),
   deleteCollection: (wsId: string, colId: string) =>
     request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}`, { method: 'DELETE' }),
+
+  // ── Tags ──────────────────────────────────────────────────────────────────
+  listTags: (wsId: string) => request<Tag[]>(`/workspaces/${enc(wsId)}/tags`),
+  createTag: (wsId: string, body: TagCreate) =>
+    request<Tag>(`/workspaces/${enc(wsId)}/tags`, { method: 'POST', body }),
+  updateTag: (wsId: string, tagId: string, body: TagUpdate) =>
+    request<Tag>(`/workspaces/${enc(wsId)}/tags/${enc(tagId)}`, { method: 'PATCH', body }),
+  deleteTag: (wsId: string, tagId: string) =>
+    request<void>(`/workspaces/${enc(wsId)}/tags/${enc(tagId)}`, { method: 'DELETE' }),
+  mergeTags: (wsId: string, body: TagMerge) =>
+    request<Tag>(`/workspaces/${enc(wsId)}/tags/merge`, { method: 'POST', body }),
+  tagItems: (wsId: string, tagId: string) =>
+    request<TagItems>(`/workspaces/${enc(wsId)}/tags/${enc(tagId)}/items`),
 
   // ── API keys ──────────────────────────────────────────────────────────────
   listApiKeys: (wsId: string, colId: string) =>
