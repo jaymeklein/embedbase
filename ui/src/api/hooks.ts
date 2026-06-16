@@ -16,6 +16,7 @@ import type {
   DocumentSummary,
   SearchRequest,
   SearchResponse,
+  Tag,
   TagCreate,
   TagMerge,
   TagUpdate,
@@ -405,6 +406,44 @@ export function useUnassignDocumentTag(wsId: string, colId: string) {
       api.unassignDocumentTag(wsId, colId, docId, tagId),
     onSuccess: invalidate,
   })
+}
+
+/** Ephemeral tag suggestions for a collection (nothing persists until applied). */
+export function useSuggestCollectionTags(wsId: string, colId: string) {
+  return useMutation({ mutationFn: () => api.suggestCollectionTags(wsId, colId) })
+}
+
+/** Ephemeral tag suggestions for a document (nothing persists until applied). */
+export function useSuggestDocumentTags(wsId: string, colId: string, docId: string) {
+  return useMutation({ mutationFn: () => api.suggestDocumentTags(wsId, colId, docId) })
+}
+
+/** Normalize a name the same way the backend does, for exact-match detection. */
+function normalizeName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Returns `apply(names, assign)`: resolve each tag name to an id (creating any
+ * that don't exist yet in the workspace), then assign it via the caller's
+ * `assign` callback. Used to apply approved AI suggestions through the regular
+ * create + assign endpoints, so nothing persists until the user approves.
+ *
+ * ponytail: reads the cached tag list to map names→ids; a tag created elsewhere
+ * since the last fetch falls through to create and may 409 — acceptable, the
+ * error surfaces to the caller.
+ */
+export function useApplyTagsByName(wsId: string) {
+  const queryClient = useQueryClient()
+  const createTag = useCreateTag(wsId)
+  return async (names: string[], assign: (tagId: string) => Promise<unknown>) => {
+    const existing = queryClient.getQueryData<Tag[]>(qk.tags(wsId)) ?? []
+    const byName = new Map(existing.map((t) => [t.name, t.id]))
+    for (const name of names) {
+      const id = byName.get(normalizeName(name)) ?? (await createTag.mutateAsync({ name })).id
+      await assign(id)
+    }
+  }
 }
 
 /** Fetch a single document's latest job record on demand (e.g. a failure reason). */
