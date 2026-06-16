@@ -146,8 +146,22 @@ async def ingest_local_path(
     )
 
 
-async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
-    """Return all active documents in ``col_id`` with their latest job status."""
+async def list_documents(
+    db: AsyncSession, col_id: str, tags: list[str] | None = None
+) -> list[dict]:
+    """Return active documents in ``col_id`` with status, tags, and optional filter.
+
+    Args:
+        db: Active async database session.
+        col_id: Collection whose documents to list.
+        tags: Optional tag names; only documents carrying *all* of them are
+            returned (AND filter).
+
+    Returns:
+        One mapping per active document including its ``status`` and ``tags``.
+    """
+    from api.services.tags import attach_tags, matching_entity_ids
+
     stmt = (
         select(
             doc_t.c.id.label("document_id"),
@@ -163,8 +177,10 @@ async def list_documents(db: AsyncSession, col_id: str) -> list[dict]:
         .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
         .order_by(doc_t.c.created_at.desc())
     )
-    rows = (await db.execute(stmt)).fetchall()
-    return [dict(r._mapping) for r in rows]
+    if tags:
+        stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
+    rows = [dict(r._mapping) for r in (await db.execute(stmt)).fetchall()]
+    return await attach_tags("document", rows, "document_id", db)
 
 
 async def get_document_status(
