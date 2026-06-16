@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { FolderKanban, LayoutDashboard, Search, Settings, type LucideIcon } from 'lucide-react'
+import { FolderKanban, LayoutDashboard, Search, Settings, Workflow, type LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
 interface NavItem {
@@ -12,6 +12,7 @@ interface NavItem {
 const ITEMS: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/workspaces', label: 'Workspaces', icon: FolderKanban },
+  { to: '/graph', label: 'Graph', icon: Workflow },
   { to: '/search', label: 'Search', icon: Search },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
