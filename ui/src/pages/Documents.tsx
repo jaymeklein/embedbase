@@ -1,18 +1,21 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, FileText, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
+  useApplyTagsByName,
   useAssignDocumentTag,
   useCollection,
   useCreateTag,
   useDeleteDocument,
   useDocumentStatus,
   useDocuments,
+  useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
   useWorkspace,
 } from '../api/hooks'
 import type { DocumentSummary } from '../api/types'
+import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
 import { TagFilterBar } from '../components/tags/TagFilterBar'
 import { TagPicker } from '../components/tags/TagPicker'
@@ -218,6 +221,26 @@ function DocumentRow({
   const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
   const onErr = (e: Error) => toast.error(e.message)
 
+  const suggestMut = useSuggestDocumentTags(wsId, colId, doc.document_id)
+  const applyTags = useApplyTagsByName(wsId)
+  const [suggestOpen, setSuggestOpen] = useState(false)
+  const [applying, setApplying] = useState(false)
+
+  const openSuggest = () => {
+    setSuggestOpen(true)
+    suggestMut.mutate()
+  }
+  const handleApply = (names: string[]) => {
+    setApplying(true)
+    applyTags(names, (tagId) => assignMut.mutateAsync({ docId: doc.document_id, tagId }))
+      .then(() => {
+        toast.success(`Applied ${names.length} tag${names.length === 1 ? '' : 's'}.`)
+        setSuggestOpen(false)
+      })
+      .catch((e) => onErr(e as Error))
+      .finally(() => setApplying(false))
+  }
+
   const handleCreate = (name: string) =>
     createMut.mutate(
       { name },
@@ -286,7 +309,24 @@ function DocumentRow({
           }
           onCreate={handleCreate}
         />
+        <button
+          type="button"
+          onClick={openSuggest}
+          className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-ink-muted transition-colors hover:border-accent hover:text-ink"
+        >
+          <Sparkles className="h-3 w-3" />
+          Suggest
+        </button>
       </div>
+      <SuggestTagsModal
+        open={suggestOpen}
+        onClose={() => setSuggestOpen(false)}
+        suggestions={suggestMut.data?.suggestions ?? []}
+        loading={suggestMut.isPending}
+        error={suggestMut.error?.message}
+        applying={applying}
+        onApply={handleApply}
+      />
       {failed && showError && (
         <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
       )}
