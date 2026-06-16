@@ -113,6 +113,19 @@ class MCPConfig(BaseModel):
     max_results: int = 20
 
 
+class TagSuggesterConfig(BaseModel):
+    backend: str = "keyword"  # "keyword" (local) | "llm"
+    provider: str = "ollama"  # llm provider: "ollama" | "openai_compat"
+    model: str = "llama3"
+    base_url: str | None = None
+    api_key: str | None = None
+    max_tags: int = 8
+
+
+class TaggingConfig(BaseModel):
+    suggester: TagSuggesterConfig = TagSuggesterConfig()
+
+
 class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
@@ -120,6 +133,7 @@ class AppConfig(BaseModel):
     parsers: ParserConfig = ParserConfig()
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
+    tagging: TaggingConfig = TaggingConfig()
     # Upload size cap (app-domain, editable via the config page). Distinct from
     # deploy/bootstrap config, which stays in .env.
     max_file_size_mb: int = 50
