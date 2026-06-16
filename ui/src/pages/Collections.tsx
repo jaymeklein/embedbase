@@ -2,13 +2,19 @@ import { useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
+  useAssignCollectionTag,
   useCollections,
   useCreateCollection,
+  useCreateTag,
   useDeleteCollection,
+  useUnassignCollectionTag,
   useUpdateCollection,
   useWorkspace,
 } from '../api/hooks'
 import type { Collection, CollectionUpdate } from '../api/types'
+import { TagChip } from '../components/tags/TagChip'
+import { TagFilterBar } from '../components/tags/TagFilterBar'
+import { TagPicker } from '../components/tags/TagPicker'
 import {
   Badge,
   Button,
@@ -52,7 +58,16 @@ export default function Collections() {
   const workspace = useWorkspace(wsId)
   const { data, isLoading, isError, error, refetch } = useCollections(wsId)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
+  const [tagFilter, setTagFilter] = useState<string[]>([])
   const close = () => setDialog({ kind: 'none' })
+
+  const toggleTag = (name: string) =>
+    setTagFilter((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    )
+  const shown = data?.filter((col) =>
+    tagFilter.every((name) => col.tags?.some((t) => t.name === name)),
+  )
 
   const toast = useToast()
   const createMut = useCreateCollection(wsId)
@@ -128,9 +143,11 @@ export default function Collections() {
         </div>
       </header>
 
+      <TagFilterBar wsId={wsId} selected={tagFilter} onToggle={toggleTag} />
+
       <CollectionList
         wsId={wsId}
-        data={data}
+        data={shown}
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
@@ -250,6 +267,22 @@ function CollectionCard({
   onKeys: (col: Collection) => void
 }) {
   const navigate = useNavigate()
+  const toast = useToast()
+  const assignMut = useAssignCollectionTag(wsId)
+  const unassignMut = useUnassignCollectionTag(wsId)
+  const createMut = useCreateTag(wsId)
+  const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
+  const onErr = (e: Error) => toast.error(e.message)
+
+  const handleCreate = (name: string) =>
+    createMut.mutate(
+      { name },
+      {
+        onSuccess: (tag) => assignMut.mutate({ colId: col.id, tagId: tag.id }, { onError: onErr }),
+        onError: onErr,
+      },
+    )
+
   const stop = (fn: () => void) => (e: MouseEvent) => {
     e.stopPropagation()
     fn()
@@ -281,6 +314,26 @@ function CollectionCard({
             {col.description || 'No description'}
           </p>
         </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+        {(col.tags ?? []).map((t) => (
+          <TagChip
+            key={t.id}
+            name={t.name}
+            color={t.color}
+            onRemove={() =>
+              unassignMut.mutate({ colId: col.id, tagId: t.id }, { onError: onErr })
+            }
+          />
+        ))}
+        <TagPicker
+          wsId={wsId}
+          assigned={col.tags ?? []}
+          busy={tagBusy}
+          onAssign={(tagId) => assignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
+          onUnassign={(tagId) => unassignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
+          onCreate={handleCreate}
+        />
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-faint">Created {formatDate(col.created_at)}</span>

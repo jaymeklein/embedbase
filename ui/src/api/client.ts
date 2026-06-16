@@ -139,6 +139,24 @@ export const api = {
     request<Tag>(`/workspaces/${enc(wsId)}/tags/merge`, { method: 'POST', body }),
   tagItems: (wsId: string, tagId: string) =>
     request<TagItems>(`/workspaces/${enc(wsId)}/tags/${enc(tagId)}/items`),
+  assignCollectionTag: (wsId: string, colId: string, tagId: string) =>
+    request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/tags/${enc(tagId)}`, {
+      method: 'PUT',
+    }),
+  unassignCollectionTag: (wsId: string, colId: string, tagId: string) =>
+    request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/tags/${enc(tagId)}`, {
+      method: 'DELETE',
+    }),
+  assignDocumentTag: (wsId: string, colId: string, docId: string, tagId: string) =>
+    request<void>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/tags/${enc(tagId)}`,
+      { method: 'PUT' },
+    ),
+  unassignDocumentTag: (wsId: string, colId: string, docId: string, tagId: string) =>
+    request<void>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/tags/${enc(tagId)}`,
+      { method: 'DELETE' },
+    ),
 
   // ── API keys ──────────────────────────────────────────────────────────────
   listApiKeys: (wsId: string, colId: string) =>

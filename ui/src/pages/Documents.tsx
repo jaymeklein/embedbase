@@ -2,14 +2,20 @@ import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AlertCircle, ChevronRight, FileText, Trash2 } from 'lucide-react'
 import {
+  useAssignDocumentTag,
   useCollection,
+  useCreateTag,
   useDeleteDocument,
   useDocumentStatus,
   useDocuments,
+  useUnassignDocumentTag,
   useUploadDocument,
   useWorkspace,
 } from '../api/hooks'
 import type { DocumentSummary } from '../api/types'
+import { TagChip } from '../components/tags/TagChip'
+import { TagFilterBar } from '../components/tags/TagFilterBar'
+import { TagPicker } from '../components/tags/TagPicker'
 import {
   Button,
   Card,
@@ -38,6 +44,15 @@ export default function Documents() {
   const deleteMut = useDeleteDocument(wsId, colId)
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
+  const [tagFilter, setTagFilter] = useState<string[]>([])
+
+  const toggleTag = (name: string) =>
+    setTagFilter((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    )
+  const shown = data?.filter((doc) =>
+    tagFilter.every((name) => doc.tags?.some((t) => t.name === name)),
+  )
 
   const handleFiles = async (files: File[]) => {
     const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -99,10 +114,12 @@ export default function Documents() {
 
       <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
 
+      <TagFilterBar wsId={wsId} selected={tagFilter} onToggle={toggleTag} />
+
       <DocumentList
         wsId={wsId}
         colId={colId}
-        data={data}
+        data={shown}
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
@@ -193,6 +210,24 @@ function DocumentRow({
 }) {
   const [showError, setShowError] = useState(false)
   const failed = doc.status === 'failed'
+
+  const toast = useToast()
+  const assignMut = useAssignDocumentTag(wsId, colId)
+  const unassignMut = useUnassignDocumentTag(wsId, colId)
+  const createMut = useCreateTag(wsId)
+  const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
+  const onErr = (e: Error) => toast.error(e.message)
+
+  const handleCreate = (name: string) =>
+    createMut.mutate(
+      { name },
+      {
+        onSuccess: (tag) =>
+          assignMut.mutate({ docId: doc.document_id, tagId: tag.id }, { onError: onErr }),
+        onError: onErr,
+      },
+    )
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
@@ -227,6 +262,30 @@ function DocumentRow({
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        {(doc.tags ?? []).map((t) => (
+          <TagChip
+            key={t.id}
+            name={t.name}
+            color={t.color}
+            onRemove={() =>
+              unassignMut.mutate({ docId: doc.document_id, tagId: t.id }, { onError: onErr })
+            }
+          />
+        ))}
+        <TagPicker
+          wsId={wsId}
+          assigned={doc.tags ?? []}
+          busy={tagBusy}
+          onAssign={(tagId) =>
+            assignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
+          }
+          onUnassign={(tagId) =>
+            unassignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
+          }
+          onCreate={handleCreate}
+        />
       </div>
       {failed && showError && (
         <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
