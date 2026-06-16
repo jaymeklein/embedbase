@@ -17,7 +17,16 @@ from api.models.redis import CorpusConfig
 from api.services.redis.redis import get_corpus
 from worker.celery_app import celery_app
 from worker.config import get_config
-from worker.db import SessionLocal, documents, job_records
+from worker.db import (
+    SessionLocal,
+    collection_tags,
+    collections,
+    document_tags,
+    documents,
+    job_records,
+    tags,
+    workspace_tags,
+)
 
 if TYPE_CHECKING:
     from api.models.chunk import Chunk
@@ -97,6 +106,58 @@ def _set_job_status(session: Any, job_id: str, status: str, **fields: Any) -> No
         .where(job_records.c.job_id == job_id)
         .values(status=status, updated_at=_now(), **fields)
     )
+
+
+# ---------------------------------------------------------------------------
+# Effective tags (D6 search bridge)
+# ---------------------------------------------------------------------------
+
+
+def _effective_document_tags(session: Any, collection_id: str, document_id: str) -> list[str]:
+    """Return the union of a document's workspace, collection, and document tags.
+
+    A document's *effective* tags inherit downward: tagging a workspace or a
+    collection makes that tag apply to every document beneath it. The sorted
+    name list is folded into each chunk's metadata so D3 tag filtering works.
+
+    Args:
+        session: Synchronous SQLAlchemy session.
+        collection_id: Collection the document belongs to.
+        document_id: Document whose effective tags to resolve.
+
+    Returns:
+        Distinct tag names, sorted, across all three inheritance levels.
+    """
+    ws_row = session.execute(
+        select(collections.c.workspace_id).where(collections.c.id == collection_id)
+    ).fetchone()
+    workspace_id = ws_row[0] if ws_row else None
+    specs = [
+        (workspace_tags, "workspace_id", workspace_id),
+        (collection_tags, "collection_id", collection_id),
+        (document_tags, "document_id", document_id),
+    ]
+    names: set[str] = set()
+    for join, col, entity_id in specs:
+        if entity_id is None:
+            continue
+        rows = session.execute(
+            select(tags.c.name)
+            .select_from(join.join(tags, tags.c.id == join.c.tag_id))
+            .where(join.c[col] == entity_id)
+        ).fetchall()
+        names.update(row[0] for row in rows)
+    return sorted(names)
+
+
+def _apply_effective_tags(
+    session_factory: Any, collection_id: str, document_id: str, chunks: list[Chunk]
+) -> None:
+    """Fold the document's effective tags into each chunk's metadata in place."""
+    with session_factory() as session:
+        effective = _effective_document_tags(session, collection_id, document_id)
+    for chunk in chunks:
+        chunk.metadata.tags = effective
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +270,7 @@ def _run_ingestion(
 
     # --- Embed (batched) → upsert -------------------------------------------
     if chunks:
+        _apply_effective_tags(session_factory, collection_id, document_id, chunks)
         batch_size = config.embedding.batch_size
         texts = [c.text for c in chunks]
         vectors: list[list[float]] = []
@@ -271,6 +333,41 @@ def ingest_document(
     except Exception as exc:
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
         _mark_failed(job_id, str(exc))
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def sync_document_tags(self, document_id: str, collection_id: str) -> None:
+    """Refresh a document's effective tags on its stored chunks (search bridge).
+
+    Recomputes the document's effective tags from the DB and writes them onto
+    every stored chunk so D3 tag-filtered search reflects the latest assignment.
+
+    Consistency model (CAP): this is the asynchronous, availability-favoring leg
+    of the search bridge. Tag assignment/rename/merge/delete return to the client
+    before this sync runs, so tag-filtered search is *eventually* consistent — it
+    may briefly return stale results and reconverges once the worker applies the
+    write. The authoritative tag state always lives in SQLite; the vector store
+    only carries a denormalized copy for filtering.
+
+    Pure command (CQS): mutates the vector store and returns nothing; the synced
+    tags are surfaced via the log line and the query helper
+    :func:`_effective_document_tags`, which tests call directly.
+    """
+    try:
+        with SessionLocal() as session:
+            effective = _effective_document_tags(session, collection_id, document_id)
+        _vector_store().set_document_tags(collection_id, document_id, effective)
+        logger.info("synced document tags", document_id=document_id, tags=effective)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:
+        logger.error("sync tags task failed", document_id=document_id, error=str(exc))
         raise self.retry(exc=exc) from exc
 
 
