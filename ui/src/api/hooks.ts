@@ -39,6 +39,8 @@ export const qk = {
   tags: (wsId: string) => ['workspaces', wsId, 'tags'] as const,
   tagItems: (wsId: string, tagId: string) =>
     ['workspaces', wsId, 'tags', tagId, 'items'] as const,
+  graph: (wsId: string, colId: string | null, linkTypes: string[]) =>
+    ['workspaces', wsId, 'graph', colId, linkTypes] as const,
 }
 
 export function useHealth() {
@@ -444,6 +446,16 @@ export function useApplyTagsByName(wsId: string) {
       await assign(id)
     }
   }
+}
+
+/** Fetch the tag-correlation graph for a workspace (or one collection within it). */
+export function useGraph(wsId: string, colId: string | null, linkTypes: string[] = ['tags']) {
+  return useQuery({
+    queryKey: qk.graph(wsId, colId, linkTypes),
+    queryFn: () => api.graph(wsId, colId, linkTypes),
+    enabled: Boolean(wsId),
+    retry: false,
+  })
 }
 
 /** Fetch a single document's latest job record on demand (e.g. a failure reason). */
