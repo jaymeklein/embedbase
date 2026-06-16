@@ -124,6 +124,35 @@ class QdrantAdapter:
             rank=rank, metadata=payload,
         )
 
+    def set_document_tags(
+        self, collection_id: str, document_id: str, tags: list[str]
+    ) -> None:
+        """Rewrite the ``tags`` payload field on every point of a document.
+
+        ``set_payload`` merges the given keys into each matched point's existing
+        payload, so only ``tags`` is replaced. No-op if the collection is absent.
+
+        Args:
+            collection_id: Collection holding the document's points.
+            document_id: Document whose point tags to replace.
+            tags: New effective tag list to store.
+        """
+        from qdrant_client import models
+
+        client = self._get_client()
+        with contextlib.suppress(Exception):
+            client.set_payload(
+                collection_name=collection_id,
+                payload={"tags": tags},
+                points=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="document_id", match=models.MatchValue(value=document_id)
+                        )
+                    ]
+                ),
+            )
+
     def delete_document(self, collection_id: str, document_id: str) -> None:
         """Delete every point belonging to a document in a collection.
 
