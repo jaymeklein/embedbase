@@ -212,10 +212,13 @@ def _auto_tag_document(
     text = "\n".join(c.text for c in chunks).strip()
     if not text:
         return
+    # Don't re-suggest tags the document already has (own or inherited).
+    with session_factory() as session:
+        existing = _effective_document_tags(session, collection_id, document_id)
     try:
         from api.adapters.tagging import get_tag_suggester
 
-        suggestions = get_tag_suggester(tagging).suggest(text, [])
+        suggestions = get_tag_suggester(tagging).suggest(text, existing)
     except Exception as exc:
         logger.warning("auto-tag failed", document_id=document_id, error=str(exc))
         return
