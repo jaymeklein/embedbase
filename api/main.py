@@ -16,7 +16,17 @@ from api.dependencies import (
 )
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
-from api.routers import collections, config, documents, health, mcp, search, tags, workspaces
+from api.routers import (
+    collections,
+    config,
+    documents,
+    graph,
+    health,
+    mcp,
+    search,
+    tags,
+    workspaces,
+)
 from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 from api.settings import settings
 
@@ -119,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(collections.router)
     app.include_router(documents.router)
     app.include_router(tags.router)
+    app.include_router(graph.router)
     app.include_router(search.router)
     app.include_router(config.router)
 
