@@ -32,10 +32,21 @@ def _document_text(redis: Any, col_id: str, doc_id: str) -> str:
     return "\n".join(text for _, did, text in corpus.data if did == doc_id)
 
 
-async def _existing_names(kind: str, entity_id: str, db: AsyncSession) -> list[str]:
-    """Return the names of tags already assigned to an entity."""
-    mapping = await tags_by_entity(kind, [entity_id], db)
-    return [tag["name"] for tag in mapping.get(entity_id, [])]
+async def _effective_existing(
+    db: AsyncSession, *, ws_id: str, col_id: str | None = None, doc_id: str | None = None
+) -> list[str]:
+    """Names of every tag already effectively on the entity (own + inherited).
+
+    A document inherits its collection's and workspace's tags, so none of those
+    should be re-suggested. Returns the sorted union across the given levels.
+    """
+    names: set[str] = set()
+    for kind, entity_id in (("workspace", ws_id), ("collection", col_id), ("document", doc_id)):
+        if entity_id is None:
+            continue
+        mapping = await tags_by_entity(kind, [entity_id], db)
+        names.update(tag["name"] for tag in mapping.get(entity_id, []))
+    return sorted(names)
 
 
 async def _suggest(text: str, existing: list[str], tagging: TaggingConfig) -> dict[str, Any]:
@@ -55,7 +66,7 @@ async def suggest_collection_tags(
     """
     await require_collection(ws_id, col_id, db)
     text = _collection_text(redis, col_id)
-    existing = await _existing_names("collection", col_id, db)
+    existing = await _effective_existing(db, ws_id=ws_id, col_id=col_id)
     return await _suggest(text, existing, tagging)
 
 
@@ -70,5 +81,5 @@ async def suggest_document_tags(
     await require_collection(ws_id, col_id, db)
     await require_document(col_id, doc_id, db)
     text = _document_text(redis, col_id, doc_id)
-    existing = await _existing_names("document", doc_id, db)
+    existing = await _effective_existing(db, ws_id=ws_id, col_id=col_id, doc_id=doc_id)
     return await _suggest(text, existing, tagging)

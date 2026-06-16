@@ -9,7 +9,15 @@ from sqlalchemy.pool import NullPool
 from api.models.chunk import Chunk, ChunkMetadata
 from api.models.config import TaggingConfig, TagSuggesterConfig
 from api.models.tagging import TagSuggestion
-from api.tables import collections, document_tags, documents, metadata, tags, workspaces
+from api.tables import (
+    collection_tags,
+    collections,
+    document_tags,
+    documents,
+    metadata,
+    tags,
+    workspaces,
+)
 from worker.tasks import _auto_tag_document
 
 _TS = "2026-01-01T00:00:00"
@@ -53,8 +61,10 @@ def _config(*, enabled=True, min_confidence=0.8):
 class _FakeSuggester:
     def __init__(self, suggestions):
         self._suggestions = suggestions
+        self.seen_existing: list[str] | None = None
 
     def suggest(self, text, existing):
+        self.seen_existing = existing
         return self._suggestions
 
 
@@ -138,3 +148,20 @@ def test_reuses_existing_tag_without_duplicating(tmp_path, monkeypatch):
         ).scalar()
     assert count == 1  # no duplicate tag row created
     assert _doc_tag_names(factory) == ["connascence"]
+
+
+def test_excludes_inherited_tags_from_suggestion(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)
+    _seed(factory)
+    with factory() as s:  # a tag inherited from the collection
+        s.execute(insert(tags).values(
+            id="tag_col", workspace_id="ws_1", name="inherited", created_at=_TS))
+        s.execute(insert(collection_tags).values(collection_id="col_1", tag_id="tag_col"))
+        s.commit()
+    suggester = _FakeSuggester([TagSuggestion(name="fresh", confidence=0.9)])
+    _patch_suggester(monkeypatch, suggester)
+
+    _auto_tag_document(factory, "col_1", "doc_1", _chunks(), _config())
+
+    # The suggester is told the document already (effectively) has "inherited".
+    assert "inherited" in (suggester.seen_existing or [])
