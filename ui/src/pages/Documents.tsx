@@ -280,9 +280,9 @@ function DocumentRow({
             size="sm"
             aria-label={`Delete ${doc.filename}`}
             onClick={() => onDelete(doc)}
-            className="h-7 w-7 px-0 hover:text-err"
+            className="h-8 w-8 px-0 hover:text-err"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
