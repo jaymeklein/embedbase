@@ -385,27 +385,27 @@ function CollectionCard({
             size="sm"
             aria-label={`Manage keys for ${col.name}`}
             onClick={stop(() => onKeys(col))}
-            className="h-7 w-7 px-0"
+            className="h-8 w-8 px-0"
           >
-            <KeyRound className="h-3.5 w-3.5" />
+            <KeyRound className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Edit ${col.name}`}
             onClick={stop(() => onEdit(col))}
-            className="h-7 w-7 px-0"
+            className="h-8 w-8 px-0"
           >
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Delete ${col.name}`}
             onClick={stop(() => onDelete(col))}
-            className="h-7 w-7 px-0 hover:text-err"
+            className="h-8 w-8 px-0 hover:text-err"
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
