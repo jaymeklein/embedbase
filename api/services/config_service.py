@@ -56,6 +56,7 @@ SECRET_PATHS: tuple[tuple[str, ...], ...] = (
     ("embedding", "api_key"),
     ("vector_store", "chroma", "auth_token"),
     ("vector_store", "pgvector", "password"),
+    ("tagging", "suggester", "api_key"),
 )
 SECRET_MASK = "__SECRET_SET__"
 

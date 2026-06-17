@@ -9,6 +9,7 @@
 import { getMasterKey, notifyUnauthorized } from './tokenStore'
 import type {
   ApiKey,
+  AppConfig,
   Collection,
   CollectionCreate,
   CollectionUpdate,
@@ -215,6 +216,10 @@ export const api = {
 
   // ── Search ────────────────────────────────────────────────────────────────
   search: (body: SearchRequest) => request<SearchResponse>('/search', { method: 'POST', body }),
+
+  // ── Config ────────────────────────────────────────────────────────────────
+  getConfig: () => request<AppConfig>('/config'),
+  updateConfig: (body: AppConfig) => request<unknown>('/config', { method: 'PUT', body }),
 
   // ── System ────────────────────────────────────────────────────────────────
   healthz: () => request<Health>('/healthz'),
