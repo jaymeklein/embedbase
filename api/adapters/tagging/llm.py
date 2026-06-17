@@ -20,6 +20,25 @@ _PROMPT = (
 _OLLAMA_DEFAULT = "http://host.docker.internal:11434"
 _OPENAI_DEFAULT = "http://host.docker.internal:1234"
 
+# ponytail: local CPU inference of a small model takes ~1min/call (cold start more),
+# so the chat call needs a generous ceiling. Bump if larger models time out.
+_CHAT_TIMEOUT_SECONDS = 300.0
+
+
+def list_ollama_models(base_url: str | None) -> list[str]:
+    """Return the names of models installed on the Ollama server, sorted.
+
+    Queries Ollama's ``/api/tags`` endpoint (the default host when ``base_url``
+    is blank). Raises ``httpx.HTTPError`` if the server is unreachable.
+    """
+    import httpx
+
+    url = f"{base_url or _OLLAMA_DEFAULT}/api/tags"
+    response = httpx.get(url, timeout=10.0)
+    response.raise_for_status()
+    models = response.json().get("models", [])
+    return sorted(str(m["name"]) for m in models if isinstance(m, dict) and "name" in m)
+
 
 def _build_prompt(text: str, existing_tags: list[str], max_tags: int) -> str:
     existing = ", ".join(existing_tags) if existing_tags else "(none)"
@@ -119,6 +138,6 @@ class LLMTagSuggester:
     def _post(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
         import httpx
 
-        response = httpx.post(url, json=payload, headers=headers, timeout=60.0)
+        response = httpx.post(url, json=payload, headers=headers, timeout=_CHAT_TIMEOUT_SECONDS)
         response.raise_for_status()
         return dict(response.json())
