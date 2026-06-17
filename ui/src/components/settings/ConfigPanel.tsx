@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
-import { SECRET_MASK, useConfig, useUpdateConfig } from '../../api/hooks'
+import { SECRET_MASK, useConfig, useOllamaModels, useTestOllama, useUpdateConfig } from '../../api/hooks'
 import type { AppConfig, TaggingConfig } from '../../api/types'
 import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
 
@@ -24,6 +24,7 @@ export function ConfigPanel() {
 function TaggingForm({ config }: { config: AppConfig }) {
   const toast = useToast()
   const update = useUpdateConfig()
+  const testOllama = useTestOllama()
   const sug = config.tagging.suggester
 
   const [backend, setBackend] = useState(sug.backend)
@@ -38,6 +39,13 @@ function TaggingForm({ config }: { config: AppConfig }) {
   const isLlm = backend === 'llm'
   const isOpenAI = provider === 'openai_compat'
   const keyIsSet = sug.api_key === SECRET_MASK
+
+  const testConnection = () =>
+    testOllama.mutate(baseUrl, {
+      onSuccess: (models) =>
+        toast.success(`Ollama is running — ${models.length} model${models.length === 1 ? '' : 's'} available`),
+      onError: (e) => toast.error(e.message),
+    })
 
   const save = () => {
     // Blank key + already-set → echo the mask so the backend preserves it.
@@ -89,15 +97,18 @@ function TaggingForm({ config }: { config: AppConfig }) {
             </Select>
           </Field>
         )}
-        {isLlm && (
+        {isLlm && isOpenAI && (
           <Field label="Model" htmlFor="cfg-model">
             <Input
               id="cfg-model"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder={isOpenAI ? 'meta-llama/llama-3.1-8b-instruct' : 'llama3.1'}
+              placeholder="meta-llama/llama-3.1-8b-instruct"
             />
           </Field>
+        )}
+        {isLlm && !isOpenAI && (
+          <OllamaModelField model={model} setModel={setModel} baseUrl={baseUrl} />
         )}
         {isLlm && (
           <Field
@@ -125,6 +136,16 @@ function TaggingForm({ config }: { config: AppConfig }) {
               placeholder={keyIsSet ? 'key set — leave blank to keep' : 'sk-or-…'}
             />
           </Field>
+        )}
+        {isLlm && !isOpenAI && (
+          <div className="flex items-center gap-2 sm:col-span-2">
+            <Button variant="secondary" onClick={testConnection} loading={testOllama.isPending}>
+              Test connection
+            </Button>
+            <span className="text-[13px] text-ink-muted">
+              Check that Ollama is reachable at the base URL above.
+            </span>
+          </div>
         )}
       </Section>
 
@@ -170,6 +191,55 @@ function TaggingForm({ config }: { config: AppConfig }) {
         </Button>
       </div>
     </Card>
+  )
+}
+
+/**
+ * Model picker for Ollama: a Select populated from the server's installed models.
+ * No free-text entry — if a model isn't installed it can't be chosen. Auto-selects
+ * the first model when the current value isn't among those installed.
+ */
+function OllamaModelField({
+  model,
+  setModel,
+  baseUrl,
+}: {
+  model: string
+  setModel: (m: string) => void
+  baseUrl: string
+}) {
+  const { data: models, isLoading, isError, error, refetch } = useOllamaModels(baseUrl, true)
+
+  useEffect(() => {
+    if (models && models.length > 0 && !models.includes(model)) setModel(models[0])
+  }, [models, model, setModel])
+
+  return (
+    <Field label="Model" htmlFor="cfg-model" hint="Installed Ollama models">
+      {isError ? (
+        <div className="flex items-center gap-2">
+          <p className="text-[13px] text-danger">{error?.message ?? 'Could not reach Ollama'}</p>
+          <Button variant="ghost" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : (
+        <Select
+          id="cfg-model"
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          disabled={isLoading || !models?.length}
+        >
+          {isLoading && <option>Loading models…</option>}
+          {!isLoading && !models?.length && <option>No models installed</option>}
+          {models?.map((m) => (
+            <option key={m} value={m}>
+              {m}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   )
 }
 

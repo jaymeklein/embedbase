@@ -38,6 +38,7 @@ export const qk = {
   apiKeys: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'keys'] as const,
   config: ['config'] as const,
+  ollamaModels: (baseUrl: string) => ['config', 'ollama-models', baseUrl] as const,
   tags: (wsId: string) => ['workspaces', wsId, 'tags'] as const,
   tagItems: (wsId: string, tagId: string) =>
     ['workspaces', wsId, 'tags', tagId, 'items'] as const,
@@ -55,6 +56,27 @@ export const SECRET_MASK = '__SECRET_SET__'
 /** Live runtime config (secrets masked). */
 export function useConfig() {
   return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false })
+}
+
+/**
+ * Models installed on the Ollama server, for the suggester model picker.
+ * Re-fetches when the edited base URL changes; only enabled when asked for.
+ */
+export function useOllamaModels(baseUrl: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.ollamaModels(baseUrl),
+    queryFn: () => api.listOllamaModels(baseUrl || undefined),
+    enabled,
+    retry: false,
+  })
+}
+
+/**
+ * Test Ollama connectivity on demand: resolves with the installed models when
+ * the server is reachable, rejects with the API error when it is not.
+ */
+export function useTestOllama() {
+  return useMutation({ mutationFn: (baseUrl: string) => api.listOllamaModels(baseUrl || undefined) })
 }
 
 /** Apply a full config payload (PUT /config) and refetch the live config. */
