@@ -11,8 +11,38 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import workspaces as ws_t
 from api.models.config import TaggingConfig
+from api.models.tagging import TagSuggestion
 from api.services import tag_suggest
 from api.services import tags as tag_svc
+
+
+def _sug(name: str, conf: float) -> TagSuggestion:
+    return TagSuggestion(name=name, confidence=conf)
+
+
+def test_rank_orders_by_confidence_desc():
+    out = tag_suggest._rank([_sug("a", 0.5), _sug("b", 0.9), _sug("c", 0.7)], [], 0.0)
+    assert [s.name for s in out] == ["b", "c", "a"]
+
+
+def test_rank_drops_below_min_confidence():
+    out = tag_suggest._rank([_sug("a", 0.9), _sug("b", 0.79)], [], 0.8)
+    assert [s.name for s in out] == ["a"]  # 0.79 < 0.8 dropped; 0.8 boundary kept elsewhere
+
+
+def test_rank_keeps_confidence_equal_to_min():
+    out = tag_suggest._rank([_sug("a", 0.8)], [], 0.8)
+    assert [s.name for s in out] == ["a"]
+
+
+def test_rank_dedupes_case_insensitively_keeping_highest():
+    out = tag_suggest._rank([_sug("Kube", 0.6), _sug("kube", 0.9)], [], 0.0)
+    assert [(s.name, s.confidence) for s in out] == [("kube", 0.9)]
+
+
+def test_rank_excludes_existing_tags():
+    out = tag_suggest._rank([_sug("python", 0.9), _sug("rust", 0.8)], ["Python"], 0.0)
+    assert [s.name for s in out] == ["rust"]
 
 
 class FakeRedis:

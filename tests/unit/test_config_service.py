@@ -119,6 +119,21 @@ def test_atomic_write_persists_yaml_and_keeps_backup(tmp_path):
     assert not (tmp_path / "config.yaml.tmp").exists()  # renamed away
 
 
+def test_atomic_write_falls_back_to_in_place_when_rename_fails(tmp_path, monkeypatch):
+    """A bind-mounted file (EBUSY on rename) is written in place, keeping the .bak."""
+    path = tmp_path / "config.yaml"
+    path.write_text("old: 1", encoding="utf-8")
+
+    def _busy(_self: object, _target: object) -> None:  # Path.replace; EBUSY on bind mount
+        raise OSError(16, "Device or resource busy")
+
+    monkeypatch.setattr("pathlib.Path.replace", _busy)
+    cs._atomic_write({"max_file_size_mb": 99}, path)
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["max_file_size_mb"] == 99
+    assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == "old: 1"
+    assert not (tmp_path / "config.yaml.tmp").exists()  # cleaned up after fallback
+
+
 # ── apply_config (build-then-commit) ──────────────────────────────────────────
 
 
@@ -162,6 +177,33 @@ def test_apply_config_preserves_masked_secret(tmp_path, monkeypatch):
     payload = AppConfig(embedding=EmbeddingConfig(api_key=cs.SECRET_MASK))
     cs.apply_config(payload)
     assert dependencies.get_app_config().embedding.api_key == "keep-me"
+
+
+def test_list_ollama_models_uses_explicit_base_url(monkeypatch):
+    monkeypatch.setattr(
+        "api.adapters.tagging.llm.list_ollama_models", lambda url: [f"model@{url}"]
+    )
+    assert cs.list_ollama_models("http://x:11434") == ["model@http://x:11434"]
+
+
+def test_list_ollama_models_falls_back_to_configured_base_url(monkeypatch):
+    from api.models.config import TaggingConfig, TagSuggesterConfig
+
+    dependencies.set_app_config(
+        AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(base_url="http://cfg:11434")))
+    )
+    monkeypatch.setattr("api.adapters.tagging.llm.list_ollama_models", lambda url: [str(url)])
+    assert cs.list_ollama_models() == ["http://cfg:11434"]
+
+
+def test_list_ollama_models_unreachable_raises_502(monkeypatch):
+    def _boom(_url):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr("api.adapters.tagging.llm.list_ollama_models", _boom)
+    with pytest.raises(HTTPException) as exc:
+        cs.list_ollama_models("http://x:11434")
+    assert exc.value.status_code == 502
 
 
 def test_get_reload_status_unknown_version_404():

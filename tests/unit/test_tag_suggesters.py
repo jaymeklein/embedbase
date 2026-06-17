@@ -4,7 +4,7 @@ import pytest
 
 from api.adapters.tagging import get_tag_suggester
 from api.adapters.tagging.keyword import KeywordTagSuggester
-from api.adapters.tagging.llm import LLMTagSuggester, _parse_suggestions
+from api.adapters.tagging.llm import LLMTagSuggester, _parse_suggestions, list_ollama_models
 from api.models.config import TaggingConfig, TagSuggesterConfig
 
 # ── KeywordTagSuggester ───────────────────────────────────────────────────────
@@ -124,8 +124,57 @@ def test_post_invokes_httpx(monkeypatch):
         def json(self):
             return {"ok": 1}
 
-    monkeypatch.setattr("httpx.post", lambda *a, **k: _Resp())
+    captured = {}
+
+    def _post(*_a, **kwargs):
+        captured.update(kwargs)
+        return _Resp()
+
+    monkeypatch.setattr("httpx.post", _post)
     assert LLMTagSuggester._post("http://x", {}, {}) == {"ok": 1}
+    # Local CPU inference is slow, so the timeout must be generous (not the old 60s).
+    assert captured["timeout"] >= 120.0
+
+
+# ── list_ollama_models ──────────────────────────────────────────────────────────
+
+
+def test_list_ollama_models_sorts_names_and_uses_base_url(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "llama3.1"}, {"name": "gemma2"}, {"bad": 1}]}
+
+    def _get(url, **_kwargs):
+        captured["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", _get)
+    assert list_ollama_models("http://ollama:11434") == ["gemma2", "llama3.1"]
+    assert captured["url"] == "http://ollama:11434/api/tags"
+
+
+def test_list_ollama_models_blank_url_uses_default(monkeypatch):
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": []}
+
+    captured = {}
+
+    def _get(url, **_kwargs):
+        captured["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", _get)
+    assert list_ollama_models(None) == []
+    assert captured["url"].endswith("/api/tags")
 
 
 # ── registry ──────────────────────────────────────────────────────────────────
