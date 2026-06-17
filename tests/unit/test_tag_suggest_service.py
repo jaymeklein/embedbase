@@ -71,6 +71,17 @@ async def test_suggest_document_excludes_existing(db_session):
     assert all(s["name"] != "kubernetes" for s in out["suggestions"])
 
 
+async def test_suggest_document_excludes_inherited_collection_tags(db_session):
+    ws, col, doc = await _seed(db_session)
+    tag = await tag_svc.create_tag(ws, "kubernetes", None, db_session)
+    await tag_svc.assign_collection_tag(ws, col, tag["id"], db_session)  # inherited, not own
+    redis = _corpus(col, [("c1", doc, "kubernetes kubernetes scaling")])
+    out = await tag_suggest.suggest_document_tags(
+        ws, col, doc, db=db_session, redis=redis, tagging=TaggingConfig()
+    )
+    assert all(s["name"] != "kubernetes" for s in out["suggestions"])
+
+
 async def test_suggest_collection_aggregates_documents(db_session):
     ws, col, doc = await _seed(db_session)
     redis = _corpus(col, [("c1", doc, "alpha alpha"), ("c2", "doc_2", "beta beta")])

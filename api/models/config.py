@@ -120,10 +120,16 @@ class TagSuggesterConfig(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     max_tags: int = 8
+    # Minimum confidence (0-1) a suggestion must meet to be auto-applied at
+    # ingestion. Suggestions below this are dropped.
+    min_confidence: float = 0.8
 
 
 class TaggingConfig(BaseModel):
     suggester: TagSuggesterConfig = TagSuggesterConfig()
+    # When true, the worker runs the suggester over each document at ingestion
+    # and auto-applies tags scoring at least ``suggester.min_confidence``.
+    auto_tag_on_ingest: bool = False
 
 
 class AppConfig(BaseModel):
