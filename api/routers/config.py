@@ -21,6 +21,12 @@ async def update_config(payload: AppConfig):
     return await asyncio.to_thread(config_service.apply_config, payload)
 
 
+@router.get("/ollama-models")
+async def list_ollama_models(base_url: str | None = None):
+    # Off the event loop: querying Ollama is a blocking HTTP call.
+    return await asyncio.to_thread(config_service.list_ollama_models, base_url)
+
+
 @router.get("/reload-status/{version_id}")
 async def get_reload_status(version_id: str):
     return config_service.get_reload_status(version_id)

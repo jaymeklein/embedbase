@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.adapters.tagging import get_tag_suggester
 from api.models.config import TaggingConfig
 from api.models.redis import CorpusConfig
+from api.models.tagging import TagSuggestion
 from api.services.redis.redis import get_corpus
 from api.services.tags import require_collection, require_document, tags_by_entity
 
@@ -49,11 +50,34 @@ async def _effective_existing(
     return sorted(names)
 
 
+def _normalize(name: str) -> str:
+    """Lowercase, trim, and collapse whitespace — the canonical tag-name form."""
+    return " ".join(name.strip().lower().split())
+
+
+def _rank(
+    suggestions: list[TagSuggestion], existing: list[str], min_confidence: float
+) -> list[TagSuggestion]:
+    """Order by confidence desc, drop those below the threshold, dedupe, and
+    exclude any tag already on the entity (case-insensitive)."""
+    blocked = {_normalize(name) for name in existing}
+    seen: set[str] = set()
+    ranked: list[TagSuggestion] = []
+    for s in sorted(suggestions, key=lambda x: x.confidence, reverse=True):
+        key = _normalize(s.name)
+        if not key or s.confidence < min_confidence or key in blocked or key in seen:
+            continue
+        seen.add(key)
+        ranked.append(s)
+    return ranked
+
+
 async def _suggest(text: str, existing: list[str], tagging: TaggingConfig) -> dict[str, Any]:
     """Run the configured suggester off the event loop and shape the response."""
     suggester = get_tag_suggester(tagging)
     suggestions = await asyncio.to_thread(suggester.suggest, text, existing)
-    return {"suggestions": [s.model_dump() for s in suggestions]}
+    ranked = _rank(suggestions, existing, tagging.suggester.min_confidence)
+    return {"suggestions": [s.model_dump() for s in ranked]}
 
 
 async def suggest_collection_tags(
