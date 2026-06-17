@@ -138,12 +138,23 @@ def _build_adapters(config: AppConfig) -> tuple[Any, Any]:
 
 
 def _atomic_write(data: dict[str, Any], path: Path) -> None:
-    """Persist ``data`` as YAML atomically (.bak backup -> .tmp write -> rename)."""
+    """Persist ``data`` as YAML atomically (.bak backup -> .tmp write -> rename).
+
+    Falls back to an in-place write when the rename fails — a bind-mounted single
+    file (Docker on Windows) is a mount point that cannot be renamed over (EBUSY),
+    but can still be written through. The ``.bak`` backup is taken first either way.
+    """
+    content = yaml.safe_dump(data, sort_keys=False)
     if path.exists():
         path.with_suffix(path.suffix + ".bak").write_text(path.read_text(encoding="utf-8"))
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    tmp.replace(path)
+    tmp.write_text(content, encoding="utf-8")
+    try:
+        tmp.replace(path)
+    except OSError:
+        # ponytail: bind-mounted file can't be renamed over; write in place instead.
+        path.write_text(content, encoding="utf-8")
+        tmp.unlink(missing_ok=True)
 
 
 def _record_applied(version_id: str) -> dict[str, Any]:
@@ -250,6 +261,21 @@ def _rollback(redis_client: Any, version_id: str, previous: _Snapshot, path: Pat
     _swap_live(prev_embed, prev_store, prev_config)
     publish_reload(redis_client, version_id, rollback=True)
     mark_rolled_back(redis_client, version_id)
+
+
+def list_ollama_models(base_url: str | None = None) -> list[str]:
+    """List models installed on the Ollama server for the config UI's model picker.
+
+    Uses ``base_url`` when given (the value the user is editing), else the live
+    config's suggester base URL. Raises 502 if Ollama cannot be reached.
+    """
+    from api.adapters.tagging.llm import list_ollama_models as _list
+
+    resolved = base_url or _require_config().tagging.suggester.base_url
+    try:
+        return _list(resolved)
+    except Exception as exc:  # unreachable server / bad response
+        raise HTTPException(502, f"Could not reach Ollama: {exc}") from exc
 
 
 def get_reload_status(version_id: str) -> dict[str, Any]:
