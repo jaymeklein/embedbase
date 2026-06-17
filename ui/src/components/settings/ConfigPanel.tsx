@@ -1,53 +1,174 @@
-import { type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Info } from 'lucide-react'
-import { Card, Field, Input } from '../ui'
+import { SECRET_MASK, useConfig, useUpdateConfig } from '../../api/hooks'
+import type { AppConfig, TaggingConfig } from '../../api/types'
+import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
 
-/**
- * Disabled scaffold for the runtime-config editor.
- *
- * `GET/PUT /config` and `GET /config/reload-status/{id}` return 501 until
- * Delivery 6 (`api/routers/config.py`), so this form is intentionally inert —
- * it lays out the embedding / vector-store / chunking fields and the three-phase
- * reload-status seam for D6 to wire up. It never fakes a reload.
- */
+/** Runtime AI tag-suggester config: switch keyword / Ollama / OpenAI-compatible. */
 export function ConfigPanel() {
+  const { data, isLoading, isError, error, refetch } = useConfig()
+  if (isLoading) return <Skeleton className="h-72 w-full rounded-card" />
+  if (isError || !data) {
+    return (
+      <QueryError
+        title="Could not load configuration"
+        message={error?.message}
+        onRetry={() => void refetch()}
+      />
+    )
+  }
+  return <TaggingForm config={data} />
+}
+
+/** Editable form for the tagging section; every other config section round-trips. */
+function TaggingForm({ config }: { config: AppConfig }) {
+  const toast = useToast()
+  const update = useUpdateConfig()
+  const sug = config.tagging.suggester
+
+  const [backend, setBackend] = useState(sug.backend)
+  const [provider, setProvider] = useState(sug.provider)
+  const [model, setModel] = useState(sug.model)
+  const [baseUrl, setBaseUrl] = useState(sug.base_url ?? '')
+  const [apiKey, setApiKey] = useState('') // blank = keep existing key (when set)
+  const [maxTags, setMaxTags] = useState(String(sug.max_tags))
+  const [minConfidence, setMinConfidence] = useState(String(sug.min_confidence))
+  const [autoTag, setAutoTag] = useState(config.tagging.auto_tag_on_ingest)
+
+  const isLlm = backend === 'llm'
+  const isOpenAI = provider === 'openai_compat'
+  const keyIsSet = sug.api_key === SECRET_MASK
+
+  const save = () => {
+    // Blank key + already-set → echo the mask so the backend preserves it.
+    const nextKey = apiKey.trim() || (keyIsSet ? SECRET_MASK : '')
+    const tagging: TaggingConfig = {
+      auto_tag_on_ingest: autoTag,
+      suggester: {
+        backend,
+        provider,
+        model,
+        base_url: baseUrl.trim() || null,
+        api_key: nextKey,
+        max_tags: Number(maxTags) || 8,
+        min_confidence: Number(minConfidence),
+      },
+    }
+    update.mutate(
+      { ...config, tagging },
+      {
+        onSuccess: () => toast.success('Configuration saved. Services are reloading.'),
+        onError: (e) => toast.error(e.message),
+      },
+    )
+  }
+
   return (
     <Card className="flex flex-col gap-5 p-5">
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          Live config reload ships in Delivery 6. These controls are a preview and are disabled for
-          now.
+          Choose the AI backend for tag suggestions. <strong>Ollama</strong> runs locally and needs
+          no key; <strong>OpenAI-compatible</strong> (OpenRouter, etc.) needs a base URL and key.
+          Saving applies live — the API and workers reload.
         </p>
       </div>
 
-      <fieldset disabled className="flex flex-col gap-5 opacity-60">
-        <Section title="Embedding">
-          <Field label="Provider" htmlFor="cfg-emb-provider">
-            <Input id="cfg-emb-provider" placeholder="sentence_transformers" readOnly />
+      <Section title="AI tag suggester">
+        <Field label="Backend" htmlFor="cfg-backend">
+          <Select id="cfg-backend" value={backend} onChange={(e) => setBackend(e.target.value)}>
+            <option value="keyword">Keyword (local, no AI)</option>
+            <option value="llm">AI (LLM)</option>
+          </Select>
+        </Field>
+        {isLlm && (
+          <Field label="Provider" htmlFor="cfg-provider">
+            <Select id="cfg-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <option value="ollama">Ollama (local)</option>
+              <option value="openai_compat">OpenAI-compatible (OpenRouter, …)</option>
+            </Select>
           </Field>
-          <Field label="Model" htmlFor="cfg-emb-model">
-            <Input id="cfg-emb-model" placeholder="all-MiniLM-L6-v2" readOnly />
+        )}
+        {isLlm && (
+          <Field label="Model" htmlFor="cfg-model">
+            <Input
+              id="cfg-model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={isOpenAI ? 'meta-llama/llama-3.1-8b-instruct' : 'llama3.1'}
+            />
           </Field>
-        </Section>
+        )}
+        {isLlm && (
+          <Field
+            label="Base URL"
+            htmlFor="cfg-base-url"
+            hint={isOpenAI ? 'e.g. https://openrouter.ai/api/v1' : 'blank uses the Ollama default'}
+          >
+            <Input
+              id="cfg-base-url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder={
+                isOpenAI ? 'https://openrouter.ai/api/v1' : 'http://host.docker.internal:11434'
+              }
+            />
+          </Field>
+        )}
+        {isLlm && isOpenAI && (
+          <Field label="API key" htmlFor="cfg-api-key" hint="Write-only; never shown after saving.">
+            <Input
+              id="cfg-api-key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={keyIsSet ? 'key set — leave blank to keep' : 'sk-or-…'}
+            />
+          </Field>
+        )}
+      </Section>
 
-        <Section title="Vector store">
-          <Field label="Backend" htmlFor="cfg-vs-backend">
-            <Input id="cfg-vs-backend" placeholder="chroma" readOnly />
-          </Field>
-        </Section>
+      <Section title="Auto-tagging at ingestion">
+        <Field label="Max tags" htmlFor="cfg-max-tags">
+          <Input
+            id="cfg-max-tags"
+            type="number"
+            min="1"
+            value={maxTags}
+            onChange={(e) => setMaxTags(e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Min confidence"
+          htmlFor="cfg-min-conf"
+          hint="0–1; only tags scoring at least this are auto-applied"
+        >
+          <Input
+            id="cfg-min-conf"
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={minConfidence}
+            onChange={(e) => setMinConfidence(e.target.value)}
+          />
+        </Field>
+        <label className="flex items-center gap-2 text-[13px] text-ink sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={autoTag}
+            onChange={(e) => setAutoTag(e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          Auto-tag documents with the AI suggester at ingestion
+        </label>
+      </Section>
 
-        <Section title="Chunking">
-          <Field label="Chunk size" htmlFor="cfg-chunk-size">
-            <Input id="cfg-chunk-size" placeholder="512" readOnly />
-          </Field>
-          <Field label="Overlap" htmlFor="cfg-chunk-overlap">
-            <Input id="cfg-chunk-overlap" placeholder="64" readOnly />
-          </Field>
-        </Section>
-      </fieldset>
-
-      <ReloadStatusSeam />
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save configuration'}
+        </Button>
+      </div>
     </Card>
   )
 }
@@ -58,37 +179,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     <div>
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">{title}</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{children}</div>
-    </div>
-  )
-}
-
-/**
- * Placeholder for the three-phase reload progress.
- *
- * D6 integration seam: wire each step to the phases reported by
- * `GET /config/reload-status/{version_id}` (validate → apply → reload services).
- */
-function ReloadStatusSeam() {
-  const phases = ['Validate', 'Apply', 'Reload services']
-  return (
-    <div className="border-t border-border pt-4">
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-        Reload progress
-      </h3>
-      <div className="flex items-center gap-2">
-        {phases.map((phase, i) => (
-          <div key={phase} className="flex items-center gap-2">
-            <span className="flex items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-1 text-xs text-ink-faint">
-              <span className="font-mono">{i + 1}</span>
-              {phase}
-            </span>
-            {i < phases.length - 1 && <span className="text-ink-faint">→</span>}
-          </div>
-        ))}
-      </div>
-      <p className="mt-2 text-xs text-ink-faint">
-        Wired to <code className="font-mono">/config/reload-status/&#123;id&#125;</code> in Delivery 6.
-      </p>
     </div>
   )
 }
