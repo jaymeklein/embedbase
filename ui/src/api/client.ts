@@ -220,6 +220,8 @@ export const api = {
   // ── Config ────────────────────────────────────────────────────────────────
   getConfig: () => request<AppConfig>('/config'),
   updateConfig: (body: AppConfig) => request<unknown>('/config', { method: 'PUT', body }),
+  listOllamaModels: (baseUrl?: string) =>
+    request<string[]>(`/config/ollama-models${baseUrl ? `?base_url=${enc(baseUrl)}` : ''}`),
 
   // ── System ────────────────────────────────────────────────────────────────
   healthz: () => request<Health>('/healthz'),
