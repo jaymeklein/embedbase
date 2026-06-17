@@ -11,6 +11,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { api } from './client'
 import type {
   ApiKeyCreate,
+  AppConfig,
   CollectionCreate,
   CollectionUpdate,
   DocumentSummary,
@@ -36,6 +37,7 @@ export const qk = {
     ['workspaces', wsId, 'collections', colId, 'documents'] as const,
   apiKeys: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'keys'] as const,
+  config: ['config'] as const,
   tags: (wsId: string) => ['workspaces', wsId, 'tags'] as const,
   tagItems: (wsId: string, tagId: string) =>
     ['workspaces', wsId, 'tags', tagId, 'items'] as const,
@@ -45,6 +47,23 @@ export const qk = {
 
 export function useHealth() {
   return useQuery({ queryKey: qk.health, queryFn: () => api.healthz(), retry: false })
+}
+
+/** Sentinel the API returns for a set secret; echo it back unchanged to keep it. */
+export const SECRET_MASK = '__SECRET_SET__'
+
+/** Live runtime config (secrets masked). */
+export function useConfig() {
+  return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false })
+}
+
+/** Apply a full config payload (PUT /config) and refetch the live config. */
+export function useUpdateConfig() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AppConfig) => api.updateConfig(body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.config }),
+  })
 }
 
 export function useWorkspaces() {

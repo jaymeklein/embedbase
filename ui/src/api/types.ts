@@ -276,6 +276,33 @@ export interface Health {
   uptime_seconds: number
 }
 
+// ── Config (mirrors api/models/config.py; secrets masked by GET) ─────────────
+
+/** The tag-suggester backend config (keyword = local, llm = Ollama/OpenAI-compat). */
+export interface TagSuggesterConfig {
+  backend: string // "keyword" | "llm"
+  provider: string // "ollama" | "openai_compat"
+  model: string
+  base_url: string | null
+  api_key: string | null // masked on GET as SECRET_MASK; write-only
+  max_tags: number
+  min_confidence: number
+}
+
+export interface TaggingConfig {
+  suggester: TagSuggesterConfig
+  auto_tag_on_ingest: boolean
+}
+
+/**
+ * `GET /config` — the live AppConfig with secrets masked. Only the fields the
+ * Settings UI edits are typed; every other section round-trips untouched on PUT.
+ */
+export interface AppConfig {
+  tagging: TaggingConfig
+  [section: string]: unknown
+}
+
 // ── Request bodies ──────────────────────────────────────────────────────────
 
 export interface WorkspaceCreate {
