@@ -67,6 +67,27 @@ def test_get_masked_config_masks_set_secrets_and_blanks_empty():
     assert data["embedding"]["provider"] == "sentence_transformers"  # non-secret intact
 
 
+def test_get_masked_config_masks_tagging_suggester_api_key():
+    from api.models.config import TaggingConfig, TagSuggesterConfig
+
+    dependencies.set_app_config(
+        AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(api_key="or-secret")))
+    )
+    data = cs.get_masked_config()
+    assert data["tagging"]["suggester"]["api_key"] == cs.SECRET_MASK
+    assert data["tagging"]["suggester"]["provider"] == "ollama"  # non-secret intact
+
+
+def test_merge_secrets_preserves_masked_tagging_api_key():
+    from api.models.config import TaggingConfig, TagSuggesterConfig
+
+    current = AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(api_key="real-or-key")))
+    incoming = current.model_dump()
+    incoming["tagging"]["suggester"]["api_key"] = cs.SECRET_MASK
+    merged = cs._merge_secrets(incoming, current)
+    assert merged["tagging"]["suggester"]["api_key"] == "real-or-key"
+
+
 # ── Secret merge (write-only preservation) ────────────────────────────────────
 
 
