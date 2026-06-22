@@ -1,20 +1,55 @@
-# Development overlay: run the console as a Vite dev server (hot-reload) instead
-# of the production nginx static build, so UI edits are live without a rebuild.
+# Development stack. Run it standalone:
 #
-# Use it via the start scripts:
-#   ./scripts/up.sh dev          (or  .\scripts\up.ps1 dev)
-# or directly:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#   docker compose -f docker-compose.dev.yml up
 #
-# Production (nginx static build) stays the default `docker compose up`.
-services:
-  # Keep the production console out of the dev stack: it only starts under the
-  # "prod" profile, which this overlay never enables.
-  nginx:
-    profiles: ["prod"]
+# Same backend as production (api / worker / redis / chroma are pulled from
+# docker-compose.yml via `extends`, so they never drift), but the frontend is a
+# Vite dev server with hot-reload instead of the nginx static build — edit
+# anything under ./ui and the browser updates live, no rebuild.
+#
+# Production stays `docker compose up` (docker-compose.yml, nginx static build).
+networks:
+  embedbase_net:
+    driver: bridge
 
-  # Vite dev server. Source is bind-mounted, so edits hot-reload in the browser.
-  # Proxies /api and /mcp to the api service (see ui/vite.config.ts VITE_API_PROXY).
+volumes:
+  embedbase_data:
+  redis_data:
+  console_node_modules:
+
+services:
+  # `extends` copies each service's config but NOT depends_on, so it's re-declared.
+  api:
+    extends:
+      file: docker-compose.yml
+      service: api
+    depends_on:
+      redis:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+
+  worker:
+    extends:
+      file: docker-compose.yml
+      service: worker
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    extends:
+      file: docker-compose.yml
+      service: redis
+
+  chroma:
+    extends:
+      file: docker-compose.yml
+      service: chroma
+
+  # Frontend: Vite dev server with hot-reload. Source is bind-mounted; edits are
+  # reflected live. Proxies /api and /mcp to the api service (ui/vite.config.ts,
+  # VITE_API_PROXY). First boot runs `npm install` into a named volume (~30-60s).
   console:
     image: node:20-alpine
     working_dir: /app
@@ -23,14 +58,11 @@ services:
       - VITE_API_PROXY=http://api:8000
     volumes:
       - ./ui:/app
-      # Named volume so the container's Linux node_modules aren't shadowed by the
-      # host's (host install may be a different OS/arch).
+      # Named volume so the container's Linux node_modules isn't shadowed by the
+      # host's (a host install may be a different OS/arch).
       - console_node_modules:/app/node_modules
     ports:
       - "${UI_PORT:-3000}:3000"
     depends_on:
       - api
     networks: [embedbase_net]
-
-volumes:
-  console_node_modules:
