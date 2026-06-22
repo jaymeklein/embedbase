@@ -35,7 +35,9 @@ export default function Graph() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink">Graph</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
-            Files linked through the tags they share. Hotter, larger nodes are more-reused tags.
+            Files (the larger nodes) linked through the tags they share. Hotter tag nodes are
+            more-reused. Drag a node to pin and highlight it, click it to release; tune the repel
+            force or reset to re-center.
           </p>
         </div>
         <div className="flex gap-2">
@@ -121,7 +123,7 @@ function GraphBody({
   }
   return (
     <Card className="relative h-[70vh] overflow-hidden p-0">
-      <GraphCanvas data={data} onSelect={onSelect} fitNonce={fitNonce} />
+      <GraphCanvas data={data} onSelect={onSelect} selected={selected} fitNonce={fitNonce} />
       <HeatLegend maxHeat={data.max_heat} />
       <Button
         variant="secondary"
