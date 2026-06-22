@@ -80,6 +80,17 @@ def test_llm_suggest_uses_real_confidence_and_excludes_existing(monkeypatch):
     assert [(s.name, s.confidence) for s in out] == [("python", 0.95)]
 
 
+def test_llm_suggest_blank_text_returns_empty_without_prompting(monkeypatch):
+    sug = LLMTagSuggester("ollama", "llama3", None, None, max_tags=8)
+    # _complete must never run for blank text — empty text makes the model reply
+    # with prose that the parser would mistake for tags (the "Suggest while still
+    # ingesting" bug). Blow up if it's called.
+    monkeypatch.setattr(
+        sug, "_complete", lambda prompt: (_ for _ in ()).throw(AssertionError("called"))
+    )
+    assert sug.suggest("   \n\t ", []) == []
+
+
 def test_llm_suggest_name_only_reply_falls_back_to_rank(monkeypatch):
     sug = LLMTagSuggester("ollama", "llama3", None, None, max_tags=8)
     monkeypatch.setattr(sug, "_complete", lambda prompt: '["python", "fastapi"]')
