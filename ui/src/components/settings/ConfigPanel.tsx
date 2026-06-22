@@ -27,7 +27,6 @@ function TaggingForm({ config }: { config: AppConfig }) {
   const testOllama = useTestOllama()
   const sug = config.tagging.suggester
 
-  const [backend, setBackend] = useState(sug.backend)
   const [provider, setProvider] = useState(sug.provider)
   const [model, setModel] = useState(sug.model)
   const [baseUrl, setBaseUrl] = useState(sug.base_url ?? '')
@@ -36,16 +35,13 @@ function TaggingForm({ config }: { config: AppConfig }) {
   const [minConfidence, setMinConfidence] = useState(String(sug.min_confidence))
   const [autoTag, setAutoTag] = useState(config.tagging.auto_tag_on_ingest)
 
-  const isLlm = backend === 'llm'
+  // Suggestions are always AI/LLM — the keyword backend is unreliable, so it is no
+  // longer selectable. Only the provider (local Ollama vs OpenAI-compatible) varies.
   const isOpenAI = provider === 'openai_compat'
   const keyIsSet = sug.api_key === SECRET_MASK
 
-  const testConnection = () =>
-    testOllama.mutate(baseUrl, {
-      onSuccess: (models) =>
-        toast.success(`Ollama is running — ${models.length} model${models.length === 1 ? '' : 's'} available`),
-      onError: (e) => toast.error(e.message),
-    })
+  // Feedback is shown inline next to the button (see below), not as a toast.
+  const testConnection = () => testOllama.mutate(baseUrl)
 
   const save = () => {
     // Blank key + already-set → echo the mask so the backend preserves it.
@@ -53,7 +49,7 @@ function TaggingForm({ config }: { config: AppConfig }) {
     const tagging: TaggingConfig = {
       auto_tag_on_ingest: autoTag,
       suggester: {
-        backend,
+        backend: 'llm',
         provider,
         model,
         base_url: baseUrl.trim() || null,
@@ -76,28 +72,20 @@ function TaggingForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          Choose the AI backend for tag suggestions. <strong>Ollama</strong> runs locally and needs
-          no key; <strong>OpenAI-compatible</strong> (OpenRouter, etc.) needs a base URL and key.
-          Saving applies live — the API and workers reload.
+          Tags are suggested by an AI model. <strong>Ollama</strong> runs locally and needs no key;
+          <strong> OpenAI-compatible</strong> (OpenRouter, etc.) needs a base URL and key. Saving
+          applies live — the API and workers reload.
         </p>
       </div>
 
       <Section title="AI tag suggester">
-        <Field label="Backend" htmlFor="cfg-backend">
-          <Select id="cfg-backend" value={backend} onChange={(e) => setBackend(e.target.value)}>
-            <option value="keyword">Keyword (local, no AI)</option>
-            <option value="llm">AI (LLM)</option>
+        <Field label="Provider" htmlFor="cfg-provider">
+          <Select id="cfg-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
+            <option value="ollama">Ollama (local)</option>
+            <option value="openai_compat">OpenAI-compatible (OpenRouter, …)</option>
           </Select>
         </Field>
-        {isLlm && (
-          <Field label="Provider" htmlFor="cfg-provider">
-            <Select id="cfg-provider" value={provider} onChange={(e) => setProvider(e.target.value)}>
-              <option value="ollama">Ollama (local)</option>
-              <option value="openai_compat">OpenAI-compatible (OpenRouter, …)</option>
-            </Select>
-          </Field>
-        )}
-        {isLlm && isOpenAI && (
+        {isOpenAI && (
           <Field label="Model" htmlFor="cfg-model">
             <Input
               id="cfg-model"
@@ -107,26 +95,24 @@ function TaggingForm({ config }: { config: AppConfig }) {
             />
           </Field>
         )}
-        {isLlm && !isOpenAI && (
+        {!isOpenAI && (
           <OllamaModelField model={model} setModel={setModel} baseUrl={baseUrl} />
         )}
-        {isLlm && (
-          <Field
-            label="Base URL"
-            htmlFor="cfg-base-url"
-            hint={isOpenAI ? 'e.g. https://openrouter.ai/api/v1' : 'blank uses the Ollama default'}
-          >
-            <Input
-              id="cfg-base-url"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder={
-                isOpenAI ? 'https://openrouter.ai/api/v1' : 'http://host.docker.internal:11434'
-              }
-            />
-          </Field>
-        )}
-        {isLlm && isOpenAI && (
+        <Field
+          label="Base URL"
+          htmlFor="cfg-base-url"
+          hint={isOpenAI ? 'e.g. https://openrouter.ai/api/v1' : 'blank uses the Ollama default'}
+        >
+          <Input
+            id="cfg-base-url"
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder={
+              isOpenAI ? 'https://openrouter.ai/api/v1' : 'http://host.docker.internal:11434'
+            }
+          />
+        </Field>
+        {isOpenAI && (
           <Field label="API key" htmlFor="cfg-api-key" hint="Write-only; never shown after saving.">
             <Input
               id="cfg-api-key"
@@ -137,14 +123,28 @@ function TaggingForm({ config }: { config: AppConfig }) {
             />
           </Field>
         )}
-        {isLlm && !isOpenAI && (
-          <div className="flex items-center gap-2 sm:col-span-2">
+        {!isOpenAI && (
+          <div className="flex items-center gap-3 sm:col-span-2">
             <Button variant="secondary" onClick={testConnection} loading={testOllama.isPending}>
               Test connection
             </Button>
-            <span className="text-[13px] text-ink-muted">
-              Check that Ollama is reachable at the base URL above.
-            </span>
+            {testOllama.isPending ? (
+              <span className="text-[13px] text-ink-muted">Checking…</span>
+            ) : testOllama.isSuccess ? (
+              <span className="flex items-center gap-1.5 text-[13px] text-ok">
+                <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+                Reachable — {testOllama.data.length} model{testOllama.data.length === 1 ? '' : 's'}
+              </span>
+            ) : testOllama.isError ? (
+              <span className="flex items-center gap-1.5 text-[13px] text-err">
+                <span className="h-1.5 w-1.5 rounded-full bg-err" />
+                {testOllama.error.message}
+              </span>
+            ) : (
+              <span className="text-[13px] text-ink-muted">
+                Check that Ollama is reachable at the base URL above.
+              </span>
+            )}
           </div>
         )}
       </Section>
