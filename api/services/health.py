@@ -5,14 +5,42 @@ process-uptime clock and performs a real vector-store liveness probe.
 """
 
 import asyncio
+import socket
 import time
+from functools import lru_cache
 from typing import Any
 
 from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
 from api.models.config import AppConfig
+from api.settings import settings
 
 _VERSION = "1.0.0"
 _START_TIME = time.time()
+
+
+@lru_cache(maxsize=1)
+def lan_ip() -> str:
+    """Return the host's LAN address, so the console can offer a reachable
+    address instead of telling the user to find one.
+
+    Prefers ``LAN_HOST`` (injected by the start script, which detects it on the
+    host — a bridge-networked container only ever sees its own bridge IP, so it
+    can't discover the host's LAN IP itself). When unset (bare-metal / host
+    networking), falls back to a socket probe: a UDP socket "connected" to a
+    public address sends no packets; the OS just resolves which local interface
+    would route there, and we read its address. Loopback when offline. Cached:
+    the address is stable for the process lifetime.
+    """
+    if settings.lan_host:
+        return settings.lan_host
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return str(s.getsockname()[0])
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 async def build_health(
@@ -47,4 +75,5 @@ async def build_health(
         "embedding_model": config.embedding.model if config else "unknown",
         "embedding_model_loaded": embedding_adapter is not None,
         "uptime_seconds": int(time.time() - _START_TIME),
+        "lan_ip": lan_ip(),
     }
