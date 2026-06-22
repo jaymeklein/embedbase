@@ -1,7 +1,10 @@
 # API runtime dependencies — server, DB, auth, messaging, lightweight search.
 # Heavy ML/ingestion deps live in requirements-ml.txt and are installed
 # separately (skipped in CI smoke tests via INSTALL_ML=false).
-fastapi>=0.111.0
+# Upper bound: FastAPI minors can change Starlette routing internals (0.137 +
+# Starlette 1.3 nests included routers, which silently broke the /reference spec).
+# Bump deliberately and re-test before raising the cap.
+fastapi>=0.136.0,<0.138.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0

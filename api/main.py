@@ -3,8 +3,11 @@ from pathlib import Path
 
 import structlog
 import yaml
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from api.db import init_db
@@ -31,6 +34,54 @@ from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 from api.settings import settings
 
 logger = structlog.get_logger()
+
+
+# REST endpoints the MCP/AI integration uses; the standalone reference exposes only
+# these, not the app's internal surface (config, health, graph, the MCP mount).
+_REFERENCE_PREFIXES = ("/search", "/workspaces", "/documents")
+
+
+def _is_reference_route(path: str) -> bool:
+    """True for the integration endpoints exposed in the standalone reference."""
+    return path.startswith(_REFERENCE_PREFIXES)
+
+
+def _register_reference(app: FastAPI) -> None:
+    """Serve a standalone Swagger reference of just the integration endpoints.
+
+    Distinct from ``/docs`` (the full app surface): an MCP consumer gets a focused
+    OpenAPI of the search + workspace/collection/document endpoints only.
+
+    Filtering happens on the generated spec's ``paths`` rather than on
+    ``app.routes``: since Starlette 1.3 ``include_router`` nests routers as
+    sub-mounts, so the top-level routes no longer carry the leaf path. Letting
+    ``get_openapi`` flatten everything first, then keeping the integration paths,
+    is independent of how routers are stored.
+    """
+
+    @app.get("/reference.json", include_in_schema=False)
+    def reference_spec() -> JSONResponse:
+        spec = get_openapi(
+            title="EmbedBase REST API reference",
+            version="1.0.0",
+            description="Integration endpoints for MCP/AI consumers.",
+            routes=app.routes,
+            servers=[{"url": "/api"}],
+        )
+        spec["paths"] = {
+            path: item
+            for path, item in spec.get("paths", {}).items()
+            if _is_reference_route(path)
+        }
+        return JSONResponse(spec)
+
+    @app.get("/reference", include_in_schema=False)
+    def reference_docs(request: Request):
+        # Prepend the proxy prefix (root_path) so the spec URL resolves through nginx.
+        root = request.scope.get("root_path", "").rstrip("/")
+        return get_swagger_ui_html(
+            openapi_url=f"{root}/reference.json", title="EmbedBase API reference"
+        )
 
 
 def _load_app_config() -> AppConfig:
@@ -113,6 +164,11 @@ def create_app() -> FastAPI:
         description="Local-first document embedding system with REST and MCP APIs",
         version="1.0.0",
         lifespan=lifespan,
+        # The console + MCP clients reach the API through the proxy's /api prefix
+        # (nginx strips it; the app still serves at root). root_path tells FastAPI the
+        # external prefix so Swagger UI (/api/docs), the spec (/api/openapi.json), and
+        # "Try it out" all resolve correctly — the AI/MCP can read the REST standards.
+        root_path="/api",
     )
 
     app.add_middleware(
@@ -132,6 +188,10 @@ def create_app() -> FastAPI:
     app.include_router(graph.router)
     app.include_router(search.router)
     app.include_router(config.router)
+
+    # Standalone OpenAPI reference of just the integration endpoints (after routers
+    # are registered so their routes exist to filter).
+    _register_reference(app)
 
     # MCP server (Delivery 4) — a mounted SSE ASGI sub-app, not a normal router.
     # Mount last so its /mcp prefix never shadows the REST routes above.
