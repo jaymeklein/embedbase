@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -53,6 +54,40 @@ def _load_app_config() -> AppConfig:
         raise ValueError(f"Invalid config.yaml:\n{exc}") from exc
 
 
+async def _warm_up_adapters(app_config: AppConfig) -> None:
+    """Load the embedding model + vector store off the startup path.
+
+    Constructing the sentence-transformers adapter pulls in ``torch`` and loads
+    the model, which takes tens of seconds. Doing it inline in :func:`lifespan`
+    (before ``yield``) held the ASGI server's startup open, so uvicorn would not
+    accept *any* request — not even ``/healthz`` — until the model was ready.
+    Run as a background task instead: the dependency getters return ``None`` and
+    ``/healthz`` reports ``embedding_model_loaded: false`` until each adapter is
+    set, so the API is reachable immediately and warms up in parallel. The blocking
+    loads run via :func:`asyncio.to_thread` so they never stall the event loop.
+    """
+    try:
+        from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
+        embedding_adapter = await asyncio.to_thread(resolve_embedding, app_config.embedding)
+        await asyncio.to_thread(lambda: embedding_adapter.dimensions)  # warm-up
+        set_embedding_adapter(embedding_adapter)
+        logger.info("embedding adapter ready", provider=app_config.embedding.provider,
+                    model=app_config.embedding.model, dimensions=embedding_adapter.dimensions)
+    except Exception as exc:
+        logger.error("embedding adapter unavailable", error=str(exc))
+
+    try:
+        from api.adapters.vector_store import get_vector_store as resolve_store
+        from api.dependencies import get_embedding_adapter as _get_emb
+        _emb = _get_emb()
+        dims = _emb.dimensions if _emb else 384
+        vector_store = await asyncio.to_thread(resolve_store, app_config.vector_store, dims)
+        set_vector_store(vector_store)
+        logger.info("vector store ready", backend=app_config.vector_store.backend)
+    except Exception as exc:
+        logger.error("vector store unavailable", error=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging(settings.log_level, settings.log_format)
@@ -68,30 +103,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("database migrations complete")
 
-    # 3. Resolve and warm up embedding adapter
-    try:
-        from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
-        embedding_adapter = resolve_embedding(app_config.embedding)
-        _ = embedding_adapter.dimensions  # triggers model load / warm-up
-        set_embedding_adapter(embedding_adapter)
-        logger.info("embedding adapter ready", provider=app_config.embedding.provider,
-                    model=app_config.embedding.model, dimensions=embedding_adapter.dimensions)
-    except Exception as exc:
-        logger.error("embedding adapter unavailable", error=str(exc))
+    # 3. Warm up the embedding + vector-store adapters in the background so the
+    #    slow model import doesn't block the server from serving (see helper).
+    warm_up = asyncio.create_task(_warm_up_adapters(app_config))
 
-    # 4. Resolve vector store adapter
-    try:
-        from api.adapters.vector_store import get_vector_store as resolve_store
-        from api.dependencies import get_embedding_adapter as _get_emb
-        _emb = _get_emb()
-        dims = _emb.dimensions if _emb else 384
-        vector_store = resolve_store(app_config.vector_store, dims)
-        set_vector_store(vector_store)
-        logger.info("vector store ready", backend=app_config.vector_store.backend)
-    except Exception as exc:
-        logger.error("vector store unavailable", error=str(exc))
-
-    # 5. Initialise Redis client (sync; used by BM25 search path)
+    # 4. Initialise Redis client (sync; fast; used by BM25 search path)
     try:
         import redis as redis_lib
 
@@ -104,6 +120,7 @@ async def lifespan(app: FastAPI):
     logger.info("EmbedBase API ready")
     yield
 
+    warm_up.cancel()
     logger.info("EmbedBase API shutting down")
 
 
