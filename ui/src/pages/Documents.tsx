@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AlertCircle, ChevronRight, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
@@ -17,7 +17,7 @@ import {
 import type { DocumentSummary } from '../api/types'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
-import { TagFilterBar } from '../components/tags/TagFilterBar'
+import { collectTags, TagFilterBar } from '../components/tags/TagFilterBar'
 import { TagPicker } from '../components/tags/TagPicker'
 import {
   Button,
@@ -56,6 +56,8 @@ export default function Documents() {
   const shown = data?.filter((doc) =>
     tagFilter.every((name) => doc.tags?.some((t) => t.name === name)),
   )
+  // Only offer tags present on this collection's documents, not the whole workspace.
+  const filterTags = useMemo(() => collectTags(data), [data])
 
   const handleFiles = async (files: File[]) => {
     const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
@@ -117,7 +119,7 @@ export default function Documents() {
 
       <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
 
-      <TagFilterBar wsId={wsId} selected={tagFilter} onToggle={toggleTag} />
+      <TagFilterBar tags={filterTags} selected={tagFilter} onToggle={toggleTag} />
 
       <DocumentList
         wsId={wsId}
@@ -226,6 +228,9 @@ function DocumentRow({
   const [suggestOpen, setSuggestOpen] = useState(false)
   const [applying, setApplying] = useState(false)
 
+  // Suggesting reads the document's indexed text, which only exists once ingestion
+  // finishes. While it's still being inserted there's nothing to tag, so block it.
+  const ingested = doc.status === 'done'
   const openSuggest = () => {
     setSuggestOpen(true)
     suggestMut.mutate()
@@ -312,7 +317,13 @@ function DocumentRow({
         <button
           type="button"
           onClick={openSuggest}
-          className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-ink-muted transition-colors hover:border-accent hover:text-ink"
+          disabled={!ingested}
+          title={ingested ? 'Suggest tags from this document' : 'Available once ingestion finishes'}
+          className={`inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs transition-colors ${
+            ingested
+              ? 'border-border text-ink-muted hover:border-accent hover:text-ink'
+              : 'cursor-not-allowed border-border/60 text-ink-faint opacity-60'
+          }`}
         >
           <Sparkles className="h-3 w-3" />
           Suggest

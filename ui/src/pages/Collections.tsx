@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from 'react'
+import { useMemo, useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Sparkles, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
@@ -16,7 +16,7 @@ import {
 import type { Collection, CollectionUpdate } from '../api/types'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
-import { TagFilterBar } from '../components/tags/TagFilterBar'
+import { collectTags, TagFilterBar } from '../components/tags/TagFilterBar'
 import { TagPicker } from '../components/tags/TagPicker'
 import {
   Badge,
@@ -71,6 +71,9 @@ export default function Collections() {
   const shown = data?.filter((col) =>
     tagFilter.every((name) => col.tags?.some((t) => t.name === name)),
   )
+  // Only offer tags that actually appear on this workspace's collections — not the
+  // whole (possibly dozens-strong) workspace tag vocabulary.
+  const filterTags = useMemo(() => collectTags(data), [data])
 
   const toast = useToast()
   const createMut = useCreateCollection(wsId)
@@ -146,7 +149,7 @@ export default function Collections() {
         </div>
       </header>
 
-      <TagFilterBar wsId={wsId} selected={tagFilter} onToggle={toggleTag} />
+      <TagFilterBar tags={filterTags} selected={tagFilter} onToggle={toggleTag} />
 
       <CollectionList
         wsId={wsId}
