@@ -1,12 +1,13 @@
 import type { GraphData, NodeData } from '@antv/g6'
 import type { GraphResponse } from '../api/types'
 
-/** File nodes — neutral slate, fixed small size. */
+/** Document (file) nodes — neutral slate, fixed; the larger of the two kinds. */
 const FILE_FILL = '#64748b'
-const FILE_SIZE = 14
-/** Tag hubs — size grows with heat; fill ramps cold(blue) → hot(red). */
-const TAG_MIN_SIZE = 18
-const TAG_SIZE_RANGE = 34
+const FILE_SIZE = 26
+/** Tag hubs — smaller than documents; size grows with heat, fill ramps cold→hot.
+ * The hottest tag (TAG_MIN_SIZE + TAG_SIZE_RANGE = 22) still reads smaller than a file. */
+const TAG_MIN_SIZE = 10
+const TAG_SIZE_RANGE = 12
 const COLD: [number, number, number] = [37, 99, 235] // #2563eb
 const HOT: [number, number, number] = [220, 38, 38] // #dc2626
 
