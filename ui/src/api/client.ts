@@ -204,6 +204,23 @@ export const api = {
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}`,
       { method: 'DELETE' },
     ),
+  /**
+   * Open a document's original file in a new tab. The fetch carries auth (which
+   * a bare `window.open` cannot), so the bytes come back as a blob; the browser
+   * renders viewable formats inline and hands everything else to the OS.
+   */
+  openDocument: async (docId: string) => {
+    const { headers } = buildHeaders(undefined)
+    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+    if (res.status === 401) {
+      notifyUnauthorized()
+      throw new ApiError(401, 'Master key rejected. Please unlock again.')
+    }
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+    const url = URL.createObjectURL(await res.blob())
+    window.open(url, '_blank', 'noopener')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  },
 
   // ── Graph ─────────────────────────────────────────────────────────────────
   graph: (wsId: string, colId: string | null, linkTypes: string[] = ['tags']) => {
