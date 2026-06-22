@@ -58,3 +58,45 @@ async def test_build_health_defaults_display_values_without_config():
     data = await build_health(None, None)
     assert data["vector_store"] == "unknown"
     assert data["embedding_provider"] == "unknown"
+
+
+async def test_build_health_includes_lan_ip(monkeypatch):
+    from api.services import health
+
+    health.lan_ip.cache_clear()
+    monkeypatch.setattr(health, "lan_ip", lambda: "192.168.1.50")
+    data = await build_health(None, None)
+    assert data["lan_ip"] == "192.168.1.50"
+
+
+def test_lan_ip_falls_back_to_loopback_when_offline(monkeypatch):
+    import socket as socket_mod
+
+    from api.services import health
+
+    monkeypatch.setattr(health.settings, "lan_host", "")
+    health.lan_ip.cache_clear()
+
+    class _DeadSocket:
+        def connect(self, _addr):
+            raise OSError("network unreachable")
+
+        def getsockname(self):  # pragma: no cover - never reached
+            return ("0.0.0.0", 0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(socket_mod, "socket", lambda *a, **k: _DeadSocket())
+    health.lan_ip.cache_clear()
+    assert health.lan_ip() == "127.0.0.1"
+    health.lan_ip.cache_clear()
+
+
+def test_lan_ip_prefers_lan_host_env(monkeypatch):
+    from api.services import health
+
+    monkeypatch.setattr(health.settings, "lan_host", "192.168.3.33")
+    health.lan_ip.cache_clear()
+    assert health.lan_ip() == "192.168.3.33"
+    health.lan_ip.cache_clear()
