@@ -1,0 +1,36 @@
+# Development overlay: run the console as a Vite dev server (hot-reload) instead
+# of the production nginx static build, so UI edits are live without a rebuild.
+#
+# Use it via the start scripts:
+#   ./scripts/up.sh dev          (or  .\scripts\up.ps1 dev)
+# or directly:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Production (nginx static build) stays the default `docker compose up`.
+services:
+  # Keep the production console out of the dev stack: it only starts under the
+  # "prod" profile, which this overlay never enables.
+  nginx:
+    profiles: ["prod"]
+
+  # Vite dev server. Source is bind-mounted, so edits hot-reload in the browser.
+  # Proxies /api and /mcp to the api service (see ui/vite.config.ts VITE_API_PROXY).
+  console:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+    environment:
+      - VITE_API_PROXY=http://api:8000
+    volumes:
+      - ./ui:/app
+      # Named volume so the container's Linux node_modules aren't shadowed by the
+      # host's (host install may be a different OS/arch).
+      - console_node_modules:/app/node_modules
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    depends_on:
+      - api
+    networks: [embedbase_net]
+
+volumes:
+  console_node_modules:
