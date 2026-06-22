@@ -8,7 +8,8 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
-from api.services.documents import delete_document, list_documents
+from api.services.auth import Principal
+from api.services.documents import delete_document, get_document_file, list_documents
 
 _NOW = "2024-01-01T00:00:00"
 _WS_ID = "ws_del_test"
@@ -117,6 +118,43 @@ async def test_list_documents_excludes_deleting_status(db_session, monkeypatch) 
 
     docs_after = await list_documents(db_session, _COL_ID)
     assert docs_after == []
+
+
+async def test_get_document_file_returns_path_and_name(db_session, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+    await _seed(db_session)
+    stored = tmp_path / _COL_ID / f"{_DOC_ID}.txt"
+    stored.parent.mkdir(parents=True)
+    stored.write_text("hello")
+
+    path, filename = await get_document_file(db_session, _DOC_ID, Principal(is_master=True))
+
+    assert path == stored
+    assert filename == "f.txt"
+
+
+async def test_get_document_file_missing_doc_raises_404(db_session) -> None:
+    await _seed(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await get_document_file(db_session, "doc_ghost", Principal(is_master=True))
+    assert exc.value.status_code == 404
+
+
+async def test_get_document_file_missing_on_disk_raises_404(db_session, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+    await _seed(db_session)  # row exists, but no file was written to disk
+    with pytest.raises(HTTPException) as exc:
+        await get_document_file(db_session, _DOC_ID, Principal(is_master=True))
+    assert exc.value.status_code == 404
+
+
+async def test_get_document_file_wrong_collection_raises_403(db_session, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+    await _seed(db_session)
+    principal = Principal(is_master=False, collection_id="col_other")
+    with pytest.raises(HTTPException) as exc:
+        await get_document_file(db_session, _DOC_ID, principal)
+    assert exc.value.status_code == 403
 
 
 async def test_delete_enqueue_failure_rolls_back_tombstone(db_session, monkeypatch) -> None:

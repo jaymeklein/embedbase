@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RotateCcw, Workflow, X } from 'lucide-react'
+import { ExternalLink, RotateCcw, Workflow, X } from 'lucide-react'
 import { useCollections, useGraph, useWorkspaces } from '../api/hooks'
+import { api } from '../api/client'
 import type { GraphNode, GraphResponse } from '../api/types'
 import { GraphCanvas } from '../components/graph/GraphCanvas'
-import { Badge, Button, Card, EmptyState, QueryError, Select, Skeleton } from '../components/ui'
+import { Badge, Button, Card, EmptyState, QueryError, Select, Skeleton, useToast } from '../components/ui'
 
 /** Tag-correlation graph: pick a scope, see files linked through their tags. */
 export default function Graph() {
@@ -168,6 +169,7 @@ function DetailPanel({
   nodeId: string
   onClose: () => void
 }) {
+  const toast = useToast()
   const node = useMemo(() => graph.nodes.find((n) => n.id === nodeId), [graph, nodeId])
   const neighbors = useMemo(() => neighborLabels(graph, nodeId), [graph, nodeId])
   if (!node) return null
@@ -183,6 +185,17 @@ function DetailPanel({
         </button>
       </div>
       <NodeFacts node={node} />
+      {node.kind === 'file' && (
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-3 w-full"
+          onClick={() => void api.openDocument(node.id).catch((e) => toast.error((e as Error).message))}
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          Open file
+        </Button>
+      )}
       {neighbors.length > 0 && (
         <div className="mt-3">
           <div className="mb-1.5 text-[11px] uppercase tracking-wide text-ink-faint">

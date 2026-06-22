@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, FileText, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
   useAssignDocumentTag,
@@ -14,6 +14,7 @@ import {
   useUploadDocument,
   useWorkspace,
 } from '../api/hooks'
+import { api } from '../api/client'
 import type { DocumentSummary } from '../api/types'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
@@ -280,6 +281,15 @@ function DocumentRow({
             </button>
           )}
           <StatusBadge status={doc.status ?? 'pending'} />
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Open ${doc.filename}`}
+            onClick={() => void api.openDocument(doc.document_id).catch((e) => onErr(e as Error))}
+            className="h-8 w-8 px-0"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"

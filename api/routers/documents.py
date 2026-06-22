@@ -7,6 +7,7 @@ This file is routing-only: path registration, dependency resolution, delegation.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
@@ -94,6 +95,17 @@ async def upload_document_flat(
     """Upload a document by collection ID without the nested workspace path."""
     await doc_svc.resolve_collection(db, collection_id)
     return await doc_svc.ingest(db, collection_id, file, principal)
+
+
+@router.get("/documents/{doc_id}/raw")
+async def get_document_raw(
+    doc_id: str,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> FileResponse:
+    """Serve a document's original bytes for inline viewing / opening."""
+    path, filename = await doc_svc.get_document_file(db, doc_id, principal)
+    return FileResponse(path, filename=filename, content_disposition_type="inline")
 
 
 @router.delete("/documents/{doc_id}", status_code=204)
