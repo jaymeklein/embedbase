@@ -236,6 +236,40 @@ async def delete_document(db: AsyncSession, col_id: str, doc_id: str) -> None:
         raise HTTPException(503, "Cleanup queue unavailable, please retry") from None
 
 
+async def get_document_file(
+    db: AsyncSession, doc_id: str, principal: Principal
+) -> tuple[Path, str]:
+    """Resolve a document's on-disk original file and its display filename.
+
+    Args:
+        db: Active async database session.
+        doc_id: Document to open.
+        principal: Caller; must be able to access the owning collection.
+
+    Returns:
+        ``(path, filename)`` — the stored file path and the original upload name.
+
+    Raises:
+        HTTPException: 404 if the document or its file is gone, 403 if the
+            principal cannot access the owning collection.
+    """
+    row = (
+        await db.execute(
+            select(doc_t.c.collection_id, doc_t.c.filename, doc_t.c.file_type).where(
+                doc_t.c.id == doc_id
+            )
+        )
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    if not principal.can_access(row.collection_id):
+        raise HTTPException(403, "API key not valid for this collection")
+    path = Path(settings.upload_dir) / row.collection_id / f"{doc_id}{row.file_type}"
+    if not path.is_file():
+        raise HTTPException(404, "Original file is no longer available")
+    return path, row.filename
+
+
 async def resolve_document_collection(db: AsyncSession, doc_id: str) -> str:
     """Return the collection_id that owns ``doc_id``, raising 404 if absent."""
     row = (
