@@ -112,6 +112,12 @@ class LLMTagSuggester:
 
     def suggest(self, text: str, existing_tags: list[str]) -> list[TagSuggestion]:
         """Prompt the model and return suggestions with confidence, minus existing tags."""
+        if not text.strip():
+            # Nothing to tag (e.g. clicked Suggest while the document is still
+            # ingesting, before its corpus exists). Prompting the model with empty
+            # text makes it reply with prose ("you didn't provide the text…") that
+            # the delimiter fallback would mistake for tags. Mirror KeywordTagSuggester.
+            return []
         raw = self._complete(_build_prompt(text, existing_tags, self._max_tags))
         existing = {t.strip().lower() for t in existing_tags}
         return [
