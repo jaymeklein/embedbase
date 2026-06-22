@@ -4,9 +4,18 @@
 # container can't discover the host's LAN IP, so we resolve it here and pass it
 # through as LAN_HOST. Any extra args are forwarded to docker compose.
 #
-# Usage:  ./scripts/up.sh           # foreground
-#         ./scripts/up.sh -d        # detached
+# Usage:  ./scripts/up.sh            # production console (nginx static build)
+#         ./scripts/up.sh -d         # detached
+#         ./scripts/up.sh dev        # development console (Vite hot-reload)
+#         ./scripts/up.sh dev -d     # dev, detached
 set -e
+
+# `dev` as the first arg swaps the production console for the Vite dev server.
+compose="-f docker-compose.yml"
+if [ "$1" = "dev" ]; then
+    compose="$compose -f docker-compose.dev.yml"
+    shift
+fi
 
 # Linux: ask the routing table which source IP reaches a public address.
 # macOS: `ip` is absent, so fall back to the primary en* interface.
@@ -20,4 +29,4 @@ else
     echo "Could not detect a LAN IP; the console will fall back to socket detection." >&2
 fi
 
-exec docker compose up "$@"
+exec docker compose $compose up "$@"
