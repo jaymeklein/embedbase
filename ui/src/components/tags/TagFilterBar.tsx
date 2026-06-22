@@ -1,25 +1,33 @@
-import { useTags } from '../../api/hooks'
+import type { TagRef } from '../../api/types'
 import { cn } from '../../lib/cn'
 
+/** Distinct tags (by id, name-sorted) present across a list of tagged items.
+ *  A filter should only offer tags that can actually match something on screen. */
+export function collectTags(items: { tags?: TagRef[] | null }[] | undefined): TagRef[] {
+  const byId = new Map<string, TagRef>()
+  for (const item of items ?? []) {
+    for (const tag of item.tags ?? []) byId.set(tag.id, tag)
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
 /**
- * Workspace tag toggles for filtering a list. Selecting tags ANDs them; the
- * parent applies the actual filter against each row's echoed `tags`. Renders
- * nothing when the workspace has no tags.
- *
- * ponytail: filters the already-fetched list client-side; switch to the
- * backend `?tag=` query if these lists ever grow past a single page.
+ * Tag toggles for filtering a list. Selecting tags ANDs them; the parent applies
+ * the actual filter against each row's echoed `tags`. Renders only the tags that
+ * appear on the listed items (via {@link collectTags}) — never the whole workspace
+ * vocabulary, which can run to dozens of auto-generated tags. Renders nothing when
+ * none are present.
  */
 export function TagFilterBar({
-  wsId,
+  tags,
   selected,
   onToggle,
 }: {
-  wsId: string
+  tags: TagRef[]
   selected: string[]
   onToggle: (name: string) => void
 }) {
-  const { data: tags } = useTags(wsId)
-  if (!tags || tags.length === 0) return null
+  if (tags.length === 0) return null
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
