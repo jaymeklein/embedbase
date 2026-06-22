@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     embedbase_secure_headers: bool = False
 
+    # The host's LAN IP/hostname (private network address, e.g. 192.168.x.x), as
+    # reachable by other devices. A bridge-networked container can't discover this
+    # itself, so the start script detects it on the host and injects it; empty
+    # means "fall back to socket detection".
+    lan_host: str = ""
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]

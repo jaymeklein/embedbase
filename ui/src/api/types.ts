@@ -274,6 +274,8 @@ export interface Health {
   embedding_model: string
   embedding_model_loaded: boolean
   uptime_seconds: number
+  /** The server's primary LAN IP, used to offer a reachable MCP address. */
+  lan_ip: string
 }
 
 // ── Config (mirrors api/models/config.py; secrets masked by GET) ─────────────

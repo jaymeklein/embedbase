@@ -1,22 +1,59 @@
+import { useState } from 'react'
 import { Lock } from 'lucide-react'
 import { useHealth } from '../api/hooks'
 import { useAuth } from '../auth/AuthContext'
 import { Button, Card, QueryError, Skeleton } from '../components/ui'
 import { ConfigPanel } from '../components/settings/ConfigPanel'
+import { McpPanel } from '../components/settings/McpPanel'
 import { cn } from '../lib/cn'
 import { formatUptime } from '../lib/format'
 
-/** Settings: read-only runtime config from `/healthz`, a deferred reload form, and Lock. */
+const TABS = [
+  { id: 'general', label: 'General' },
+  { id: 'mcp', label: 'MCP server' },
+] as const
+type TabId = (typeof TABS)[number]['id']
+
+/** Settings: a General tab (runtime, config, security) and an MCP server tab. */
 export default function Settings() {
+  const [tab, setTab] = useState<TabId>('general')
   return (
-    <div className="animate-fade-in space-y-8">
+    <div className="animate-fade-in space-y-6">
       <header>
         <h1 className="text-xl font-semibold tracking-tight text-ink">Settings</h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          Current runtime configuration and console security.
+          Runtime configuration, console security, and MCP access.
         </p>
       </header>
 
+      <div className="flex gap-1 border-b border-border" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={cn(
+              '-mb-px border-b-2 px-3 py-2 text-[13px] font-medium transition-colors',
+              tab === t.id
+                ? 'border-accent text-ink'
+                : 'border-transparent text-ink-muted hover:text-ink',
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'general' ? <GeneralTab /> : <McpPanel />}
+    </div>
+  )
+}
+
+/** The original settings content: runtime snapshot, config form, and security. */
+function GeneralTab() {
+  return (
+    <div className="space-y-8">
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-ink">Runtime</h2>
         <RuntimeSummary />
