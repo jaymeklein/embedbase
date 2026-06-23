@@ -210,16 +210,30 @@ export const api = {
    * renders viewable formats inline and hands everything else to the OS.
    */
   openDocument: async (docId: string) => {
+    // Open the tab synchronously inside the click gesture, then point it at the
+    // blob once fetched. Opening after the await would be blocked as a popup.
+    const win = window.open('', '_blank')
     const { headers } = buildHeaders(undefined)
-    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
-    if (res.status === 401) {
-      notifyUnauthorized()
-      throw new ApiError(401, 'Master key rejected. Please unlock again.')
+    try {
+      const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+      if (res.status === 401) {
+        notifyUnauthorized()
+        throw new ApiError(401, 'Master key rejected. Please unlock again.')
+      }
+      if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+      const url = URL.createObjectURL(await res.blob())
+      if (win) win.location.href = url
+      else {
+        // Popups fully blocked — fall back to a download (less restricted).
+        const a = document.createElement('a')
+        a.href = url
+        a.click()
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    } catch (e) {
+      win?.close()
+      throw e
     }
-    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
-    const url = URL.createObjectURL(await res.blob())
-    window.open(url, '_blank', 'noopener')
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   },
 
   // ── Graph ─────────────────────────────────────────────────────────────────
