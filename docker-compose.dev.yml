@@ -53,7 +53,13 @@ services:
   console:
     image: node:20-alpine
     working_dir: /app
-    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+    # The node_modules volume can get seeded with the host's (possibly Windows)
+    # node_modules via the ./ui bind mount, which breaks `npm install` with cross-
+    # platform leftovers. So on first boot, clear the volume's contents and do a
+    # clean install, marked done so later starts go straight to the dev server.
+    # ponytail: install runs once; `docker volume rm embedbase_console_node_modules`
+    # forces a clean reinstall if deps change.
+    command: sh -c "[ -f node_modules/.dev-ready ] || { find node_modules -mindepth 1 -delete 2>/dev/null; npm install --no-audit --no-fund && touch node_modules/.dev-ready; }; exec npm run dev -- --host 0.0.0.0"
     environment:
       - VITE_API_PROXY=http://api:8000
     volumes:
