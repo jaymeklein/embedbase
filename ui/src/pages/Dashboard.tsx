@@ -143,7 +143,7 @@ function WorkspaceGrid({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<FolderKanban className="h-6 w-6" />}
+        icon={<FolderKanban className="h-7 w-7" />}
         title="No workspaces yet"
         description="Create your first workspace to start organising collections."
         action={
@@ -172,14 +172,14 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control"
           style={{ backgroundColor: `${ws.color}1A`, color: ws.color }}
         >
-          <EntityIcon name={ws.icon} className="h-4 w-4" />
+          <EntityIcon name={ws.icon} className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-sm font-medium text-ink">{ws.name}</h3>
             {ws.collection_count !== undefined && (
               <Badge>
-                <Layers className="h-3 w-3" />
+                <Layers className="h-3.5 w-3.5" />
                 {ws.collection_count}
               </Badge>
             )}
@@ -226,7 +226,7 @@ function RecentActivityBody({
   if (documents.length === 0) {
     return (
       <EmptyState
-        icon={<FileClock className="h-6 w-6" />}
+        icon={<FileClock className="h-7 w-7" />}
         title="No recent activity"
         description="Document ingestion across your collections will show up here."
       />
@@ -241,7 +241,7 @@ function RecentActivityBody({
           className="flex items-center justify-between gap-3 p-4 transition-colors hover:bg-canvas"
         >
           <div className="flex min-w-0 items-center gap-3">
-            <FileText className="h-4 w-4 shrink-0 text-ink-faint" />
+            <FileText className="h-5 w-5 shrink-0 text-ink-faint" />
             <div className="min-w-0">
               <p className="truncate text-[13px] font-medium text-ink">{d.filename}</p>
               <p className="text-xs text-ink-faint">{timeAgo(d.updated_at)}</p>

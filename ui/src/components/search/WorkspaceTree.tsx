@@ -59,10 +59,10 @@ function WorkspaceNode({ ws, selected, onToggle, onToggleMany }: { ws: Workspace
           className="text-ink-faint transition-colors hover:text-ink"
           aria-label={open ? `Collapse ${ws.name}` : `Expand ${ws.name}`}
         >
-          {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
         <span style={{ color: ws.color }}>
-          <EntityIcon name={ws.icon} className="h-3.5 w-3.5" />
+          <EntityIcon name={ws.icon} className="h-4 w-4" />
         </span>
         <span className="flex-1 truncate text-[13px] font-medium text-ink">{ws.name}</span>
         {ids.length > 0 && (
@@ -113,7 +113,7 @@ function CollectionCheckbox({
         type="checkbox"
         checked={checked}
         onChange={onChange}
-        className="h-3.5 w-3.5 shrink-0 accent-accent"
+        className="h-4 w-4 shrink-0 accent-accent"
       />
       <span className="flex-1 truncate text-[13px] text-ink">{col.name}</span>
       {col.document_count !== undefined && (

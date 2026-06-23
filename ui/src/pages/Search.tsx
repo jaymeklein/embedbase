@@ -92,7 +92,7 @@ export default function Search() {
               placeholder="Search your collections…"
             />
             <Button onClick={run} loading={searchMut.isPending} disabled={!canSearch}>
-              <SearchIcon className="h-4 w-4" />
+              <SearchIcon className="h-5 w-5" />
               Search
             </Button>
           </div>
@@ -159,7 +159,7 @@ function Controls({
             type="checkbox"
             checked={hybrid}
             onChange={(e) => setHybrid(e.target.checked)}
-            className="h-3.5 w-3.5 accent-accent"
+            className="h-4 w-4 accent-accent"
           />
           <span className="text-ink-muted">Hybrid (BM25 + semantic)</span>
         </label>
