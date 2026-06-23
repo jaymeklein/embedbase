@@ -98,7 +98,7 @@ export default function Workspaces() {
           </p>
         </div>
         <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-4 w-4" />
+          <Plus className="h-5 w-5" />
           New workspace
         </Button>
       </header>
@@ -173,7 +173,7 @@ function WorkspaceList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<FolderKanban className="h-6 w-6" />}
+        icon={<FolderKanban className="h-7 w-7" />}
         title="No workspaces yet"
         description="Create your first workspace to start organising collections."
         action={<Button onClick={onCreate}>New workspace</Button>}
@@ -215,14 +215,14 @@ function WorkspaceCard({
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control"
           style={{ backgroundColor: `${ws.color}1A`, color: ws.color }}
         >
-          <EntityIcon name={ws.icon} className="h-4 w-4" />
+          <EntityIcon name={ws.icon} className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-sm font-medium text-ink">{ws.name}</h3>
             {ws.collection_count !== undefined && (
               <Badge>
-                <Layers className="h-3 w-3" />
+                <Layers className="h-3.5 w-3.5" />
                 {ws.collection_count}
               </Badge>
             )}
@@ -242,7 +242,7 @@ function WorkspaceCard({
             onClick={stop(() => onEdit(ws))}
             className="h-8 w-8 px-0"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -251,7 +251,7 @@ function WorkspaceCard({
             onClick={stop(() => onDelete(ws))}
             className="h-8 w-8 px-0 hover:text-err"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-5 w-5" />
           </Button>
         </div>
       </div>

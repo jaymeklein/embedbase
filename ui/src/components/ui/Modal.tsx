@@ -51,7 +51,7 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
               className="text-ink-faint transition-colors hover:text-ink"
               aria-label="Close"
             >
-              <X className="h-4 w-4" />
+              <X className="h-5 w-5" />
             </button>
           </div>
         )}

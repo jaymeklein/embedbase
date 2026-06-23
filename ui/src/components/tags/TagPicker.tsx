@@ -54,7 +54,7 @@ export function TagPicker({
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-ink-muted transition-colors hover:border-accent hover:text-ink"
       >
-        <Plus className="h-3 w-3" />
+        <Plus className="h-3.5 w-3.5" />
         Tag
       </button>
 
@@ -87,7 +87,7 @@ export function TagPicker({
                       />
                       <span className="truncate">{t.name}</span>
                     </span>
-                    {on && <Check className="h-3.5 w-3.5 shrink-0 text-accent" />}
+                    {on && <Check className="h-4 w-4 shrink-0 text-accent" />}
                   </button>
                 )
               })}
@@ -104,7 +104,7 @@ export function TagPicker({
                     'text-accent transition-colors hover:bg-canvas disabled:opacity-50',
                   )}
                 >
-                  <Plus className="h-3.5 w-3.5 shrink-0" />
+                  <Plus className="h-4 w-4 shrink-0" />
                   Create “{q}”
                 </button>
               )}

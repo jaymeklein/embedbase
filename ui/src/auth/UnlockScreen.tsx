@@ -69,7 +69,7 @@ export function UnlockScreen() {
       <div className="w-full max-w-sm animate-fade-in">
         <div className="mb-8 flex flex-col items-center text-center">
           <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-card bg-accent-weak text-accent">
-            <KeyRound className="h-5 w-5" />
+            <KeyRound className="h-6 w-6" />
           </div>
           <h1 className="text-lg font-semibold tracking-tight text-ink">EmbedBase</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
@@ -111,7 +111,7 @@ function ApiReachLine({ reach, health }: { reach: ApiReach; health: Health | nul
   if (reach === 'checking') {
     return (
       <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-ink-faint">
-        <Loader2 className="h-3 w-3 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking API…
       </p>
     )
@@ -119,14 +119,14 @@ function ApiReachLine({ reach, health }: { reach: ApiReach; health: Health | nul
   if (reach === 'down') {
     return (
       <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-err">
-        <ShieldAlert className="h-3 w-3" />
+        <ShieldAlert className="h-3.5 w-3.5" />
         API unreachable
       </p>
     )
   }
   return (
     <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-ink-faint">
-      <ShieldCheck className="h-3 w-3 text-ok" />
+      <ShieldCheck className="h-3.5 w-3.5 text-ok" />
       API ready · {health?.embedding_model ?? 'model'}
     </p>
   )

@@ -114,7 +114,7 @@ function MintedKeyPanel({ minted, onDone }: { minted: MintedApiKey; onDone: () =
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-2 rounded-control border border-warn/30 bg-warn/5 px-3 py-2.5">
-        <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
         <p className="text-[13px] text-ink-muted">
           Copy this key now — it is shown in full only once and cannot be retrieved again.
         </p>
@@ -124,7 +124,7 @@ function MintedKeyPanel({ minted, onDone }: { minted: MintedApiKey; onDone: () =
           {minted.raw_key}
         </code>
         <Button variant="secondary" onClick={copy} aria-label="Copy key">
-          {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
+          {copied ? <Check className="h-5 w-5 text-ok" /> : <Copy className="h-5 w-5" />}
           {copied ? 'Copied' : 'Copy'}
         </Button>
       </div>
@@ -168,7 +168,7 @@ function KeyList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<KeyRound className="h-6 w-6" />}
+        icon={<KeyRound className="h-7 w-7" />}
         title="No API keys"
         description="Mint a key above to let a client query this collection."
       />
@@ -228,7 +228,7 @@ function KeyRow({ apiKey, wsId, colId }: { apiKey: ApiKey; wsId: string; colId: 
           onClick={() => setConfirming(true)}
           className="h-7 w-7 shrink-0 px-0 hover:text-err"
         >
-          <Trash2 className="h-3.5 w-3.5" />
+          <Trash2 className="h-4 w-4" />
         </Button>
       )}
     </div>

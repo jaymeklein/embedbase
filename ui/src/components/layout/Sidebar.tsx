@@ -21,7 +21,7 @@ export function Sidebar() {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-surface">
       <div className="flex h-14 items-center gap-2 px-5">
-        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-[13px] font-bold text-white">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-accent text-[13px] font-bold text-white">
           e
         </div>
         <span className="font-semibold tracking-tight text-ink">EmbedBase</span>
@@ -41,7 +41,7 @@ export function Sidebar() {
               )
             }
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-5 w-5" />
             {label}
           </NavLink>
         ))}

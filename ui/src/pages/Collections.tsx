@@ -126,7 +126,7 @@ export default function Collections() {
         <Link to="/workspaces" className="hover:text-ink">
           Workspaces
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <span className="text-ink">{workspace.data?.name ?? '…'}</span>
       </nav>
 
@@ -139,11 +139,11 @@ export default function Collections() {
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
-            <TagsIcon className="h-4 w-4" />
+            <TagsIcon className="h-5 w-5" />
             Tags
           </Button>
           <Button onClick={() => setDialog({ kind: 'create' })}>
-            <Plus className="h-4 w-4" />
+            <Plus className="h-5 w-5" />
             New collection
           </Button>
         </div>
@@ -235,7 +235,7 @@ function CollectionList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<Layers className="h-6 w-6" />}
+        icon={<Layers className="h-7 w-7" />}
         title="No collections yet"
         description="Create a collection to start ingesting and searching documents."
         action={<Button onClick={onCreate}>New collection</Button>}
@@ -324,14 +324,14 @@ function CollectionCard({
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control"
           style={{ backgroundColor: `${col.color}1A`, color: col.color }}
         >
-          <EntityIcon name={col.icon} className="h-4 w-4" />
+          <EntityIcon name={col.icon} className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-sm font-medium text-ink">{col.name}</h3>
             {col.document_count !== undefined && (
               <Badge>
-                <FileText className="h-3 w-3" />
+                <FileText className="h-3.5 w-3.5" />
                 {col.document_count}
               </Badge>
             )}
@@ -365,7 +365,7 @@ function CollectionCard({
           onClick={openSuggest}
           className="inline-flex items-center gap-1 rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-ink-muted transition-colors hover:border-accent hover:text-ink"
         >
-          <Sparkles className="h-3 w-3" />
+          <Sparkles className="h-3.5 w-3.5" />
           Suggest
         </button>
         {/* Kept inside the stop-propagation wrapper: the modal is portaled, but
@@ -390,7 +390,7 @@ function CollectionCard({
             onClick={stop(() => onKeys(col))}
             className="h-8 w-8 px-0"
           >
-            <KeyRound className="h-4 w-4" />
+            <KeyRound className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -399,7 +399,7 @@ function CollectionCard({
             onClick={stop(() => onEdit(col))}
             className="h-8 w-8 px-0"
           >
-            <Pencil className="h-4 w-4" />
+            <Pencil className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -408,7 +408,7 @@ function CollectionCard({
             onClick={stop(() => onDelete(col))}
             className="h-8 w-8 px-0 hover:text-err"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-5 w-5" />
           </Button>
         </div>
       </div>

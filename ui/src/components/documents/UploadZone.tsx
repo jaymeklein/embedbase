@@ -59,9 +59,9 @@ export function UploadZone({
         }}
       />
       {busy ? (
-        <Spinner className="h-6 w-6 text-accent" />
+        <Spinner className="h-7 w-7 text-accent" />
       ) : (
-        <UploadCloud className="h-6 w-6 text-ink-faint" />
+        <UploadCloud className="h-7 w-7 text-ink-faint" />
       )}
       <p className="text-[13px] text-ink">
         {busy ? 'Uploading…' : 'Drag files here, or '}

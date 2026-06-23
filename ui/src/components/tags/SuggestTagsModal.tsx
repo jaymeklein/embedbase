@@ -62,14 +62,14 @@ export function SuggestTagsModal({
     >
       {loading ? (
         <div className="flex items-center gap-2 py-6 text-[13px] text-ink-muted">
-          <Spinner className="h-4 w-4" />
+          <Spinner className="h-5 w-5" />
           Analyzing content…
         </div>
       ) : error ? (
         <p className="py-4 text-[13px] text-err">{error}</p>
       ) : suggestions.length === 0 ? (
         <div className="flex items-center gap-2 py-6 text-[13px] text-ink-muted">
-          <Sparkles className="h-4 w-4 text-ink-faint" />
+          <Sparkles className="h-5 w-5 text-ink-faint" />
           No suggestions for this content.
         </div>
       ) : (
@@ -81,7 +81,7 @@ export function SuggestTagsModal({
                   type="checkbox"
                   checked={selected.has(s.name)}
                   onChange={() => toggle(s.name)}
-                  className="h-4 w-4 accent-accent"
+                  className="h-5 w-5 accent-accent"
                 />
                 <span className="flex-1 truncate text-[13px] text-ink">{s.name}</span>
                 <span className="text-xs tabular-nums text-ink-faint">
