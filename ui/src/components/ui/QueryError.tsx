@@ -13,7 +13,7 @@ export function QueryError({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 rounded-card border border-dashed border-err/40 bg-surface px-6 py-10 text-center">
-      <AlertTriangle className="h-6 w-6 text-err" />
+      <AlertTriangle className="h-7 w-7 text-err" />
       <h3 className="text-sm font-semibold text-ink">{title}</h3>
       {message && <p className="max-w-sm text-[13px] text-ink-muted">{message}</p>}
       {onRetry && (

@@ -103,11 +103,11 @@ export default function Documents() {
         <Link to="/workspaces" className="hover:text-ink">
           Workspaces
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
           {workspace.data?.name ?? '…'}
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <span className="text-ink">{collection.data?.name ?? '…'}</span>
       </nav>
 
@@ -187,7 +187,7 @@ function DocumentList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<FileText className="h-6 w-6" />}
+        icon={<FileText className="h-7 w-7" />}
         title="No documents yet"
         description="Drop files into the area above to start ingesting them."
       />
@@ -261,7 +261,7 @@ function DocumentRow({
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <FileText className="h-4 w-4 shrink-0 text-ink-faint" />
+          <FileText className="h-5 w-5 shrink-0 text-ink-faint" />
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
             <p className="text-xs text-ink-faint">
@@ -288,7 +288,7 @@ function DocumentRow({
             onClick={() => void api.openDocument(doc.document_id).catch((e) => onErr(e as Error))}
             className="h-8 w-8 px-0"
           >
-            <ExternalLink className="h-4 w-4" />
+            <ExternalLink className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -299,7 +299,7 @@ function DocumentRow({
             }
             className="h-8 w-8 px-0"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-5 w-5" />
           </Button>
           <Button
             variant="ghost"
@@ -308,7 +308,7 @@ function DocumentRow({
             onClick={() => onDelete(doc)}
             className="h-8 w-8 px-0 hover:text-err"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-5 w-5" />
           </Button>
         </div>
       </div>
@@ -346,7 +346,7 @@ function DocumentRow({
               : 'cursor-not-allowed border-border/60 text-ink-faint opacity-60'
           }`}
         >
-          <Sparkles className="h-3 w-3" />
+          <Sparkles className="h-3.5 w-3.5" />
           Suggest
         </button>
       </div>
@@ -376,7 +376,7 @@ function FailureReason({ wsId, colId, docId }: { wsId: string; colId: string; do
       : (data?.error ?? 'No error detail recorded.')
   return (
     <div className="mt-2 flex items-start gap-2 rounded-control border border-err/30 bg-err/5 px-3 py-2">
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-err" />
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-err" />
       <p className="break-words text-xs text-ink-muted">{text}</p>
     </div>
   )

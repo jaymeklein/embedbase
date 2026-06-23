@@ -116,7 +116,7 @@ function GraphBody({
   if (!data || data.nodes.length === 0) {
     return (
       <EmptyState
-        icon={<Workflow className="h-6 w-6" />}
+        icon={<Workflow className="h-7 w-7" />}
         title="Nothing to graph yet"
         description="Tag some documents in this scope and they'll appear here, linked through their shared tags."
       />
@@ -133,7 +133,7 @@ function GraphBody({
         className="absolute right-3 top-3"
         aria-label="Reset view"
       >
-        <RotateCcw className="h-3.5 w-3.5" />
+        <RotateCcw className="h-4 w-4" />
         Reset
       </Button>
       {selected && <DetailPanel graph={data} nodeId={selected} onClose={() => onSelect(null)} />}
@@ -181,7 +181,7 @@ function DetailPanel({
           <h3 className="truncate text-sm font-medium text-ink">{node.label}</h3>
         </div>
         <button onClick={onClose} className="text-ink-faint hover:text-ink" aria-label="Close">
-          <X className="h-4 w-4" />
+          <X className="h-5 w-5" />
         </button>
       </div>
       <NodeFacts node={node} />
@@ -193,7 +193,7 @@ function DetailPanel({
             className="flex-1"
             onClick={() => void api.openDocument(node.id).catch((e) => toast.error((e as Error).message))}
           >
-            <ExternalLink className="h-3.5 w-3.5" />
+            <ExternalLink className="h-4 w-4" />
             Open
           </Button>
           <Button
@@ -204,7 +204,7 @@ function DetailPanel({
               void api.downloadDocument(node.id, node.label).catch((e) => toast.error((e as Error).message))
             }
           >
-            <Download className="h-3.5 w-3.5" />
+            <Download className="h-4 w-4" />
             Download
           </Button>
         </div>

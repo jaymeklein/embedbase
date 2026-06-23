@@ -35,7 +35,7 @@ export function TagChip({
           aria-label={`Remove ${name}`}
           className="rounded-full transition-opacity hover:opacity-70"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5" />
         </button>
       )}
     </span>

@@ -70,9 +70,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               )}
             >
               {t.kind === 'success' ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" />
+                <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-ok" />
               ) : (
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-err" />
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-err" />
               )}
               <p className="flex-1 text-[13px] text-ink">{t.message}</p>
               <button
@@ -80,7 +80,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 className="text-ink-faint transition-colors hover:text-ink"
                 aria-label="Dismiss"
               >
-                <X className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </button>
             </div>
           ))}
