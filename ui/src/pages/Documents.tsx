@@ -261,7 +261,7 @@ function DocumentRow({
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <FileText className="h-5 w-5 shrink-0 text-ink-faint" />
+          <FileText className="h-7 w-7 shrink-0 text-ink-faint" />
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
             <p className="text-xs text-ink-faint">
@@ -286,9 +286,9 @@ function DocumentRow({
             size="sm"
             aria-label={`Open ${doc.filename}`}
             onClick={() => void api.openDocument(doc.document_id).catch((e) => onErr(e as Error))}
-            className="h-8 w-8 px-0"
+            className="h-10 w-10 px-0"
           >
-            <ExternalLink className="h-5 w-5" />
+            <ExternalLink className="h-7 w-7" />
           </Button>
           <Button
             variant="ghost"
@@ -297,18 +297,18 @@ function DocumentRow({
             onClick={() =>
               void api.downloadDocument(doc.document_id, doc.filename).catch((e) => onErr(e as Error))
             }
-            className="h-8 w-8 px-0"
+            className="h-10 w-10 px-0"
           >
-            <Download className="h-5 w-5" />
+            <Download className="h-7 w-7" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Delete ${doc.filename}`}
             onClick={() => onDelete(doc)}
-            className="h-8 w-8 px-0 hover:text-err"
+            className="h-10 w-10 px-0 hover:text-err"
           >
-            <Trash2 className="h-5 w-5" />
+            <Trash2 className="h-7 w-7" />
           </Button>
         </div>
       </div>
