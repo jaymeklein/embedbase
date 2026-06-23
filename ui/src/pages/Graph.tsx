@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ExternalLink, RotateCcw, Workflow, X } from 'lucide-react'
+import { Download, ExternalLink, RotateCcw, Workflow, X } from 'lucide-react'
 import { useCollections, useGraph, useWorkspaces } from '../api/hooks'
 import { api } from '../api/client'
 import type { GraphNode, GraphResponse } from '../api/types'
@@ -186,15 +186,28 @@ function DetailPanel({
       </div>
       <NodeFacts node={node} />
       {node.kind === 'file' && (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="mt-3 w-full"
-          onClick={() => void api.openDocument(node.id).catch((e) => toast.error((e as Error).message))}
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open file
-        </Button>
+        <div className="mt-3 flex gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            className="flex-1"
+            onClick={() => void api.openDocument(node.id).catch((e) => toast.error((e as Error).message))}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="flex-1"
+            onClick={() =>
+              void api.downloadDocument(node.id, node.label).catch((e) => toast.error((e as Error).message))
+            }
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download
+          </Button>
+        </div>
       )}
       {neighbors.length > 0 && (
         <div className="mt-3">
