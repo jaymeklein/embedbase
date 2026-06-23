@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
   useAssignDocumentTag,
@@ -289,6 +289,17 @@ function DocumentRow({
             className="h-8 w-8 px-0"
           >
             <ExternalLink className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Download ${doc.filename}`}
+            onClick={() =>
+              void api.downloadDocument(doc.document_id, doc.filename).catch((e) => onErr(e as Error))
+            }
+            className="h-8 w-8 px-0"
+          >
+            <Download className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"
