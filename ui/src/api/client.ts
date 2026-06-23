@@ -235,6 +235,25 @@ export const api = {
       throw e
     }
   },
+  /**
+   * Download a document's original file under its real filename. Uses an anchor
+   * with `download` (not a popup), so no synchronous-gesture trick is needed.
+   */
+  downloadDocument: async (docId: string, filename: string) => {
+    const { headers } = buildHeaders(undefined)
+    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+    if (res.status === 401) {
+      notifyUnauthorized()
+      throw new ApiError(401, 'Master key rejected. Please unlock again.')
+    }
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  },
 
   // ── Graph ─────────────────────────────────────────────────────────────────
   graph: (wsId: string, colId: string | null, linkTypes: string[] = ['tags']) => {
