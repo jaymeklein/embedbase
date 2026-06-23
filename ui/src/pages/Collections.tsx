@@ -321,10 +321,10 @@ function CollectionCard({
     >
       <div className="flex items-start gap-3">
         <span
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-control"
           style={{ backgroundColor: `${col.color}1A`, color: col.color }}
         >
-          <EntityIcon name={col.icon} className="h-5 w-5" />
+          <EntityIcon name={col.icon} className="h-8 w-8" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
@@ -388,27 +388,27 @@ function CollectionCard({
             size="sm"
             aria-label={`Manage keys for ${col.name}`}
             onClick={stop(() => onKeys(col))}
-            className="h-8 w-8 px-0"
+            className="h-10 w-10 px-0"
           >
-            <KeyRound className="h-5 w-5" />
+            <KeyRound className="h-7 w-7" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Edit ${col.name}`}
             onClick={stop(() => onEdit(col))}
-            className="h-8 w-8 px-0"
+            className="h-10 w-10 px-0"
           >
-            <Pencil className="h-5 w-5" />
+            <Pencil className="h-7 w-7" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Delete ${col.name}`}
             onClick={stop(() => onDelete(col))}
-            className="h-8 w-8 px-0 hover:text-err"
+            className="h-10 w-10 px-0 hover:text-err"
           >
-            <Trash2 className="h-5 w-5" />
+            <Trash2 className="h-7 w-7" />
           </Button>
         </div>
       </div>
