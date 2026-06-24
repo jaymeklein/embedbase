@@ -29,8 +29,9 @@ services:
       - MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
       - EMBEDBASE_SECURE_HEADERS=${EMBEDBASE_SECURE_HEADERS:-false}
-      # LAN IP the console advertises for other devices; set by scripts/up.* on the
-      # host (the container can't see the host's LAN address itself).
+      # LAN IP the console advertises for other devices. A bridge-networked
+      # container can't detect the host's LAN IP, so set LAN_HOST in .env to a
+      # fixed value; blank falls back to in-container socket detection.
       - LAN_HOST=${LAN_HOST:-}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - OLLAMA_CONCURRENCY=${OLLAMA_CONCURRENCY:-8}
