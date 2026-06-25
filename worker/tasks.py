@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-BM25_TTL_SECONDS = 60 * 60 * 24  # 24h — corpus is a rebuildable cache, not state.
 # task_time_limit in celery_app.py is 600s; allow a margin before reclaiming.
 STALE_PROCESSING_SECONDS = 660
 
@@ -262,7 +261,9 @@ def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk
     all chunks for a document without a separate index.
 
     The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
-    under ``bm25:{collection_id}:corpus`` with a 24h TTL, and a monotonically
+    under ``bm25:{collection_id}:corpus`` with no expiry — it mirrors the
+    permanent vector store and is only ever rewritten by ingestion/deletion, so a
+    TTL would silently break BM25 while the vectors live on. A monotonically
     increasing ``:version`` key lets the search side invalidate its local cache.
     """
     if not chunks:
@@ -274,7 +275,7 @@ def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk
     corpus: list[list[str]] = json.loads(raw) if raw else []
     corpus.extend([chunk.id, chunk.metadata.document_id, chunk.text] for chunk in chunks)
 
-    redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
+    redis_client.set(corpus_key, json.dumps(corpus))
     redis_client.incr(version_key)
 
 
@@ -291,7 +292,7 @@ def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, docu
     pruned = [entry for entry in corpus.data if entry[1] != document_id]
     if len(pruned) == len(corpus.data):
         return
-    redis_client.set(corpus_config.corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
+    redis_client.set(corpus_config.corpus_key, json.dumps(pruned))
     redis_client.incr(corpus_config.version_key)
 
 
