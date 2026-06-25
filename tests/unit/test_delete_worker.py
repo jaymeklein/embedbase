@@ -4,7 +4,6 @@ import json
 
 from api.models.redis import CorpusConfig
 from worker.tasks import (
-    BM25_TTL_SECONDS,
     _delete_from_bm25_index,
     delete_document,
 )
@@ -15,12 +14,14 @@ class FakeRedis:
 
     def __init__(self, initial: dict | None = None) -> None:
         self.store: dict[str, str] = dict(initial or {})
+        self.ttls: dict[str, int | None] = {}
 
     def get(self, key: str) -> str | None:
         return self.store.get(key)
 
     def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.store[key] = value
+        self.ttls[key] = ex
 
     def incr(self, key: str) -> int:
         self.store[key] = str(int(self.store.get(key, "0")) + 1)
@@ -72,14 +73,14 @@ def test_delete_from_bm25_index_increments_version() -> None:
     assert rds.store["bm25:col1:version"] == "6"
 
 
-def test_delete_from_bm25_index_preserves_ttl() -> None:
+def test_delete_from_bm25_index_rewrites_without_expiry() -> None:
     corpus = [["chunk1", "doc1", "text"]]
     rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
 
     _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
 
-    # corpus key was rewritten — verify it used the correct TTL constant
-    assert BM25_TTL_SECONDS == 60 * 60 * 24
+    # corpus key was rewritten with no TTL — it must not silently expire.
+    assert rds.ttls["bm25:col1:corpus"] is None
 
 
 # ---------------------------------------------------------------------------
