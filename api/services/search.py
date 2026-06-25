@@ -169,6 +169,47 @@ def _rank_by_bm25(results: list[SearchResult], scores: dict[str, float]) -> list
     )
 
 
+def _rank_candidates(
+    candidates: list[SearchResult],
+    query: str,
+    mode: SearchMode,
+    alpha: float,
+    collection_id: str,
+    redis_client: Any,
+) -> tuple[list[SearchResult], SearchMode]:
+    """Re-rank vector candidates per ``mode``; fall back when the BM25 corpus is empty.
+
+    SEMANTIC keeps the vector order. HYBRID fuses vector + BM25 via RRF. BM25 ranks
+    the candidates purely by BM25 score. Both BM25-using modes degrade to
+    SEMANTIC_ONLY (vector order) when the collection has no BM25 corpus yet.
+
+    Args:
+        candidates: Vector-store hits to re-rank.
+        query: Raw query text for BM25 tokenisation.
+        mode: Requested ranking mode.
+        alpha: Semantic weight for HYBRID RRF.
+        collection_id: Collection whose BM25 corpus to load.
+        redis_client: Sync Redis client backing the BM25 corpus.
+
+    Returns:
+        Tuple of (ranked results, effective mode).
+    """
+    if mode == SearchMode.SEMANTIC:
+        return candidates, SearchMode.SEMANTIC
+    bm25_scores = _get_bm25_scores(redis_client, CorpusConfig(collection_id), query)
+    if not bm25_scores:
+        return candidates, SearchMode.SEMANTIC_ONLY
+    if mode == SearchMode.BM25:
+        # ponytail: BM25-only re-ranks the vector candidate set (same recall ceiling
+        # as HYBRID). For unbounded keyword recall, rank the full Redis corpus instead.
+        ranked = _rank_by_bm25(candidates, bm25_scores)
+        for rank, result in enumerate(ranked, start=1):
+            result.rank = rank
+        return ranked, SearchMode.BM25
+    fused = _reciprocal_rank_fusion(candidates, _rank_by_bm25(candidates, bm25_scores), alpha)
+    return fused, SearchMode.HYBRID
+
+
 def search_collection(
     collection_id: str,
     query_vector: list[float],
@@ -176,7 +217,7 @@ def search_collection(
     top_k: int,
     *,
     fan_out: int = _DEFAULT_FAN_OUT,
-    hybrid: bool = True,
+    mode: SearchMode = SearchMode.HYBRID,
     alpha: float = 0.7,
     filters: SearchFilters | None = None,
     vector_store: VectorStoreAdapter,
@@ -190,7 +231,7 @@ def search_collection(
         query: Raw query text (used for BM25 tokenisation).
         top_k: Maximum number of results to return after filtering.
         fan_out: Multiplier for pre-filter candidate retrieval (clamped to 1–10).
-        hybrid: Whether to combine semantic and BM25 rankings via RRF.
+        mode: Ranking mode (HYBRID, SEMANTIC, or BM25).
         alpha: Semantic weight in RRF (passed through to score_semantic).
         filters: Optional metadata filters applied after ranking.
         vector_store: Adapter for vector similarity search.
@@ -202,17 +243,12 @@ def search_collection(
     candidates = vector_store.search(
         collection_id, query_vector, top_k * min(max(fan_out, 1), 10)
     )
-    mode = SearchMode.SEMANTIC if not hybrid else SearchMode.HYBRID
-    results: list[SearchResult] = candidates
-    if hybrid:
-        bm25_scores = _get_bm25_scores(redis_client, CorpusConfig(collection_id), query)
-        if bm25_scores:
-            results = _reciprocal_rank_fusion(candidates, _rank_by_bm25(candidates, bm25_scores), alpha)
-        else:
-            mode = SearchMode.SEMANTIC_ONLY
+    results, effective_mode = _rank_candidates(
+        candidates, query, mode, alpha, collection_id, redis_client
+    )
     retrieved = len(results)
     filtered = apply_filters(results, filters)
-    return filtered[:top_k], mode, retrieved, len(filtered)
+    return filtered[:top_k], effective_mode, retrieved, len(filtered)
 
 
 def _apply_provenance(
@@ -345,7 +381,7 @@ def _fan_out_one(
     """
     return search_collection(
         col_id, query_vector, request.query, request.top_k,
-        fan_out=fan_out, hybrid=request.hybrid, alpha=request.hybrid_alpha,
+        fan_out=fan_out, mode=request.resolved_mode(), alpha=request.hybrid_alpha,
         filters=request.filters, vector_store=vector_store, redis_client=redis_client,
     )
 
@@ -421,7 +457,7 @@ async def multi_collection_search(
         for cid in known
     ])
     per_collection, stats, fallback = _collect_results(known, list(outcomes), infos)
-    mode = fallback or (SearchMode.HYBRID if request.hybrid else SearchMode.SEMANTIC)
+    mode = fallback or request.resolved_mode()
     final = _merge_collections_rrf(per_collection)[: request.top_k]
     _update_top_k_stats(final, stats)
     total_ms = int((monotonic() - t0) * 1000)
