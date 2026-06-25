@@ -196,7 +196,7 @@ def test_search_collection_semantic_mode_returns_results():
     vs = FakeVectorStore(candidates)
     results, mode, retrieved, returned = search_collection(
         "col1", [0.1], "query", top_k=5,
-        hybrid=False, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
     )
     assert mode == SearchMode.SEMANTIC
     assert {r.chunk_id for r in results} == {"a", "b"}
@@ -207,7 +207,7 @@ def test_search_collection_respects_top_k():
     vs = FakeVectorStore(candidates)
     results, _, _, _ = search_collection(
         "col1", [0.1], "q", top_k=3,
-        hybrid=False, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
     )
     assert len(results) <= 3
 
@@ -217,7 +217,7 @@ def test_search_collection_fan_out_multiplies_candidate_request():
     vs = FakeVectorStore(candidates)
     search_collection(
         "col1", [0.1], "q", top_k=5, fan_out=4,
-        hybrid=False, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
     )
     assert vs.last_top_k == 20  # 5 * 4
 
@@ -227,7 +227,7 @@ def test_search_collection_fan_out_clamped_to_10():
     vs = FakeVectorStore(candidates)
     search_collection(
         "col1", [0.1], "q", top_k=5, fan_out=99,
-        hybrid=False, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
     )
     assert vs.last_top_k == 50  # 5 * 10
 
@@ -254,9 +254,46 @@ def test_search_collection_hybrid_mode_returns_hybrid():
     vs = FakeVectorStore(candidates)
     _, mode, _, _ = search_collection(
         "col1", [0.1], "machine learning", top_k=5,
-        hybrid=True, vector_store=vs, redis_client=rds,
+        mode=SearchMode.HYBRID, vector_store=vs, redis_client=rds,
     )
     assert mode == SearchMode.HYBRID
+
+
+def test_search_collection_bm25_mode_ranks_by_keyword():
+    from api.services import search as search_module
+
+    search_module._bm25_cache.clear()
+    # Vector order puts the keyword match last; BM25 must pull it to the top.
+    candidates = [
+        _result("c2", score=0.9),
+        _result("c3", score=0.8),
+        _result("c1", score=0.1),
+    ]
+    rds = _corpus_redis("col1", [
+        ["c1", "doc1", "machine learning python"],
+        ["c2", "doc2", "cooking recipes dinner"],
+        ["c3", "doc3", "gardening flowers plants"],
+    ])
+    vs = FakeVectorStore(candidates)
+    results, mode, _, _ = search_collection(
+        "col1", [0.1], "machine learning", top_k=5,
+        mode=SearchMode.BM25, vector_store=vs, redis_client=rds,
+    )
+    assert mode == SearchMode.BM25
+    assert results[0].chunk_id == "c1"
+    assert results[0].rank == 1
+
+
+def test_search_collection_bm25_falls_back_to_semantic_when_no_corpus():
+    from api.services import search as search_module
+
+    search_module._bm25_cache.clear()
+    vs = FakeVectorStore([_result("c1")])
+    _, mode, _, _ = search_collection(
+        "col_empty", [0.1], "q", top_k=5,
+        mode=SearchMode.BM25, vector_store=vs, redis_client=FakeRedis(),
+    )
+    assert mode == SearchMode.SEMANTIC_ONLY
 
 
 def test_search_collection_falls_back_to_semantic_when_no_bm25():
@@ -267,7 +304,7 @@ def test_search_collection_falls_back_to_semantic_when_no_bm25():
     vs = FakeVectorStore(candidates)
     _, mode, _, _ = search_collection(
         "col_empty", [0.1], "q", top_k=5,
-        hybrid=True, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.HYBRID, vector_store=vs, redis_client=FakeRedis(),
     )
     assert mode == SearchMode.SEMANTIC_ONLY
 
@@ -283,7 +320,7 @@ def test_search_collection_filters_applied_after_ranking():
     vs = FakeVectorStore(candidates)
     results, _, retrieved, returned = search_collection(
         "col1", [0.1], "q", top_k=5,
-        hybrid=False, filters=SearchFilters(language="python"),
+        mode=SearchMode.SEMANTIC, filters=SearchFilters(language="python"),
         vector_store=vs, redis_client=FakeRedis(),
     )
     assert retrieved == 2

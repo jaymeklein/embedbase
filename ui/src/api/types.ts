@@ -212,11 +212,13 @@ export interface SearchFilters {
   tags?: string[] | null
 }
 
+export type SearchModeRequest = 'hybrid' | 'semantic' | 'bm25'
+
 export interface SearchRequest {
   query: string
   collection_ids: string[]
   top_k?: number
-  hybrid?: boolean
+  mode?: SearchModeRequest
   hybrid_alpha?: number
   fan_out?: number | null
   filters?: SearchFilters | null
@@ -249,7 +251,7 @@ export interface CollectionStat {
   contributed_to_top_k: number
 }
 
-export type SearchMode = 'hybrid' | 'semantic' | 'semantic_only'
+export type SearchMode = 'hybrid' | 'semantic' | 'bm25' | 'semantic_only'
 
 export interface SearchResponse {
   results: SearchResult[]
