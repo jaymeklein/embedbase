@@ -7,6 +7,7 @@ import { ResultCard } from './ResultCard'
 const MODE: Record<SearchMode, { label: string; cls: string; hint: string }> = {
   hybrid: { label: 'Hybrid', cls: 'border-accent/40 text-accent', hint: 'BM25 + semantic' },
   semantic: { label: 'Semantic', cls: 'border-border text-ink-muted', hint: 'Vector similarity' },
+  bm25: { label: 'BM25', cls: 'border-border text-ink-muted', hint: 'Keyword ranking' },
   semantic_only: {
     label: 'Semantic only',
     cls: 'border-warn/40 text-warn',
