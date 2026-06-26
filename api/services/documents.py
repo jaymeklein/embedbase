@@ -146,6 +146,19 @@ async def ingest_local_path(
     )
 
 
+def _dedupe_by_document(mappings: Any) -> list[dict]:
+    """Keep one row per ``document_id`` — the first seen (latest job, per ordering)."""
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for mapping in mappings:
+        row = dict(mapping)
+        if row["document_id"] in seen:
+            continue
+        seen.add(row["document_id"])
+        rows.append(row)
+    return rows
+
+
 async def list_documents(
     db: AsyncSession,
     col_id: str,
@@ -181,11 +194,13 @@ async def list_documents(
         )
         .select_from(doc_t.outerjoin(job_t, job_t.c.document_id == doc_t.c.id))
         .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
-        .order_by(doc_t.c.created_at.desc())
+        # A document can have several job rows (re-ingest, retries); order so the
+        # latest job is first, then keep one row per document below.
+        .order_by(doc_t.c.created_at.desc(), job_t.c.created_at.desc())
     )
     if tags:
         stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
-    rows = [dict(r._mapping) for r in (await db.execute(stmt)).fetchall()]
+    rows = _dedupe_by_document(r._mapping for r in (await db.execute(stmt)).fetchall())
     rows = await attach_tags("document", rows, "document_id", db)
     if redis_client is not None:
         indexed = indexed_doc_ids(redis_client, col_id)
