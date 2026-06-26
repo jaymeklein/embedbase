@@ -44,7 +44,7 @@ async def index_collection(
     await doc_svc.resolve_collection(db, col_id, ws_id)
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
-    return await index_svc.enqueue_collection(db, col_id)
+    return index_svc.enqueue_collection(col_id)
 
 
 @router.post(
