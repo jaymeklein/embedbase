@@ -116,6 +116,23 @@ class ChromaAdapter:
             ))
         return out
 
+    def iter_document_chunks(
+        self, collection_id: str, document_id: str
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
+        client = self._get_client()
+        try:
+            col = client.get_collection(name=collection_id)
+        except Exception:
+            return []
+        data = col.get(where={"document_id": document_id}, include=["documents"])
+        ids = data.get("ids") or []
+        docs = data.get("documents") or []
+        return [
+            (cid, document_id, text or "")
+            for cid, text in zip(ids, docs, strict=False)
+        ]
+
     def set_document_tags(
         self, collection_id: str, document_id: str, tags: list[str]
     ) -> None:
