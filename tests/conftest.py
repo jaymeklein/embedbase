@@ -25,42 +25,39 @@ async def _noop_lifespan(app):
     yield
 
 
-class FakeRedis:
-    """In-process Redis stand-in for tests that exercise the BM25 read path.
-
-    The test app disables the real lifespan, so no Redis client is registered by
-    default. The ``fake_redis`` fixture installs one of these via
-    ``set_redis_client`` so endpoints that read the corpus work without an
-    external Redis (or a CI service container).
-    """
-
-    def __init__(self) -> None:
-        self.store: dict[str, str] = {}
-
-    def get(self, key: str) -> str | None:
-        return self.store.get(key)
-
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
-        self.store[key] = value
-
-    def incr(self, key: str) -> int:
-        self.store[key] = str(int(self.store.get(key, "0")) + 1)
-        return int(self.store[key])
-
-    def delete(self, *keys: str) -> None:
-        for key in keys:
-            self.store.pop(key, None)
+# Integration tests that exercise the Redis-backed path use db 15 so they never
+# touch real data on the default db 0; the fixture flushes it on entry and exit.
+_TEST_REDIS_DB = 15
 
 
 @pytest.fixture
-def fake_redis():
-    """Register an in-process fake Redis for the duration of a test."""
-    from api.dependencies import set_redis_client
+def redis_client():
+    """Register a **real** Redis client for the test, or skip if none is reachable.
 
-    client = FakeRedis()
+    Connects to ``REDIS_URL`` (default :data:`api.settings.settings.redis_url`)
+    on a dedicated test db. Never fakes — so the corpus read path behaves exactly
+    as in production. CI provides a Redis service container; locally, point
+    ``REDIS_URL`` at a running Redis (e.g. ``redis://localhost:6379/0``).
+    """
+    import redis as redis_lib
+
+    from api.dependencies import set_redis_client
+    from api.settings import settings
+
+    url = os.environ.get("REDIS_URL", settings.redis_url)
+    client = redis_lib.from_url(url, db=_TEST_REDIS_DB, decode_responses=True)
+    try:
+        client.ping()
+    except Exception:
+        pytest.skip(f"Redis not reachable at {url!r}; start one or set REDIS_URL")
+    client.flushdb()
     set_redis_client(client)
-    yield client
-    set_redis_client(None)
+    try:
+        yield client
+    finally:
+        client.flushdb()
+        set_redis_client(None)
+        client.close()
 
 
 @pytest.fixture(autouse=True)
