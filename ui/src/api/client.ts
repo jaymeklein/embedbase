@@ -15,6 +15,8 @@ import type {
   CollectionUpdate,
   DocumentSummary,
   Health,
+  IndexEnqueueResponse,
+  IndexStatusResponse,
   JobStatus,
   MintedApiKey,
   ApiKeyCreate,
@@ -168,6 +170,19 @@ export const api = {
   suggestDocumentTags: (wsId: string, colId: string, docId: string) =>
     request<SuggestTagsResponse>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/suggest-tags`,
+      { method: 'POST' },
+    ),
+
+  // ── BM25 indexing ─────────────────────────────────────────────────────────
+  indexStatus: () => request<IndexStatusResponse>('/indexing/status'),
+  indexDocument: (wsId: string, colId: string, docId: string) =>
+    request<IndexEnqueueResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/index`,
+      { method: 'POST' },
+    ),
+  indexCollection: (wsId: string, colId: string) =>
+    request<IndexEnqueueResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/index`,
       { method: 'POST' },
     ),
 
