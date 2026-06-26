@@ -92,24 +92,23 @@ export function useUpdateConfig() {
 /**
  * Whether auto-tagging will actually produce tags on ingest right now.
  *
- * Auto-tagging needs `auto_tag_on_ingest` on AND an LLM suggester backend that
- * is reachable. Returns `undefined` while config/probe is still resolving so
- * callers can avoid a false "no provider" warning before the answer is known.
+ * Needs `auto_tag_on_ingest` on AND the suggester provider reachable. Returns
+ * `undefined` while config/probe is still resolving so callers can avoid a false
+ * "no provider" warning before the answer is known.
  *
  * ponytail: only Ollama is probed for reachability (the one probe that exists);
- * openai_compat is treated as on when configured — add a probe if it gets one.
+ * other providers are treated as on when configured — add a probe if one exists.
  */
 export function useAutoTagAvailability(): { available: boolean | undefined } {
   const config = useConfig()
   const tagging = config.data?.tagging
-  const isLlm = tagging?.suggester.backend === 'llm'
   const autoTag = tagging?.auto_tag_on_ingest === true
   const provider = tagging?.suggester.provider
   const baseUrl = tagging?.suggester.base_url ?? ''
-  const ollama = useOllamaModels(baseUrl, Boolean(isLlm && autoTag && provider === 'ollama'))
+  const ollama = useOllamaModels(baseUrl, Boolean(autoTag && provider === 'ollama'))
 
   if (config.isLoading) return { available: undefined }
-  if (!autoTag || !isLlm) return { available: false }
+  if (!autoTag) return { available: false }
   if (provider === 'ollama') {
     if (ollama.isLoading) return { available: undefined }
     return { available: ollama.isSuccess }
