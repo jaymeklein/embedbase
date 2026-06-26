@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
   useAssignDocumentTag,
@@ -9,6 +9,7 @@ import {
   useDeleteDocument,
   useDocumentStatus,
   useDocuments,
+  useIndexDocument,
   useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
@@ -218,6 +219,7 @@ function DocumentRow({
   const failed = doc.status === 'failed'
 
   const toast = useToast()
+  const indexMut = useIndexDocument(wsId, colId)
   const assignMut = useAssignDocumentTag(wsId, colId)
   const unassignMut = useUnassignDocumentTag(wsId, colId)
   const createMut = useCreateTag(wsId)
@@ -281,6 +283,16 @@ function DocumentRow({
             </button>
           )}
           <StatusBadge status={doc.status ?? 'pending'} />
+          <IndexBadge
+            doc={doc}
+            busy={indexMut.isPending}
+            onIndex={() =>
+              indexMut.mutate(doc.document_id, {
+                onSuccess: () => toast.success(`Indexing “${doc.filename}”.`),
+                onError: onErr,
+              })
+            }
+          />
           <Button
             variant="ghost"
             size="sm"
@@ -363,6 +375,45 @@ function DocumentRow({
         <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
       )}
     </div>
+  )
+}
+
+/** BM25 index state for a document: a pill when indexed, a trigger when not.
+ *
+ * Only shown once ingestion is done — there are no chunks to index before that.
+ */
+function IndexBadge({
+  doc,
+  busy,
+  onIndex,
+}: {
+  doc: DocumentSummary
+  busy: boolean
+  onIndex: () => void
+}) {
+  if (doc.status !== 'done') return null
+  if (doc.indexed) {
+    return (
+      <span
+        title="Indexed for BM25 / keyword search"
+        className="inline-flex items-center gap-1 rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-xs font-medium text-ok"
+      >
+        <Database className="h-3.5 w-3.5" />
+        Indexed
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onIndex}
+      disabled={busy}
+      title="Not in the keyword index — click to index"
+      className="inline-flex items-center gap-1 rounded-full border border-dashed border-warn/40 px-2 py-0.5 text-xs font-medium text-warn transition-colors hover:bg-warn/5 disabled:opacity-60"
+    >
+      <DatabaseZap className="h-3.5 w-3.5" />
+      {busy ? 'Indexing…' : 'Index'}
+    </button>
   )
 }
 
