@@ -84,7 +84,7 @@ function CollectionRow({ wsId, col }: { wsId: string; col: CollectionIndexStatus
     indexMut.mutate(
       { wsId, colId: col.collection_id },
       {
-        onSuccess: (r) => toast.success(`Re-indexing ${r.enqueued} document(s).`),
+        onSuccess: () => toast.success('Re-index started.'),
         onError: (e) => toast.error(e.message),
       },
     )

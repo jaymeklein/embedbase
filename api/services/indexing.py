@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db import collections as col_t
@@ -111,17 +111,10 @@ async def get_index_overview(db: AsyncSession, redis_client: Any) -> IndexStatus
 def enqueue_document(document_id: str, collection_id: str) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of a single document."""
     task_id = task_producer.enqueue_index_document(document_id, collection_id)
-    return IndexEnqueueResponse(enqueued=1, task_id=task_id)
+    return IndexEnqueueResponse(task_id=task_id)
 
 
-async def enqueue_collection(db: AsyncSession, collection_id: str) -> IndexEnqueueResponse:
+def enqueue_collection(collection_id: str) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of every active document in a collection."""
-    count = (
-        await db.execute(
-            select(func.count()).where(
-                doc_t.c.collection_id == collection_id, doc_t.c.status.is_(None)
-            )
-        )
-    ).scalar_one()
     task_id = task_producer.enqueue_index_collection(collection_id)
-    return IndexEnqueueResponse(enqueued=int(count), task_id=task_id)
+    return IndexEnqueueResponse(task_id=task_id)

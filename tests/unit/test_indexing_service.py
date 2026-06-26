@@ -63,9 +63,15 @@ def test_enqueue_document(monkeypatch):
         "api.services.indexing.task_producer.enqueue_index_document",
         lambda doc, col: "task-1",
     )
-    resp = enqueue_document("doc1", "col1")
-    assert resp.enqueued == 1
-    assert resp.task_id == "task-1"
+    assert enqueue_document("doc1", "col1").task_id == "task-1"
+
+
+def test_enqueue_collection(monkeypatch):
+    monkeypatch.setattr(
+        "api.services.indexing.task_producer.enqueue_index_collection",
+        lambda col: "task-2",
+    )
+    assert enqueue_collection("col1").task_id == "task-2"
 
 
 # --- overview / collection enqueue (async, real sqlite) ---------------------
@@ -108,15 +114,3 @@ async def test_get_index_overview_groups_and_counts(db_session):
     assert cs.indexed == 1
     assert cs.unindexed == 2
     assert cs.failed == 1
-
-
-@pytest.mark.asyncio
-async def test_enqueue_collection_counts_active_docs(db_session, monkeypatch):
-    await _seed(db_session)
-    monkeypatch.setattr(
-        "api.services.indexing.task_producer.enqueue_index_collection",
-        lambda col: "task-2",
-    )
-    resp = await enqueue_collection(db_session, "col1")
-    assert resp.enqueued == 3
-    assert resp.task_id == "task-2"
