@@ -25,6 +25,44 @@ async def _noop_lifespan(app):
     yield
 
 
+class FakeRedis:
+    """In-process Redis stand-in for tests that exercise the BM25 read path.
+
+    The test app disables the real lifespan, so no Redis client is registered by
+    default. The ``fake_redis`` fixture installs one of these via
+    ``set_redis_client`` so endpoints that read the corpus work without an
+    external Redis (or a CI service container).
+    """
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self.store[key] = value
+
+    def incr(self, key: str) -> int:
+        self.store[key] = str(int(self.store.get(key, "0")) + 1)
+        return int(self.store[key])
+
+    def delete(self, *keys: str) -> None:
+        for key in keys:
+            self.store.pop(key, None)
+
+
+@pytest.fixture
+def fake_redis():
+    """Register an in-process fake Redis for the duration of a test."""
+    from api.dependencies import set_redis_client
+
+    client = FakeRedis()
+    set_redis_client(client)
+    yield client
+    set_redis_client(None)
+
+
 @pytest.fixture(autouse=True)
 def _neutralize_broker(monkeypatch):
     """Stop any test from reaching a real Celery broker.
