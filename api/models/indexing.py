@@ -24,5 +24,4 @@ class IndexStatusResponse(BaseModel):
 
 
 class IndexEnqueueResponse(BaseModel):
-    enqueued: int  # documents that will be (re)indexed
     task_id: str | None = None

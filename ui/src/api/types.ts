@@ -202,7 +202,6 @@ export interface IndexStatusResponse {
 }
 
 export interface IndexEnqueueResponse {
-  enqueued: number
   task_id: string | null
 }
 
