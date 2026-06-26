@@ -44,6 +44,7 @@ export const qk = {
     ['workspaces', wsId, 'tags', tagId, 'items'] as const,
   graph: (wsId: string, colId: string | null, linkTypes: string[]) =>
     ['workspaces', wsId, 'graph', colId, linkTypes] as const,
+  indexStatus: ['indexing', 'status'] as const,
 }
 
 export function useHealth() {
@@ -330,6 +331,58 @@ export function useDeleteDocument(wsId: string, colId: string) {
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+// ── BM25 indexing ───────────────────────────────────────────────────────────
+
+/** BM25 index coverage grouped by workspace → collection. */
+export function useIndexStatus() {
+  return useQuery({
+    queryKey: qk.indexStatus,
+    queryFn: () => api.indexStatus(),
+    retry: false,
+    // Poll while any document is mid-ingestion so freshly indexed docs surface.
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return false
+      const busy = data.workspaces.some((ws) =>
+        ws.collections.some((c) => c.pending > 0),
+      )
+      return busy ? 3000 : false
+    },
+  })
+}
+
+/** Invalidate the index overview plus a collection's document list after a (re)index. */
+function useInvalidateIndex(wsId?: string, colId?: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.indexStatus }),
+      ...(wsId && colId
+        ? [queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) })]
+        : []),
+    ])
+  }
+}
+
+/** Enqueue a BM25 (re)index of a single document. */
+export function useIndexDocument(wsId: string, colId: string) {
+  const invalidate = useInvalidateIndex(wsId, colId)
+  return useMutation({
+    mutationFn: (docId: string) => api.indexDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+/** Enqueue a BM25 (re)index of an entire collection. */
+export function useIndexCollection() {
+  const invalidate = useInvalidateIndex()
+  return useMutation({
+    mutationFn: ({ wsId, colId }: { wsId: string; colId: string }) =>
+      api.indexCollection(wsId, colId),
     onSuccess: invalidate,
   })
 }
