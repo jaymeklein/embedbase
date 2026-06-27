@@ -173,8 +173,36 @@ export interface DocumentSummary {
   created_at: string
   updated_at: string
   status: DocStatus | null
+  /** Whether the document's chunks are present in the BM25 corpus. */
+  indexed?: boolean
   /** Assigned tags, echoed by `GET .../documents`. */
   tags?: TagRef[]
+}
+
+// ── BM25 indexing ────────────────────────────────────────────────────────────
+
+export interface CollectionIndexStatus {
+  collection_id: string
+  collection_name: string
+  total: number
+  indexed: number
+  unindexed: number
+  pending: number
+  failed: number
+}
+
+export interface WorkspaceIndexStatus {
+  workspace_id: string
+  workspace_name: string
+  collections: CollectionIndexStatus[]
+}
+
+export interface IndexStatusResponse {
+  workspaces: WorkspaceIndexStatus[]
+}
+
+export interface IndexEnqueueResponse {
+  task_id: string | null
 }
 
 /** `POST .../documents` (202) — the accepted-for-ingestion acknowledgement. */

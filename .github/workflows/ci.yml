@@ -43,7 +43,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r api/requirements.txt pytest pytest-asyncio
+        run: pip install -r api/requirements.txt pytest pytest-asyncio fakeredis
       - name: Run integration tests
         run: pytest tests/integration/ -v
 

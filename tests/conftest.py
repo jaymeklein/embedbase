@@ -25,6 +25,28 @@ async def _noop_lifespan(app):
     yield
 
 
+@pytest.fixture
+def redis_client():
+    """Register an in-memory Redis for the test — the same idea as in-memory SQLite.
+
+    ``fakeredis`` is a real implementation of the Redis command set running in
+    process (get/set/incr all behave as production), so the BM25 corpus path is
+    exercised for real with no container, network, or ``REDIS_URL`` — identical
+    in CI and locally.
+    """
+    import fakeredis
+
+    from api.dependencies import set_redis_client
+
+    client = fakeredis.FakeStrictRedis(decode_responses=True)
+    set_redis_client(client)
+    try:
+        yield client
+    finally:
+        set_redis_client(None)
+        client.close()
+
+
 @pytest.fixture(autouse=True)
 def _neutralize_broker(monkeypatch):
     """Stop any test from reaching a real Celery broker.
