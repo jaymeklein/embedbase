@@ -188,6 +188,35 @@ class QdrantAdapter:
         with contextlib.suppress(Exception):
             client.delete_collection(collection_name=collection_id)
 
+    def iter_document_chunks(
+        self, collection_id: str, document_id: str
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(chunk_id, document_id, text)`` triples for a document's points."""
+        from qdrant_client import models
+
+        client = self._get_client()
+        if not client.collection_exists(collection_id):
+            return []
+        flt = models.Filter(
+            must=[models.FieldCondition(
+                key="document_id", match=models.MatchValue(value=document_id),
+            )]
+        )
+        out: list[tuple[str, str, str]] = []
+        offset: Any = None
+        while True:
+            records, offset = client.scroll(
+                collection_name=collection_id, scroll_filter=flt, limit=_SCROLL_PAGE,
+                offset=offset, with_payload=True, with_vectors=False,
+            )
+            for record in records:
+                payload = dict(record.payload or {})
+                cid = payload.get("chunk_id") or str(record.id)
+                out.append((cid, document_id, payload.get("text", "")))
+            if offset is None:
+                break
+        return out
+
     def list_documents(self, collection_id: str) -> list[DocumentSummary]:
         """Aggregate stored points into per-document summaries.
 
