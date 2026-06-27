@@ -4,6 +4,7 @@ import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLin
 import {
   useApplyTagsByName,
   useAssignDocumentTag,
+  useAutoTagAvailability,
   useCollection,
   useCreateTag,
   useDeleteDocument,
@@ -47,8 +48,10 @@ export default function Documents() {
   const toast = useToast()
   const uploadMut = useUploadDocument(wsId, colId)
   const deleteMut = useDeleteDocument(wsId, colId)
+  const { available: autoTagAvailable } = useAutoTagAvailability()
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
   const [tagFilter, setTagFilter] = useState<string[]>([])
 
   const toggleTag = (name: string) =>
@@ -61,17 +64,8 @@ export default function Documents() {
   // Only offer tags present on this collection's documents, not the whole workspace.
   const filterTags = useMemo(() => collectTags(data), [data])
 
-  const handleFiles = async (files: File[]) => {
-    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
-    const valid: File[] = []
-    for (const f of files) {
-      if (f.size > maxBytes) {
-        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
-      } else {
-        valid.push(f)
-      }
-    }
-    if (valid.length === 0) return
+  /** Stream the validated files to the server, reporting per-file failures. */
+  const uploadFiles = async (valid: File[]) => {
     setUploading(true)
     let ok = 0
     for (const f of valid) {
@@ -84,6 +78,31 @@ export default function Documents() {
     }
     setUploading(false)
     if (ok > 0) toast.success(`${ok} file${ok === 1 ? '' : 's'} queued for ingestion.`)
+  }
+
+  const handleFiles = (files: File[]) => {
+    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    const valid: File[] = []
+    for (const f of files) {
+      if (f.size > maxBytes) {
+        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
+      } else {
+        valid.push(f)
+      }
+    }
+    if (valid.length === 0) return
+    // No LLM tag provider on/reachable → confirm before ingesting untagged.
+    if (autoTagAvailable === false) {
+      setPendingFiles(valid)
+      return
+    }
+    void uploadFiles(valid)
+  }
+
+  const confirmUntaggedUpload = () => {
+    const files = pendingFiles
+    setPendingFiles(null)
+    if (files) void uploadFiles(files)
   }
 
   const handleDelete = () => {
@@ -132,6 +151,20 @@ export default function Documents() {
         message={error?.message}
         onRetry={() => void refetch()}
         onDelete={setDeleteTarget}
+      />
+
+      <ConfirmDialog
+        open={pendingFiles !== null}
+        title="No tag provider available"
+        message={`No LLM tag provider is on, so ${
+          pendingFiles?.length === 1 ? 'this file' : 'these files'
+        } won't get auto-generated tags. Ingest and index ${
+          pendingFiles?.length === 1 ? 'it' : 'them'
+        } anyway? You can tag manually or re-index later.`}
+        confirmLabel="Ingest anyway"
+        loading={uploading}
+        onConfirm={confirmUntaggedUpload}
+        onClose={() => setPendingFiles(null)}
       />
 
       <ConfirmDialog
