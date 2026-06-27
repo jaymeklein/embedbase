@@ -17,11 +17,10 @@ import {
   useWorkspace,
 } from '../api/hooks'
 import { api } from '../api/client'
-import type { DocStatus, DocumentSummary } from '../api/types'
+import type { DocumentSummary } from '../api/types'
 import {
   useIngestionProgress,
   type IngestionProgress,
-  type IngestPhase,
 } from '../realtime/useIngestionProgress'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
@@ -249,47 +248,29 @@ function DocumentList({
   )
 }
 
-/** Inline ingestion progress: a labelled bar for active rows — determinate when a
- *  page/batch total is known, indeterminate otherwise (Docling, uploading). */
-const PHASE_LABEL: Record<IngestPhase, string> = {
-  parsing: 'Parsing',
-  embedding: 'Embedding',
-  storing: 'Storing',
-  done: 'Done',
-  failed: 'Failed',
-}
-
-function IngestProgress({
-  status,
-  progress,
-}: {
-  status: DocStatus
-  progress?: IngestionProgress
-}) {
+/** Inline ingestion progress: an "Uploading" bar for active rows — determinate when a
+ *  page/batch total is known, an indeterminate shimmer otherwise (Docling, the pre-
+ *  `pct` parse start, and the client-side upload). The label stays "Uploading" for the
+ *  whole load so it reads as one status. */
+function IngestProgress({ progress }: { progress?: IngestionProgress }) {
   const pct = progress?.pct ?? null
-  const label =
-    status === 'uploading'
-      ? 'Uploading'
-      : status === 'pending'
-        ? 'Pending'
-        : progress
-          ? PHASE_LABEL[progress.phase]
-          : 'Processing'
   const determinate = pct != null
   return (
     <div className="flex w-40 shrink-0 flex-col gap-1">
       <div className="flex items-center justify-between text-xs text-ink-muted">
-        <span>{label}</span>
+        <span>Uploading</span>
         {determinate && <span className="tabular-nums">{pct}%</span>}
       </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-canvas">
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-canvas">
         {determinate ? (
           <div
             className="h-full rounded-full bg-accent transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
         ) : (
-          <div className="h-full w-full animate-pulse rounded-full bg-accent/50" />
+          // ponytail: reuse the Skeleton shimmer (a swept band, not a full bar) so the
+          // indeterminate state never flashes as 100% before the first real pct lands.
+          <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-accent/70 to-transparent" />
         )}
       </div>
     </div>
@@ -369,7 +350,7 @@ function DocumentRow({
               </p>
             </div>
           </div>
-          <IngestProgress status="uploading" progress={progress} />
+          <IngestProgress progress={progress} />
         </div>
       </div>
     )
@@ -399,7 +380,7 @@ function DocumentRow({
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (
-            <IngestProgress status={doc.status} progress={progress} />
+            <IngestProgress progress={progress} />
           ) : (
             <StatusBadge status={doc.status ?? 'pending'} />
           )}
