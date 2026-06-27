@@ -138,21 +138,14 @@ export function useCollections(wsId: string) {
   })
 }
 
-/** Ingestion states that are still in flight and warrant active polling. */
-const ACTIVE_STATUSES = ['pending', 'processing', 'deleting']
-
 export function useDocuments(wsId: string, colId: string) {
   return useQuery({
     queryKey: qk.documents(wsId, colId),
     queryFn: () => api.listDocuments(wsId, colId),
     enabled: Boolean(wsId) && Boolean(colId),
     retry: false,
-    // Poll only while a document is mid-ingestion; stop once all settle.
-    refetchInterval: (query) => {
-      const docs = query.state.data
-      if (!docs) return false
-      return docs.some((d) => d.status && ACTIVE_STATUSES.includes(d.status)) ? 2000 : false
-    },
+    // No polling: live ingestion status streams over WebSocket
+    // (useIngestionProgress), which invalidates this query when a doc settles.
   })
 }
 
@@ -347,10 +340,39 @@ function useInvalidateDocuments(wsId: string, colId: string): () => Promise<void
 }
 
 export function useUploadDocument(wsId: string, colId: string) {
+  const queryClient = useQueryClient()
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: (file: File) => api.uploadDocument(wsId, colId, file),
-    onSuccess: invalidate,
+    // Show an optimistic "uploading" row while the multipart POST is in flight —
+    // before the 202 returns a real document_id. onSettled's refetch then swaps it
+    // for the server's pending row (or onError removes it).
+    onMutate: async (file: File) => {
+      const key = qk.documents(wsId, colId)
+      await queryClient.cancelQueries({ queryKey: key })
+      const tempId = `upload-${file.name}-${Date.now()}`
+      const placeholder: DocumentSummary = {
+        document_id: tempId,
+        filename: file.name,
+        file_type: file.name.split('.').pop()?.toLowerCase() ?? '',
+        file_size: file.size,
+        chunk_count: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        status: 'uploading',
+      }
+      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
+        prev ? [placeholder, ...prev] : [placeholder],
+      )
+      return { tempId }
+    },
+    onError: (_err, _file, ctx) => {
+      const key = qk.documents(wsId, colId)
+      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
+        prev?.filter((d) => d.document_id !== ctx?.tempId),
+      )
+    },
+    onSettled: invalidate,
   })
 }
 
