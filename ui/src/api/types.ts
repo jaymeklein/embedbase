@@ -173,8 +173,36 @@ export interface DocumentSummary {
   created_at: string
   updated_at: string
   status: DocStatus | null
+  /** Whether the document's chunks are present in the BM25 corpus. */
+  indexed?: boolean
   /** Assigned tags, echoed by `GET .../documents`. */
   tags?: TagRef[]
+}
+
+// ── BM25 indexing ────────────────────────────────────────────────────────────
+
+export interface CollectionIndexStatus {
+  collection_id: string
+  collection_name: string
+  total: number
+  indexed: number
+  unindexed: number
+  pending: number
+  failed: number
+}
+
+export interface WorkspaceIndexStatus {
+  workspace_id: string
+  workspace_name: string
+  collections: CollectionIndexStatus[]
+}
+
+export interface IndexStatusResponse {
+  workspaces: WorkspaceIndexStatus[]
+}
+
+export interface IndexEnqueueResponse {
+  task_id: string | null
 }
 
 /** `POST .../documents` (202) — the accepted-for-ingestion acknowledgement. */
@@ -212,11 +240,13 @@ export interface SearchFilters {
   tags?: string[] | null
 }
 
+export type SearchModeRequest = 'hybrid' | 'semantic' | 'bm25'
+
 export interface SearchRequest {
   query: string
   collection_ids: string[]
   top_k?: number
-  hybrid?: boolean
+  mode?: SearchModeRequest
   hybrid_alpha?: number
   fan_out?: number | null
   filters?: SearchFilters | null
@@ -249,7 +279,7 @@ export interface CollectionStat {
   contributed_to_top_k: number
 }
 
-export type SearchMode = 'hybrid' | 'semantic' | 'semantic_only'
+export type SearchMode = 'hybrid' | 'semantic' | 'bm25' | 'semantic_only'
 
 export interface SearchResponse {
   results: SearchResult[]

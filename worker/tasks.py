@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-BM25_TTL_SECONDS = 60 * 60 * 24  # 24h — corpus is a rebuildable cache, not state.
 # task_time_limit in celery_app.py is 600s; allow a margin before reclaiming.
 STALE_PROCESSING_SECONDS = 660
 
@@ -262,7 +261,9 @@ def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk
     all chunks for a document without a separate index.
 
     The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
-    under ``bm25:{collection_id}:corpus`` with a 24h TTL, and a monotonically
+    under ``bm25:{collection_id}:corpus`` with no expiry — it mirrors the
+    permanent vector store and is only ever rewritten by ingestion/deletion, so a
+    TTL would silently break BM25 while the vectors live on. A monotonically
     increasing ``:version`` key lets the search side invalidate its local cache.
     """
     if not chunks:
@@ -274,7 +275,7 @@ def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk
     corpus: list[list[str]] = json.loads(raw) if raw else []
     corpus.extend([chunk.id, chunk.metadata.document_id, chunk.text] for chunk in chunks)
 
-    redis_client.set(corpus_key, json.dumps(corpus), ex=BM25_TTL_SECONDS)
+    redis_client.set(corpus_key, json.dumps(corpus))
     redis_client.incr(version_key)
 
 
@@ -291,8 +292,57 @@ def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, docu
     pruned = [entry for entry in corpus.data if entry[1] != document_id]
     if len(pruned) == len(corpus.data):
         return
-    redis_client.set(corpus_config.corpus_key, json.dumps(pruned), ex=BM25_TTL_SECONDS)
+    redis_client.set(corpus_config.corpus_key, json.dumps(pruned))
     redis_client.incr(corpus_config.version_key)
+
+
+def _reindex_document_bm25(
+    redis_client: Any, vector_store: Any, collection_id: str, document_id: str
+) -> int:
+    """Rebuild one document's BM25 corpus entries from the vector store.
+
+    Pulls the document's stored chunks (text already lives in the vector store),
+    replaces any existing corpus entries for that document, and bumps the version.
+    No re-parsing or re-embedding — recovers BM25 even when the source file is gone.
+
+    Returns the number of chunks indexed.
+    """
+    triples: list[tuple[str, str, str]] = vector_store.iter_document_chunks(
+        collection_id, document_id
+    )
+    cfg = CorpusConfig(collection_id)
+    kept = [e for e in get_corpus(redis_client, cfg).data if e[1] != document_id]
+    kept.extend(triples)
+    redis_client.set(cfg.corpus_key, json.dumps(kept))
+    redis_client.incr(cfg.version_key)
+    return len(triples)
+
+
+def _reindex_collection_bm25(
+    redis_client: Any, vector_store: Any, session_factory: Any, collection_id: str
+) -> int:
+    """Rebuild a collection's entire BM25 corpus from the vector store in one write.
+
+    Reads every active document's chunks and replaces the corpus wholesale, so
+    indexing many documents at once cannot race on the read-modify-write. Returns
+    the total number of chunks indexed.
+    """
+    with session_factory() as session:
+        doc_ids = [
+            row[0] for row in session.execute(
+                select(documents.c.id).where(
+                    documents.c.collection_id == collection_id,
+                    documents.c.status.is_(None),
+                )
+            ).fetchall()
+        ]
+    entries: list[tuple[str, str, str]] = []
+    for doc_id in doc_ids:
+        entries.extend(vector_store.iter_document_chunks(collection_id, doc_id))
+    cfg = CorpusConfig(collection_id)
+    redis_client.set(cfg.corpus_key, json.dumps(entries))
+    redis_client.incr(cfg.version_key)
+    return len(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -479,4 +529,40 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
         raise
     except Exception as exc:
         logger.error("delete task failed", document_id=document_id, error=str(exc))
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def index_document(self, document_id: str, collection_id: str) -> None:
+    """Rebuild one document's BM25 corpus entries from the vector store."""
+    try:
+        n = _reindex_document_bm25(_redis(), _vector_store(), collection_id, document_id)
+        logger.info("bm25 index complete", document_id=document_id, chunks=n)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:
+        logger.error("bm25 index failed", document_id=document_id, error=str(exc))
+        raise self.retry(exc=exc) from exc
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def index_collection(self, collection_id: str) -> None:
+    """Rebuild a whole collection's BM25 corpus from the vector store."""
+    try:
+        n = _reindex_collection_bm25(_redis(), _vector_store(), SessionLocal, collection_id)
+        logger.info("bm25 collection index complete", collection_id=collection_id, chunks=n)
+    except SoftTimeLimitExceeded:
+        raise
+    except Exception as exc:
+        logger.error("bm25 collection index failed", collection_id=collection_id, error=str(exc))
         raise self.retry(exc=exc) from exc
