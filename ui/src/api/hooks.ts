@@ -89,6 +89,33 @@ export function useUpdateConfig() {
   })
 }
 
+/**
+ * Whether auto-tagging will actually produce tags on ingest right now.
+ *
+ * Needs `auto_tag_on_ingest` on AND the suggester provider reachable. Returns
+ * `undefined` while config/probe is still resolving so callers can avoid a false
+ * "no provider" warning before the answer is known.
+ *
+ * ponytail: only Ollama is probed for reachability (the one probe that exists);
+ * other providers are treated as on when configured — add a probe if one exists.
+ */
+export function useAutoTagAvailability(): { available: boolean | undefined } {
+  const config = useConfig()
+  const tagging = config.data?.tagging
+  const autoTag = tagging?.auto_tag_on_ingest === true
+  const provider = tagging?.suggester.provider
+  const baseUrl = tagging?.suggester.base_url ?? ''
+  const ollama = useOllamaModels(baseUrl, Boolean(autoTag && provider === 'ollama'))
+
+  if (config.isLoading) return { available: undefined }
+  if (!autoTag) return { available: false }
+  if (provider === 'ollama') {
+    if (ollama.isLoading) return { available: undefined }
+    return { available: ollama.isSuccess }
+  }
+  return { available: true }
+}
+
 export function useWorkspaces() {
   return useQuery({ queryKey: qk.workspaces, queryFn: () => api.listWorkspaces(), retry: false })
 }
