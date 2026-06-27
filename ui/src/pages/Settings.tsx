@@ -124,7 +124,7 @@ function SecurityPanel() {
         </p>
       </div>
       <Button variant="secondary" onClick={lock}>
-        <Lock className="h-4 w-4" />
+        <Lock className="h-5 w-5" />
         Lock console
       </Button>
     </Card>

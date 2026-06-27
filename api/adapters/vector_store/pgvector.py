@@ -245,6 +245,24 @@ class PgvectorAdapter:
         """
         return self._runner.run(self._search(collection_id, vector, top_k))
 
+    async def _iter_document_chunks(
+        self, collection_id: str, document_id: str
+    ) -> list[tuple[str, str, str]]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, text FROM chunks "
+                "WHERE collection_id = $1 AND metadata->>'document_id' = $2",
+                collection_id, document_id,
+            )
+        return [(row["id"], document_id, row["text"] or "") for row in rows]
+
+    def iter_document_chunks(
+        self, collection_id: str, document_id: str
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
+        return self._runner.run(self._iter_document_chunks(collection_id, document_id))
+
     # -- tag sync -----------------------------------------------------------
 
     async def _set_document_tags(

@@ -15,6 +15,8 @@ import type {
   CollectionUpdate,
   DocumentSummary,
   Health,
+  IndexEnqueueResponse,
+  IndexStatusResponse,
   JobStatus,
   MintedApiKey,
   ApiKeyCreate,
@@ -171,6 +173,19 @@ export const api = {
       { method: 'POST' },
     ),
 
+  // ── BM25 indexing ─────────────────────────────────────────────────────────
+  indexStatus: () => request<IndexStatusResponse>('/indexing/status'),
+  indexDocument: (wsId: string, colId: string, docId: string) =>
+    request<IndexEnqueueResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/index`,
+      { method: 'POST' },
+    ),
+  indexCollection: (wsId: string, colId: string) =>
+    request<IndexEnqueueResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/index`,
+      { method: 'POST' },
+    ),
+
   // ── API keys ──────────────────────────────────────────────────────────────
   listApiKeys: (wsId: string, colId: string) =>
     request<ApiKey[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys`),
@@ -222,8 +237,10 @@ export const api = {
       }
       if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
       const url = URL.createObjectURL(await res.blob())
-      if (win) win.location.href = url
-      else {
+      if (win) {
+        win.opener = null // blob is same-origin; sever opener to restore noopener
+        win.location.href = url
+      } else {
         // Popups fully blocked — fall back to a download (less restricted).
         const a = document.createElement('a')
         a.href = url
@@ -234,6 +251,25 @@ export const api = {
       win?.close()
       throw e
     }
+  },
+  /**
+   * Download a document's original file under its real filename. Uses an anchor
+   * with `download` (not a popup), so no synchronous-gesture trick is needed.
+   */
+  downloadDocument: async (docId: string, filename: string) => {
+    const { headers } = buildHeaders(undefined)
+    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+    if (res.status === 401) {
+      notifyUnauthorized()
+      throw new ApiError(401, 'Master key rejected. Please unlock again.')
+    }
+    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   },
 
   // ── Graph ─────────────────────────────────────────────────────────────────

@@ -201,13 +201,13 @@ export function GraphCanvas({
         <RepelControl value={repel} onChange={setRepel} onCommit={applyRepel} />
         <div className="flex flex-col gap-1.5">
           <ControlButton label="Zoom in" onClick={() => void graphRef.current?.zoomBy(1.2, anim)}>
-            <ZoomIn className="h-5 w-5" />
+            <ZoomIn className="h-6 w-6" />
           </ControlButton>
           <ControlButton label="Zoom out" onClick={() => void graphRef.current?.zoomBy(0.8, anim)}>
-            <ZoomOut className="h-5 w-5" />
+            <ZoomOut className="h-6 w-6" />
           </ControlButton>
           <ControlButton label="Fit to view" onClick={() => void graphRef.current?.fitView()}>
-            <Maximize2 className="h-5 w-5" />
+            <Maximize2 className="h-6 w-6" />
           </ControlButton>
         </div>
       </div>
@@ -231,7 +231,7 @@ function RepelControl({
       className="flex items-center gap-2 rounded-control border border-border bg-surface/90 px-2.5 py-1.5 shadow-overlay backdrop-blur"
       title="Repel force — how strongly nodes push each other apart"
     >
-      <Magnet className="h-4 w-4 shrink-0 text-ink-muted" />
+      <Magnet className="h-5 w-5 shrink-0 text-ink-muted" />
       <input
         type="range"
         min={MIN_REPEL}

@@ -40,7 +40,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       )}
       {...props}
     >
-      {loading && <Spinner className="h-3.5 w-3.5" />}
+      {loading && <Spinner className="h-4 w-4" />}
       {children}
     </button>
   )

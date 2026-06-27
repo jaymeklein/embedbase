@@ -82,7 +82,7 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
       .catch(() => toast.error('Could not copy'))
   return (
     <Button variant="secondary" size="sm" onClick={copy}>
-      <Copy className="h-3.5 w-3.5" />
+      <Copy className="h-4 w-4" />
       {label}
     </Button>
   )
@@ -204,7 +204,7 @@ export function McpPanel() {
           <div className="flex gap-2">
             <CopyButton text={skill} label="Copy" />
             <Button variant="secondary" size="sm" onClick={downloadSkill}>
-              <Download className="h-3.5 w-3.5" />
+              <Download className="h-4 w-4" />
               Download
             </Button>
           </div>
@@ -239,7 +239,7 @@ export function McpPanel() {
           <div className="flex gap-2">
             <a href="/api/reference" target="_blank" rel="noreferrer">
               <Button variant="secondary" size="sm">
-                <ExternalLink className="h-3.5 w-3.5" />
+                <ExternalLink className="h-4 w-4" />
                 Swagger UI
               </Button>
             </a>

@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
   useAssignDocumentTag,
+  useAutoTagAvailability,
   useCollection,
   useCreateTag,
   useDeleteDocument,
   useDocumentStatus,
   useDocuments,
+  useIndexDocument,
   useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
@@ -46,8 +48,10 @@ export default function Documents() {
   const toast = useToast()
   const uploadMut = useUploadDocument(wsId, colId)
   const deleteMut = useDeleteDocument(wsId, colId)
+  const { available: autoTagAvailable } = useAutoTagAvailability()
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
   const [tagFilter, setTagFilter] = useState<string[]>([])
 
   const toggleTag = (name: string) =>
@@ -60,17 +64,8 @@ export default function Documents() {
   // Only offer tags present on this collection's documents, not the whole workspace.
   const filterTags = useMemo(() => collectTags(data), [data])
 
-  const handleFiles = async (files: File[]) => {
-    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
-    const valid: File[] = []
-    for (const f of files) {
-      if (f.size > maxBytes) {
-        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
-      } else {
-        valid.push(f)
-      }
-    }
-    if (valid.length === 0) return
+  /** Stream the validated files to the server, reporting per-file failures. */
+  const uploadFiles = async (valid: File[]) => {
     setUploading(true)
     let ok = 0
     for (const f of valid) {
@@ -83,6 +78,31 @@ export default function Documents() {
     }
     setUploading(false)
     if (ok > 0) toast.success(`${ok} file${ok === 1 ? '' : 's'} queued for ingestion.`)
+  }
+
+  const handleFiles = (files: File[]) => {
+    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    const valid: File[] = []
+    for (const f of files) {
+      if (f.size > maxBytes) {
+        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
+      } else {
+        valid.push(f)
+      }
+    }
+    if (valid.length === 0) return
+    // No LLM tag provider on/reachable → confirm before ingesting untagged.
+    if (autoTagAvailable === false) {
+      setPendingFiles(valid)
+      return
+    }
+    void uploadFiles(valid)
+  }
+
+  const confirmUntaggedUpload = () => {
+    const files = pendingFiles
+    setPendingFiles(null)
+    if (files) void uploadFiles(files)
   }
 
   const handleDelete = () => {
@@ -103,11 +123,11 @@ export default function Documents() {
         <Link to="/workspaces" className="hover:text-ink">
           Workspaces
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
           {workspace.data?.name ?? '…'}
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <span className="text-ink">{collection.data?.name ?? '…'}</span>
       </nav>
 
@@ -131,6 +151,20 @@ export default function Documents() {
         message={error?.message}
         onRetry={() => void refetch()}
         onDelete={setDeleteTarget}
+      />
+
+      <ConfirmDialog
+        open={pendingFiles !== null}
+        title="No tag provider available"
+        message={`No LLM tag provider is on, so ${
+          pendingFiles?.length === 1 ? 'this file' : 'these files'
+        } won't get auto-generated tags. Ingest and index ${
+          pendingFiles?.length === 1 ? 'it' : 'them'
+        } anyway? You can tag manually or re-index later.`}
+        confirmLabel="Ingest anyway"
+        loading={uploading}
+        onConfirm={confirmUntaggedUpload}
+        onClose={() => setPendingFiles(null)}
       />
 
       <ConfirmDialog
@@ -187,7 +221,7 @@ function DocumentList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<FileText className="h-6 w-6" />}
+        icon={<FileText className="h-7 w-7" />}
         title="No documents yet"
         description="Drop files into the area above to start ingesting them."
       />
@@ -218,6 +252,7 @@ function DocumentRow({
   const failed = doc.status === 'failed'
 
   const toast = useToast()
+  const indexMut = useIndexDocument(wsId, colId)
   const assignMut = useAssignDocumentTag(wsId, colId)
   const unassignMut = useUnassignDocumentTag(wsId, colId)
   const createMut = useCreateTag(wsId)
@@ -261,7 +296,7 @@ function DocumentRow({
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <FileText className="h-4 w-4 shrink-0 text-ink-faint" />
+          <FileText className="h-7 w-7 shrink-0 text-ink-faint" />
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
             <p className="text-xs text-ink-faint">
@@ -281,23 +316,44 @@ function DocumentRow({
             </button>
           )}
           <StatusBadge status={doc.status ?? 'pending'} />
+          <IndexBadge
+            doc={doc}
+            busy={indexMut.isPending}
+            onIndex={() =>
+              indexMut.mutate(doc.document_id, {
+                onSuccess: () => toast.success(`Indexing “${doc.filename}”.`),
+                onError: onErr,
+              })
+            }
+          />
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Open ${doc.filename}`}
             onClick={() => void api.openDocument(doc.document_id).catch((e) => onErr(e as Error))}
-            className="h-8 w-8 px-0"
+            className="h-10 w-10 px-0"
           >
-            <ExternalLink className="h-4 w-4" />
+            <ExternalLink className="h-7 w-7" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={`Download ${doc.filename}`}
+            onClick={() =>
+              void api.downloadDocument(doc.document_id, doc.filename).catch((e) => onErr(e as Error))
+            }
+            className="h-10 w-10 px-0"
+          >
+            <Download className="h-7 w-7" />
           </Button>
           <Button
             variant="ghost"
             size="sm"
             aria-label={`Delete ${doc.filename}`}
             onClick={() => onDelete(doc)}
-            className="h-8 w-8 px-0 hover:text-err"
+            className="h-10 w-10 px-0 hover:text-err"
           >
-            <Trash2 className="h-4 w-4" />
+            <Trash2 className="h-7 w-7" />
           </Button>
         </div>
       </div>
@@ -335,7 +391,7 @@ function DocumentRow({
               : 'cursor-not-allowed border-border/60 text-ink-faint opacity-60'
           }`}
         >
-          <Sparkles className="h-3 w-3" />
+          <Sparkles className="h-3.5 w-3.5" />
           Suggest
         </button>
       </div>
@@ -355,6 +411,45 @@ function DocumentRow({
   )
 }
 
+/** BM25 index state for a document: a pill when indexed, a trigger when not.
+ *
+ * Only shown once ingestion is done — there are no chunks to index before that.
+ */
+function IndexBadge({
+  doc,
+  busy,
+  onIndex,
+}: {
+  doc: DocumentSummary
+  busy: boolean
+  onIndex: () => void
+}) {
+  if (doc.status !== 'done') return null
+  if (doc.indexed) {
+    return (
+      <span
+        title="Indexed for BM25 / keyword search"
+        className="inline-flex items-center gap-1 rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-xs font-medium text-ok"
+      >
+        <Database className="h-3.5 w-3.5" />
+        Indexed
+      </span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={onIndex}
+      disabled={busy}
+      title="Not in the keyword index — click to index"
+      className="inline-flex items-center gap-1 rounded-full border border-dashed border-warn/40 px-2 py-0.5 text-xs font-medium text-warn transition-colors hover:bg-warn/5 disabled:opacity-60"
+    >
+      <DatabaseZap className="h-3.5 w-3.5" />
+      {busy ? 'Indexing…' : 'Index'}
+    </button>
+  )
+}
+
 /** Lazily fetch and show a failed document's ingestion error. */
 function FailureReason({ wsId, colId, docId }: { wsId: string; colId: string; docId: string }) {
   const { data, isLoading, isError } = useDocumentStatus(wsId, colId, docId, true)
@@ -365,7 +460,7 @@ function FailureReason({ wsId, colId, docId }: { wsId: string; colId: string; do
       : (data?.error ?? 'No error detail recorded.')
   return (
     <div className="mt-2 flex items-start gap-2 rounded-control border border-err/30 bg-err/5 px-3 py-2">
-      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-err" />
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-err" />
       <p className="break-words text-xs text-ink-muted">{text}</p>
     </div>
   )

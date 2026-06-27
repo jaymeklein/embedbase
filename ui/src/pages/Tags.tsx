@@ -107,11 +107,11 @@ export default function Tags() {
         <Link to="/workspaces" className="hover:text-ink">
           Workspaces
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
           {workspace.data?.name ?? '…'}
         </Link>
-        <ChevronRight className="h-3.5 w-3.5 text-ink-faint" />
+        <ChevronRight className="h-4 w-4 text-ink-faint" />
         <span className="text-ink">Tags</span>
       </nav>
 
@@ -123,7 +123,7 @@ export default function Tags() {
           </p>
         </div>
         <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-4 w-4" />
+          <Plus className="h-5 w-5" />
           New tag
         </Button>
       </header>
@@ -220,7 +220,7 @@ function TagList({
   if (!data || data.length === 0) {
     return (
       <EmptyState
-        icon={<TagsIcon className="h-6 w-6" />}
+        icon={<TagsIcon className="h-7 w-7" />}
         title="No tags yet"
         description="Create a tag to correlate and filter collections and documents."
         action={<Button onClick={onCreate}>New tag</Button>}
@@ -277,15 +277,15 @@ function TagRow({
         <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <Button variant="ghost" size="sm" aria-label={`Edit ${tag.name}`}
             onClick={() => onEdit(tag)} className="h-7 w-7 px-0">
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="sm" aria-label={`Merge ${tag.name}`}
             onClick={() => onMerge(tag)} className="h-7 w-7 px-0">
-            <GitMerge className="h-3.5 w-3.5" />
+            <GitMerge className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="sm" aria-label={`Delete ${tag.name}`}
             onClick={() => onDelete(tag)} className="h-7 w-7 px-0 hover:text-err">
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>

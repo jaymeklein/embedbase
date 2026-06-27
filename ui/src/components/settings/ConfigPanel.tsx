@@ -70,7 +70,7 @@ function TaggingForm({ config }: { config: AppConfig }) {
   return (
     <Card className="flex flex-col gap-5 p-5">
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
           Tags are suggested by an AI model. <strong>Ollama</strong> runs locally and needs no key;
           <strong> OpenAI-compatible</strong> (OpenRouter, etc.) needs a base URL and key. Saving
@@ -179,7 +179,7 @@ function TaggingForm({ config }: { config: AppConfig }) {
             type="checkbox"
             checked={autoTag}
             onChange={(e) => setAutoTag(e.target.checked)}
-            className="h-4 w-4 accent-accent"
+            className="h-5 w-5 accent-accent"
           />
           Auto-tag documents with the AI suggester at ingestion
         </label>
