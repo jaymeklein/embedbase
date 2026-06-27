@@ -17,7 +17,7 @@ export function Topbar({ children }: { children?: ReactNode }) {
         title="Lock the console and clear the master key"
         className="flex items-center gap-1.5 rounded-full border border-border bg-canvas px-3 py-1 text-xs font-medium text-ink-muted transition-colors hover:border-ink-faint hover:text-ink"
       >
-        <Lock className="h-3 w-3" />
+        <Lock className="h-3.5 w-3.5" />
         Lock
       </button>
     </header>

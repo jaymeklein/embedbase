@@ -107,6 +107,23 @@ async def test_delete_nonexistent_raises_404(db_session) -> None:
     assert exc.value.status_code == 404
 
 
+async def test_list_documents_dedupes_multiple_jobs(db_session) -> None:
+    """A document with several job rows (re-ingest/retries) appears once, latest job."""
+    await _seed(db_session)  # one job: status "done", created 2024-01-01
+    await db_session.execute(
+        insert(job_t).values(
+            job_id="job_newer", document_id=_DOC_ID, collection_id=_COL_ID,
+            filename="f.txt", file_type=".txt", status="failed",
+            created_at="2024-02-01T00:00:00", updated_at="2024-02-01T00:00:00",
+        )
+    )
+    await db_session.commit()
+
+    docs = await list_documents(db_session, _COL_ID)
+    assert len(docs) == 1
+    assert docs[0]["status"] == "failed"  # latest job wins
+
+
 async def test_list_documents_excludes_deleting_status(db_session, monkeypatch) -> None:
     monkeypatch.setattr("api.services.documents.task_producer.enqueue_delete", lambda *_: None)
     await _seed(db_session)

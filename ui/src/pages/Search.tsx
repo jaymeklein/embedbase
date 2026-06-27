@@ -1,10 +1,16 @@
 import { useState } from 'react'
 import { Search as SearchIcon } from 'lucide-react'
 import { useSearch } from '../api/hooks'
-import type { SearchFilters } from '../api/types'
+import type { SearchFilters, SearchModeRequest } from '../api/types'
 import { Button, Card, Field, Input } from '../components/ui'
 import { WorkspaceTree } from '../components/search/WorkspaceTree'
 import { SearchResults } from '../components/search/SearchResults'
+
+const MODES: { value: SearchModeRequest; label: string }[] = [
+  { value: 'hybrid', label: 'Hybrid' },
+  { value: 'semantic', label: 'Semantic' },
+  { value: 'bm25', label: 'BM25' },
+]
 
 interface FilterForm {
   language: string
@@ -31,7 +37,7 @@ export default function Search() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [query, setQuery] = useState('')
   const [topK, setTopK] = useState(5)
-  const [hybrid, setHybrid] = useState(true)
+  const [mode, setMode] = useState<SearchModeRequest>('hybrid')
   const [alpha, setAlpha] = useState(0.7)
   const [filters, setFilters] = useState<FilterForm>(EMPTY_FILTERS)
   const searchMut = useSearch()
@@ -56,7 +62,7 @@ export default function Search() {
       query: query.trim(),
       collection_ids: [...selected],
       top_k: topK,
-      hybrid,
+      mode,
       hybrid_alpha: alpha,
       filters: buildFilters(filters),
     })
@@ -92,7 +98,7 @@ export default function Search() {
               placeholder="Search your collections…"
             />
             <Button onClick={run} loading={searchMut.isPending} disabled={!canSearch}>
-              <SearchIcon className="h-4 w-4" />
+              <SearchIcon className="h-5 w-5" />
               Search
             </Button>
           </div>
@@ -103,8 +109,8 @@ export default function Search() {
           <Controls
             topK={topK}
             setTopK={setTopK}
-            hybrid={hybrid}
-            setHybrid={setHybrid}
+            mode={mode}
+            setMode={setMode}
             alpha={alpha}
             setAlpha={setAlpha}
             filters={filters}
@@ -118,12 +124,12 @@ export default function Search() {
   )
 }
 
-/** Query parameters: top_k, hybrid toggle, alpha, and optional metadata filters. */
+/** Query parameters: top_k, search mode, alpha, and optional metadata filters. */
 function Controls({
   topK,
   setTopK,
-  hybrid,
-  setHybrid,
+  mode,
+  setMode,
   alpha,
   setAlpha,
   filters,
@@ -131,8 +137,8 @@ function Controls({
 }: {
   topK: number
   setTopK: (n: number) => void
-  hybrid: boolean
-  setHybrid: (b: boolean) => void
+  mode: SearchModeRequest
+  setMode: (m: SearchModeRequest) => void
   alpha: number
   setAlpha: (n: number) => void
   filters: FilterForm
@@ -154,16 +160,28 @@ function Controls({
           />
           <span className="w-6 font-mono text-xs text-ink">{topK}</span>
         </label>
-        <label className="flex cursor-pointer items-center gap-2 text-[13px]">
-          <input
-            type="checkbox"
-            checked={hybrid}
-            onChange={(e) => setHybrid(e.target.checked)}
-            className="h-3.5 w-3.5 accent-accent"
-          />
-          <span className="text-ink-muted">Hybrid (BM25 + semantic)</span>
-        </label>
-        {hybrid && (
+        <div className="flex items-center gap-2 text-[13px]">
+          <span className="text-ink-muted">Mode</span>
+          <div className="inline-flex overflow-hidden rounded-md border border-border" role="group">
+            {MODES.map((m) => (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => setMode(m.value)}
+                aria-pressed={mode === m.value}
+                className={
+                  'px-3 py-1 text-xs font-medium transition-colors ' +
+                  (mode === m.value
+                    ? 'bg-accent text-white'
+                    : 'bg-transparent text-ink-muted hover:bg-canvas')
+                }
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {mode === 'hybrid' && (
           <label className="flex items-center gap-2 text-[13px]" title="0 = BM25 only, 1 = semantic only">
             <span className="text-ink-muted">Alpha</span>
             <input

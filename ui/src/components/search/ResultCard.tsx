@@ -41,7 +41,7 @@ export function ResultCard({ result, query }: { result: SearchResult; query: str
           <span className="font-mono text-xs text-ink-faint">#{result.rank}</span>
           {src && (
             <Badge>
-              <Layers className="h-3 w-3" />
+              <Layers className="h-3.5 w-3.5" />
               {src.collection_name}
             </Badge>
           )}
@@ -55,7 +55,7 @@ export function ResultCard({ result, query }: { result: SearchResult; query: str
       </div>
       {src && (src.filename || src.page_number !== null) && (
         <p className="mb-2 flex items-center gap-1.5 text-xs text-ink-muted">
-          <FileText className="h-3 w-3 shrink-0" />
+          <FileText className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{src.filename ?? 'Unknown file'}</span>
           {src.page_number !== null && <span className="text-ink-faint">· p.{src.page_number}</span>}
         </p>

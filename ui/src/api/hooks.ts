@@ -44,6 +44,7 @@ export const qk = {
     ['workspaces', wsId, 'tags', tagId, 'items'] as const,
   graph: (wsId: string, colId: string | null, linkTypes: string[]) =>
     ['workspaces', wsId, 'graph', colId, linkTypes] as const,
+  indexStatus: ['indexing', 'status'] as const,
 }
 
 export function useHealth() {
@@ -86,6 +87,33 @@ export function useUpdateConfig() {
     mutationFn: (body: AppConfig) => api.updateConfig(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.config }),
   })
+}
+
+/**
+ * Whether auto-tagging will actually produce tags on ingest right now.
+ *
+ * Needs `auto_tag_on_ingest` on AND the suggester provider reachable. Returns
+ * `undefined` while config/probe is still resolving so callers can avoid a false
+ * "no provider" warning before the answer is known.
+ *
+ * ponytail: only Ollama is probed for reachability (the one probe that exists);
+ * other providers are treated as on when configured — add a probe if one exists.
+ */
+export function useAutoTagAvailability(): { available: boolean | undefined } {
+  const config = useConfig()
+  const tagging = config.data?.tagging
+  const autoTag = tagging?.auto_tag_on_ingest === true
+  const provider = tagging?.suggester.provider
+  const baseUrl = tagging?.suggester.base_url ?? ''
+  const ollama = useOllamaModels(baseUrl, Boolean(autoTag && provider === 'ollama'))
+
+  if (config.isLoading) return { available: undefined }
+  if (!autoTag) return { available: false }
+  if (provider === 'ollama') {
+    if (ollama.isLoading) return { available: undefined }
+    return { available: ollama.isSuccess }
+  }
+  return { available: true }
 }
 
 export function useWorkspaces() {
@@ -330,6 +358,58 @@ export function useDeleteDocument(wsId: string, colId: string) {
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+// ── BM25 indexing ───────────────────────────────────────────────────────────
+
+/** BM25 index coverage grouped by workspace → collection. */
+export function useIndexStatus() {
+  return useQuery({
+    queryKey: qk.indexStatus,
+    queryFn: () => api.indexStatus(),
+    retry: false,
+    // Poll while any document is mid-ingestion so freshly indexed docs surface.
+    refetchInterval: (query) => {
+      const data = query.state.data
+      if (!data) return false
+      const busy = data.workspaces.some((ws) =>
+        ws.collections.some((c) => c.pending > 0),
+      )
+      return busy ? 3000 : false
+    },
+  })
+}
+
+/** Invalidate the index overview plus a collection's document list after a (re)index. */
+function useInvalidateIndex(wsId?: string, colId?: string): () => Promise<void> {
+  const queryClient = useQueryClient()
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.indexStatus }),
+      ...(wsId && colId
+        ? [queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) })]
+        : []),
+    ])
+  }
+}
+
+/** Enqueue a BM25 (re)index of a single document. */
+export function useIndexDocument(wsId: string, colId: string) {
+  const invalidate = useInvalidateIndex(wsId, colId)
+  return useMutation({
+    mutationFn: (docId: string) => api.indexDocument(wsId, colId, docId),
+    onSuccess: invalidate,
+  })
+}
+
+/** Enqueue a BM25 (re)index of an entire collection. */
+export function useIndexCollection() {
+  const invalidate = useInvalidateIndex()
+  return useMutation({
+    mutationFn: ({ wsId, colId }: { wsId: string; colId: string }) =>
+      api.indexCollection(wsId, colId),
     onSuccess: invalidate,
   })
 }

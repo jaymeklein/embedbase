@@ -9,6 +9,7 @@ import Tags from './pages/Tags'
 import Documents from './pages/Documents'
 import Graph from './pages/Graph'
 import Search from './pages/Search'
+import Indexing from './pages/Indexing'
 import Settings from './pages/Settings'
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/workspaces/:wsId/collections/:colId" element={<Documents />} />
         <Route path="/graph" element={<Graph />} />
         <Route path="/search" element={<Search />} />
+        <Route path="/indexing" element={<Indexing />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
