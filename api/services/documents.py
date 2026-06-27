@@ -146,8 +146,24 @@ async def ingest_local_path(
     )
 
 
+def _dedupe_by_document(mappings: Any) -> list[dict]:
+    """Keep one row per ``document_id`` — the first seen (latest job, per ordering)."""
+    seen: set[str] = set()
+    rows: list[dict] = []
+    for mapping in mappings:
+        row = dict(mapping)
+        if row["document_id"] in seen:
+            continue
+        seen.add(row["document_id"])
+        rows.append(row)
+    return rows
+
+
 async def list_documents(
-    db: AsyncSession, col_id: str, tags: list[str] | None = None
+    db: AsyncSession,
+    col_id: str,
+    tags: list[str] | None = None,
+    redis_client: Any = None,
 ) -> list[dict]:
     """Return active documents in ``col_id`` with status, tags, and optional filter.
 
@@ -156,10 +172,13 @@ async def list_documents(
         col_id: Collection whose documents to list.
         tags: Optional tag names; only documents carrying *all* of them are
             returned (AND filter).
+        redis_client: When provided, each row gets an ``indexed`` bool reflecting
+            BM25 corpus membership (omitted entirely when not provided).
 
     Returns:
         One mapping per active document including its ``status`` and ``tags``.
     """
+    from api.services.indexing import indexed_doc_ids
     from api.services.tags import attach_tags, matching_entity_ids
 
     stmt = (
@@ -175,12 +194,19 @@ async def list_documents(
         )
         .select_from(doc_t.outerjoin(job_t, job_t.c.document_id == doc_t.c.id))
         .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
-        .order_by(doc_t.c.created_at.desc())
+        # A document can have several job rows (re-ingest, retries); order so the
+        # latest job is first, then keep one row per document below.
+        .order_by(doc_t.c.created_at.desc(), job_t.c.created_at.desc())
     )
     if tags:
         stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
-    rows = [dict(r._mapping) for r in (await db.execute(stmt)).fetchall()]
-    return await attach_tags("document", rows, "document_id", db)
+    rows = _dedupe_by_document(r._mapping for r in (await db.execute(stmt)).fetchall())
+    rows = await attach_tags("document", rows, "document_id", db)
+    if redis_client is not None:
+        indexed = indexed_doc_ids(redis_client, col_id)
+        for row in rows:
+            row["indexed"] = row["document_id"] in indexed
+    return rows
 
 
 async def get_document_status(

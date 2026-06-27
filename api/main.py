@@ -26,6 +26,7 @@ from api.routers import (
     documents,
     graph,
     health,
+    indexing,
     mcp,
     search,
     tags,
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(tags.router)
     app.include_router(graph.router)
     app.include_router(search.router)
+    app.include_router(indexing.router)
     app.include_router(config.router)
 
     # Standalone OpenAPI reference of just the integration endpoints (after routers

@@ -50,6 +50,18 @@ class VectorStoreAdapter(Protocol):
         filters: dict | None = None,
     ) -> list[SearchResult]: ...
 
+    def iter_document_chunks(
+        self, collection_id: str, document_id: str
+    ) -> list[tuple[str, str, str]]:
+        """Return ``(chunk_id, document_id, text)`` triples for a document's chunks.
+
+        Lets the BM25 corpus be rebuilt straight from the vector store (which
+        already stores the chunk text) without re-parsing or re-embedding the
+        original file. Returns an empty list when the collection or document is
+        absent.
+        """
+        ...
+
     def delete_document(self, collection_id: str, document_id: str) -> None: ...
 
     def delete_collection(self, collection_id: str) -> None: ...
