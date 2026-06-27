@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Run the GitHub Actions CI pipeline locally before opening a PR.
 #
-# Mirrors .github/workflows/ci.yml in three stages:
-#   1. Lint + type check  (ruff + mypy, run on your machine — fast)
-#   2. Unit tests         (inside python:3.12 so deps/version match CI)
-#   3. Docker build smoke  (buildx build of the api + worker images)
+# Mirrors .github/workflows/ci.yml in four stages:
+#   1. Lint + type check   (ruff + mypy, run on your machine — fast)
+#   2. Unit tests          (inside python:3.12 so deps/version match CI)
+#   3. Integration tests   (python:3.12; Redis is in-memory via fakeredis, the
+#                           same way the DB tests use in-memory SQLite)
+#   4. Docker build smoke   (buildx build of the api + worker images)
 #
 # Docker layers and pip downloads are cached locally, so the slow first run
 # is paid once.
@@ -47,7 +49,18 @@ if [ "$skip_tests" -eq 0 ]; then
         sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio && pytest tests/unit/ -q"
 fi
 
-# 3. Docker build smoke test (mirrors the docker-build job) ------------------
+# 3. Integration tests (mirrors the integration-tests job) ------------------
+# Redis is in-memory (fakeredis), so no container or network is needed — just
+# like the DB tests use in-memory SQLite.
+if [ "$skip_tests" -eq 0 ]; then
+    section "Integration tests (python:3.12)"
+    docker run --rm -v "$repo:/app" -w /app \
+        -v embedbase-pipcache:/root/.cache/pip \
+        python:3.12-slim \
+        sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio fakeredis && pytest tests/integration/ -q"
+fi
+
+# 4. Docker build smoke test (mirrors the docker-build job) ------------------
 if [ "$skip_docker" -eq 0 ]; then
     [ -f config.yaml ] || cp config.example.yaml config.yaml
 

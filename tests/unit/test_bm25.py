@@ -3,7 +3,7 @@
 import json
 
 from api.models.chunk import Chunk, ChunkMetadata, make_chunk_id
-from worker.tasks import BM25_TTL_SECONDS, _update_bm25_index
+from worker.tasks import _update_bm25_index
 
 
 class FakeRedis:
@@ -39,7 +39,7 @@ def test_empty_chunks_is_noop():
     assert rds.store == {}
 
 
-def test_writes_corpus_triples_as_json_with_ttl():
+def test_writes_corpus_triples_as_json_without_expiry():
     rds = FakeRedis()
     chunks = [_chunk("doc1", 0, "hello"), _chunk("doc1", 1, "world")]
     _update_bm25_index(rds, "col1", chunks)
@@ -49,7 +49,8 @@ def test_writes_corpus_triples_as_json_with_ttl():
         [make_chunk_id("doc1", 0), "doc1", "hello"],
         [make_chunk_id("doc1", 1), "doc1", "world"],
     ]
-    assert rds.ttls["bm25:col1:corpus"] == BM25_TTL_SECONDS
+    # No TTL: the corpus must outlive the 24h window, mirroring the vector store.
+    assert rds.ttls["bm25:col1:corpus"] is None
 
 
 def test_increments_version():
