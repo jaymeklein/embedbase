@@ -7,6 +7,7 @@ import { ResultCard } from './ResultCard'
 const MODE: Record<SearchMode, { label: string; cls: string; hint: string }> = {
   hybrid: { label: 'Hybrid', cls: 'border-accent/40 text-accent', hint: 'BM25 + semantic' },
   semantic: { label: 'Semantic', cls: 'border-border text-ink-muted', hint: 'Vector similarity' },
+  bm25: { label: 'BM25', cls: 'border-border text-ink-muted', hint: 'Keyword ranking' },
   semantic_only: {
     label: 'Semantic only',
     cls: 'border-warn/40 text-warn',
@@ -36,7 +37,7 @@ export function SearchResults({
   if (!res) {
     return (
       <EmptyState
-        icon={<Telescope className="h-6 w-6" />}
+        icon={<Telescope className="h-7 w-7" />}
         title="Search your collections"
         description="Pick one or more collections on the left, type a query, and run it."
       />
@@ -49,7 +50,7 @@ export function SearchResults({
       {res.under_delivered && <UnderDeliveredBanner topK={mutation.variables?.top_k} />}
       {res.results.length === 0 ? (
         <EmptyState
-          icon={<SearchX className="h-6 w-6" />}
+          icon={<SearchX className="h-7 w-7" />}
           title="No matches"
           description="No chunks matched this query in the selected collections. Try broadening the query or relaxing filters."
         />
@@ -83,7 +84,7 @@ function ResultsHeader({ res }: { res: SearchResponse }) {
 function UnderDeliveredBanner({ topK }: { topK?: number }) {
   return (
     <div className="flex items-start gap-2 rounded-card border border-warn/30 bg-warn/5 px-3.5 py-3">
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
       <p className="text-[13px] text-ink-muted">
         Fewer results than requested{topK ? ` (top_k ${topK})` : ''}. A selective filter or a small
         candidate pool left some slots unfilled.
