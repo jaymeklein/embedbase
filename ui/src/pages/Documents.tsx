@@ -17,7 +17,12 @@ import {
   useWorkspace,
 } from '../api/hooks'
 import { api } from '../api/client'
-import type { DocumentSummary } from '../api/types'
+import type { DocStatus, DocumentSummary } from '../api/types'
+import {
+  useIngestionProgress,
+  type IngestionProgress,
+  type IngestPhase,
+} from '../realtime/useIngestionProgress'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
 import { collectTags, TagFilterBar } from '../components/tags/TagFilterBar'
@@ -203,6 +208,7 @@ function DocumentList({
   onRetry: () => void
   onDelete: (doc: DocumentSummary) => void
 }) {
+  const progressById = useIngestionProgress(wsId, colId)
   if (isLoading) {
     return (
       <Card className="divide-y divide-border">
@@ -230,9 +236,63 @@ function DocumentList({
   return (
     <Card className="divide-y divide-border">
       {data.map((doc) => (
-        <DocumentRow key={doc.document_id} wsId={wsId} colId={colId} doc={doc} onDelete={onDelete} />
+        <DocumentRow
+          key={doc.document_id}
+          wsId={wsId}
+          colId={colId}
+          doc={doc}
+          progress={progressById[doc.document_id]}
+          onDelete={onDelete}
+        />
       ))}
     </Card>
+  )
+}
+
+/** Inline ingestion progress: a labelled bar for active rows — determinate when a
+ *  page/batch total is known, indeterminate otherwise (Docling, uploading). */
+const PHASE_LABEL: Record<IngestPhase, string> = {
+  parsing: 'Parsing',
+  embedding: 'Embedding',
+  storing: 'Storing',
+  done: 'Done',
+  failed: 'Failed',
+}
+
+function IngestProgress({
+  status,
+  progress,
+}: {
+  status: DocStatus
+  progress?: IngestionProgress
+}) {
+  const pct = progress?.pct ?? null
+  const label =
+    status === 'uploading'
+      ? 'Uploading'
+      : status === 'pending'
+        ? 'Pending'
+        : progress
+          ? PHASE_LABEL[progress.phase]
+          : 'Processing'
+  const determinate = pct != null
+  return (
+    <div className="flex w-40 shrink-0 flex-col gap-1">
+      <div className="flex items-center justify-between text-xs text-ink-muted">
+        <span>{label}</span>
+        {determinate && <span className="tabular-nums">{pct}%</span>}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-canvas">
+        {determinate ? (
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        ) : (
+          <div className="h-full w-full animate-pulse rounded-full bg-accent/50" />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -241,11 +301,13 @@ function DocumentRow({
   wsId,
   colId,
   doc,
+  progress,
   onDelete,
 }: {
   wsId: string
   colId: string
   doc: DocumentSummary
+  progress?: IngestionProgress
   onDelete: (doc: DocumentSummary) => void
 }) {
   const [showError, setShowError] = useState(false)
@@ -292,6 +354,27 @@ function DocumentRow({
       },
     )
 
+  // Optimistic pre-upload row: the bytes are still being POSTed, so there is no
+  // server-side document yet — show just name + an Uploading bar, no actions.
+  if (doc.status === 'uploading') {
+    return (
+      <div className="p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <FileText className="h-7 w-7 shrink-0 text-ink-faint" />
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
+              <p className="text-xs text-ink-faint">
+                {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
+              </p>
+            </div>
+          </div>
+          <IngestProgress status="uploading" progress={progress} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
@@ -315,7 +398,11 @@ function DocumentRow({
               {showError ? 'Hide' : 'Why?'}
             </button>
           )}
-          <StatusBadge status={doc.status ?? 'pending'} />
+          {doc.status === 'pending' || doc.status === 'processing' ? (
+            <IngestProgress status={doc.status} progress={progress} />
+          ) : (
+            <StatusBadge status={doc.status ?? 'pending'} />
+          )}
           <IndexBadge
             doc={doc}
             busy={indexMut.isPending}

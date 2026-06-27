@@ -19,6 +19,9 @@ export default defineConfig({
     proxy: {
       '/api': { target: apiTarget, rewrite: (path) => path.replace(/^\/api/, '') },
       '/mcp': { target: apiTarget },
+      // Realtime WebSocket bridge (ingestion progress). ws:true performs the HTTP
+      // 101 upgrade; no rewrite — the API serves the socket at /ws.
+      '/ws': { target: apiTarget, ws: true },
     },
   },
 })

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
 from api.models.chunk import Chunk
@@ -10,7 +11,20 @@ from api.models.tagging import TagSuggestion
 class ParserAdapter(Protocol):
     """Converts a file on disk into a list of text chunks."""
 
-    def parse(self, file_path: str, document_id: str) -> list[Chunk]: ...
+    def parse(
+        self,
+        file_path: str,
+        document_id: str,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[Chunk]:
+        """Parse ``file_path`` into chunks.
+
+        ``on_progress(current, total)`` is an optional callback a parser MAY invoke
+        to report progress (the PDF parser calls it once per page). Parsers that
+        don't support it simply ignore the argument.
+        """
+        ...
 
     def supported_extensions(self) -> list[str]: ...
 
