@@ -25,37 +25,24 @@ async def _noop_lifespan(app):
     yield
 
 
-# Integration tests that exercise the Redis-backed path use db 15 so they never
-# touch real data on the default db 0; the fixture flushes it on entry and exit.
-_TEST_REDIS_DB = 15
-
-
 @pytest.fixture
 def redis_client():
-    """Register a **real** Redis client for the test, or skip if none is reachable.
+    """Register an in-memory Redis for the test — the same idea as in-memory SQLite.
 
-    Connects to ``REDIS_URL`` (default :data:`api.settings.settings.redis_url`)
-    on a dedicated test db. Never fakes — so the corpus read path behaves exactly
-    as in production. CI provides a Redis service container; locally, point
-    ``REDIS_URL`` at a running Redis (e.g. ``redis://localhost:6379/0``).
+    ``fakeredis`` is a real implementation of the Redis command set running in
+    process (get/set/incr all behave as production), so the BM25 corpus path is
+    exercised for real with no container, network, or ``REDIS_URL`` — identical
+    in CI and locally.
     """
-    import redis as redis_lib
+    import fakeredis
 
     from api.dependencies import set_redis_client
-    from api.settings import settings
 
-    url = os.environ.get("REDIS_URL", settings.redis_url)
-    client = redis_lib.from_url(url, db=_TEST_REDIS_DB, decode_responses=True)
-    try:
-        client.ping()
-    except Exception:
-        pytest.skip(f"Redis not reachable at {url!r}; start one or set REDIS_URL")
-    client.flushdb()
+    client = fakeredis.FakeStrictRedis(decode_responses=True)
     set_redis_client(client)
     try:
         yield client
     finally:
-        client.flushdb()
         set_redis_client(None)
         client.close()
 

@@ -4,8 +4,8 @@
 # Mirrors .github/workflows/ci.yml in four stages:
 #   1. Lint + type check   (ruff + mypy, run on your machine — fast)
 #   2. Unit tests          (inside python:3.12 so deps/version match CI)
-#   3. Integration tests   (python:3.12 + a real Redis container, mirroring
-#                           CI's redis service — never a fake)
+#   3. Integration tests   (python:3.12; Redis is in-memory via fakeredis, the
+#                           same way the DB tests use in-memory SQLite)
 #   4. Docker build smoke   (buildx build of the api + worker images)
 #
 # Docker layers and pip downloads are cached locally, so the slow first run
@@ -49,35 +49,15 @@ if [ "$skip_tests" -eq 0 ]; then
         sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio && pytest tests/unit/ -q"
 fi
 
-# 3. Integration tests with a real Redis (mirrors the integration-tests job) -
-# Spin up a Redis container and run the suite against it over a shared Docker
-# network, so the BM25 corpus path is exercised for real — just like CI's redis
-# service. Cleaned up on any exit.
+# 3. Integration tests (mirrors the integration-tests job) ------------------
+# Redis is in-memory (fakeredis), so no container or network is needed — just
+# like the DB tests use in-memory SQLite.
 if [ "$skip_tests" -eq 0 ]; then
-    section "Integration tests (python:3.12 + real Redis)"
-    ci_net="embedbase-ci-net"
-    ci_redis="embedbase-ci-redis"
-    cleanup_ci_redis() {
-        docker rm -f "$ci_redis" >/dev/null 2>&1 || true
-        docker network rm "$ci_net" >/dev/null 2>&1 || true
-    }
-    trap cleanup_ci_redis EXIT
-    cleanup_ci_redis  # clear leftovers from a previously aborted run
-    docker network create "$ci_net" >/dev/null
-    docker run -d --name "$ci_redis" --network "$ci_net" redis:7.2-alpine >/dev/null
-    # Wait for Redis to accept connections so the suite runs (never skips).
-    for _ in $(seq 1 20); do
-        docker exec "$ci_redis" redis-cli ping >/dev/null 2>&1 && break
-        sleep 0.5
-    done
-    docker run --rm --network "$ci_net" \
-        -e REDIS_URL="redis://$ci_redis:6379/0" \
-        -v "$repo:/app" -w /app \
+    section "Integration tests (python:3.12)"
+    docker run --rm -v "$repo:/app" -w /app \
         -v embedbase-pipcache:/root/.cache/pip \
         python:3.12-slim \
-        sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio && pytest tests/integration/ -q"
-    cleanup_ci_redis
-    trap - EXIT
+        sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio fakeredis && pytest tests/integration/ -q"
 fi
 
 # 4. Docker build smoke test (mirrors the docker-build job) ------------------
