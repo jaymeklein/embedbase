@@ -9,19 +9,47 @@ published message is then forwarded, and that auth is enforced.
 import json
 from contextlib import asynccontextmanager
 
+import bcrypt
 import pytest
 from sqlalchemy import event as sa_event
+from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 import api.routers.ws as ws_module
+from api.db import api_keys as keys_t
+from api.db import collections as col_t
+from api.db import workspaces as ws_t
 from api.dependencies import get_db
 from api.main import create_app
 from api.tables import metadata
 
 MASTER = "test-master-key-for-testing-only"  # set by tests/conftest.py
+
+# A collection key minted for col_2, used to prove a key scoped to one collection is
+# rejected (403 -> 4403) on another collection's topic. Fixed (not random) so the raw
+# value is known to the test without the fixture having to surface it.
+SCOPED_KEY = "eb_scopedkeyforcol2only_0000000000"
+_SCOPED_HASH = bcrypt.hashpw(SCOPED_KEY.encode(), bcrypt.gensalt(rounds=4)).decode()
+
+
+def _create_and_seed(sync_conn):
+    """Create the schema, then seed ws -> col_2 -> a col_2-scoped api key."""
+    metadata.create_all(sync_conn)
+    sync_conn.execute(insert(ws_t).values(
+        id="ws_a", name="W", description="", color="", icon="",
+        created_at="t", updated_at="t",
+    ))
+    sync_conn.execute(insert(col_t).values(
+        id="col_2", workspace_id="ws_a", name="C", description="",
+        color="", icon="", created_at="t", updated_at="t",
+    ))
+    sync_conn.execute(insert(keys_t).values(
+        id="key_col2", collection_id="col_2", key_prefix=SCOPED_KEY[3:11],
+        key_hash=_SCOPED_HASH, label="", created_at="t",
+    ))
 
 
 class _FakePubSub:
@@ -82,7 +110,7 @@ def ws_client(monkeypatch):
     @asynccontextmanager
     async def _lifespan(_app):
         async with engine.begin() as conn:
-            await conn.run_sync(metadata.create_all)
+            await conn.run_sync(_create_and_seed)
         yield
 
     app = create_app()
@@ -122,3 +150,11 @@ def test_bad_key_is_rejected(ws_client):
         with ws_client.websocket_connect("/ws?topic=ingestion:col_1&key=wrong-key") as ws:
             ws.receive_text()
     assert exc.value.code == 4401
+
+
+def test_wrong_collection_key_is_rejected(ws_client):
+    # SCOPED_KEY is minted for col_2; using it on col_1's topic must 403 -> 4403.
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with ws_client.websocket_connect(f"/ws?topic=ingestion:col_1&key={SCOPED_KEY}") as ws:
+            ws.receive_text()
+    assert exc.value.code == 4403
