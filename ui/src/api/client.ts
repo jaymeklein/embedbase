@@ -222,8 +222,10 @@ export const api = {
       }
       if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
       const url = URL.createObjectURL(await res.blob())
-      if (win) win.location.href = url
-      else {
+      if (win) {
+        win.opener = null // blob is same-origin; sever opener to restore noopener
+        win.location.href = url
+      } else {
         // Popups fully blocked — fall back to a download (less restricted).
         const a = document.createElement('a')
         a.href = url
