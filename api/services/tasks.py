@@ -25,6 +25,8 @@ _producer.conf.update(
 INGEST_TASK = "worker.tasks.ingest_document"
 DELETE_TASK = "worker.tasks.delete_document"
 SYNC_TAGS_TASK = "worker.tasks.sync_document_tags"
+INDEX_DOC_TASK = "worker.tasks.index_document"
+INDEX_COLLECTION_TASK = "worker.tasks.index_collection"
 
 
 def enqueue_ingest(
@@ -49,4 +51,16 @@ def enqueue_delete(document_id: str, collection_id: str) -> str | None:
 def enqueue_sync_tags(document_id: str, collection_id: str) -> str | None:
     """Dispatch a search-bridge tag sync for one document to the worker."""
     result = _producer.send_task(SYNC_TAGS_TASK, args=[document_id, collection_id])
+    return getattr(result, "id", None)
+
+
+def enqueue_index_document(document_id: str, collection_id: str) -> str | None:
+    """Dispatch a BM25 (re)index of one document to the worker."""
+    result = _producer.send_task(INDEX_DOC_TASK, args=[document_id, collection_id])
+    return getattr(result, "id", None)
+
+
+def enqueue_index_collection(collection_id: str) -> str | None:
+    """Dispatch a BM25 (re)index of an entire collection to the worker."""
+    result = _producer.send_task(INDEX_COLLECTION_TASK, args=[collection_id])
     return getattr(result, "id", None)

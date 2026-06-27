@@ -6,11 +6,13 @@ This file is routing-only: path registration, dependency resolution, delegation.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_db
+from api.dependencies import get_db, get_redis_client
 from api.services import documents as doc_svc
 from api.services.auth import Principal, require_auth
 
@@ -43,12 +45,17 @@ async def list_documents(
     tag: list[str] | None = Query(default=None),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
+    redis_client: Any = Depends(get_redis_client),
 ):
-    """List all documents in a collection with their ingestion status."""
+    """List all documents in a collection with their ingestion + index status.
+
+    Redis is optional here: when it is not ready the ``indexed`` flag is simply
+    omitted rather than failing the listing.
+    """
     await doc_svc.resolve_collection(db, col_id, ws_id)
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
-    return await doc_svc.list_documents(db, col_id, tags=tag)
+    return await doc_svc.list_documents(db, col_id, tags=tag, redis_client=redis_client)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status")
