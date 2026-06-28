@@ -114,7 +114,9 @@ class MCPConfig(BaseModel):
 
 
 class TagSuggesterConfig(BaseModel):
-    backend: str = "keyword"  # "keyword" (local) | "llm"
+    # Tag suggestion is LLM-only (no local/keyword backend); tagging is otherwise
+    # manual. "llm" is the only supported value.
+    backend: str = "llm"
     provider: str = "ollama"  # llm provider: "ollama" | "openai_compat"
     model: str = "llama3"
     base_url: str | None = None
