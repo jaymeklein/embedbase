@@ -8,7 +8,7 @@ from rank_bm25 import BM25Okapi
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
 from api.models.redis import CorpusConfig
 from api.models.search import (
     CollectionStat,
@@ -222,6 +222,7 @@ def search_collection(
     filters: SearchFilters | None = None,
     vector_store: VectorStoreAdapter,
     redis_client: Any,
+    reranker: Reranker | None = None,
 ) -> tuple[list[SearchResult], SearchMode, int, int]:
     """Search a single collection and return ranked results.
 
@@ -236,6 +237,8 @@ def search_collection(
         filters: Optional metadata filters applied after ranking.
         vector_store: Adapter for vector similarity search.
         redis_client: Sync Redis client used to load the BM25 corpus.
+        reranker: Optional cross-encoder; when set, reorders the over-fetched
+            candidate pool by query-document relevance before the top_k cut.
 
     Returns:
         Tuple of (results, search_mode, retrieved_before_filter, returned_after_filter).
@@ -248,6 +251,8 @@ def search_collection(
     )
     retrieved = len(results)
     filtered = apply_filters(results, filters)
+    if reranker is not None:
+        filtered = reranker.rerank(query, filtered)
     return filtered[:top_k], effective_mode, retrieved, len(filtered)
 
 
@@ -365,6 +370,7 @@ def _fan_out_one(
     vector_store: VectorStoreAdapter,
     redis_client: Any,
     fan_out: int,
+    reranker: Reranker | None = None,
 ) -> tuple[list[SearchResult], SearchMode, int, int]:
     """Thread target: run one collection's search (no DB access on this thread).
 
@@ -375,6 +381,7 @@ def _fan_out_one(
         vector_store: Vector similarity search adapter.
         redis_client: Redis client for the BM25 corpus.
         fan_out: Candidate multiplier applied before filtering.
+        reranker: Optional cross-encoder reranker (skipped when None).
 
     Returns:
         (results, mode, retrieved_before_filter, returned_after_filter).
@@ -383,6 +390,7 @@ def _fan_out_one(
         col_id, query_vector, request.query, request.top_k,
         fan_out=fan_out, mode=request.resolved_mode(), alpha=request.hybrid_alpha,
         filters=request.filters, vector_store=vector_store, redis_client=redis_client,
+        reranker=reranker,
     )
 
 
@@ -425,6 +433,7 @@ async def multi_collection_search(
     embedder: EmbeddingAdapter,
     vector_store: VectorStoreAdapter,
     redis_client: Any,
+    reranker: Reranker | None = None,
 ) -> SearchResponse:
     """Search across one or more collections and merge with second-level RRF.
 
@@ -439,6 +448,8 @@ async def multi_collection_search(
         embedder: Embedding adapter used to vectorise the query.
         vector_store: Vector store adapter for similarity search.
         redis_client: Sync Redis client for BM25 corpus access.
+        reranker: Optional cross-encoder reranker applied per collection before
+            the cross-collection merge; ``None`` skips the stage (RRF-only).
 
     Returns:
         SearchResponse with ranked results, stats, and timing fields.
@@ -453,6 +464,7 @@ async def multi_collection_search(
         asyncio.to_thread(
             _fan_out_one, cid, query_vector, request,
             vector_store=vector_store, redis_client=redis_client, fan_out=fan_out,
+            reranker=reranker,
         )
         for cid in known
     ])
