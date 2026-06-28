@@ -248,17 +248,17 @@ function DocumentList({
   )
 }
 
-/** Inline ingestion progress: an "Uploading" bar for active rows — determinate when a
- *  page/batch total is known, an indeterminate shimmer otherwise (Docling, the pre-
- *  `pct` parse start, and the client-side upload). The label stays "Uploading" for the
- *  whole load so it reads as one status. */
-function IngestProgress({ progress }: { progress?: IngestionProgress }) {
+/** Inline progress bar for active rows — determinate when a page/batch total is known,
+ *  an indeterminate shimmer otherwise (Docling, the pre-`pct` parse start, the upload).
+ *  The caller passes the label: "Uploading" while the bytes are still being POSTed,
+ *  "Ingesting" once the server is parsing/embedding/storing. */
+function IngestProgress({ label, progress }: { label: string; progress?: IngestionProgress }) {
   const pct = progress?.pct ?? null
   const determinate = pct != null
   return (
     <div className="flex w-40 shrink-0 flex-col gap-1">
       <div className="flex items-center justify-between text-xs text-ink-muted">
-        <span>Uploading</span>
+        <span>{label}</span>
         {determinate && <span className="tabular-nums">{pct}%</span>}
       </div>
       <div className="relative h-1.5 overflow-hidden rounded-full bg-canvas">
@@ -350,7 +350,7 @@ function DocumentRow({
               </p>
             </div>
           </div>
-          <IngestProgress progress={progress} />
+          <IngestProgress label="Uploading" progress={progress} />
         </div>
       </div>
     )
@@ -380,7 +380,7 @@ function DocumentRow({
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (
-            <IngestProgress progress={progress} />
+            <IngestProgress label="Ingesting" progress={progress} />
           ) : (
             <StatusBadge status={doc.status ?? 'pending'} />
           )}
