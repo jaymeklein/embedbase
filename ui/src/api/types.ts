@@ -311,9 +311,9 @@ export interface Health {
 
 // ── Config (mirrors api/models/config.py; secrets masked by GET) ─────────────
 
-/** The tag-suggester backend config (keyword = local, llm = Ollama/OpenAI-compat). */
+/** The tag-suggester config — LLM-only (Ollama / OpenAI-compatible). */
 export interface TagSuggesterConfig {
-  backend: string // "keyword" | "llm"
+  backend: string // always "llm" (tag suggestion is LLM-only)
   provider: string // "ollama" | "openai_compat"
   model: string
   base_url: string | null

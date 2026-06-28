@@ -4,7 +4,7 @@ import { SECRET_MASK, useConfig, useOllamaModels, useTestOllama, useUpdateConfig
 import type { AppConfig, TaggingConfig } from '../../api/types'
 import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
 
-/** Runtime AI tag-suggester config: switch keyword / Ollama / OpenAI-compatible. */
+/** Runtime AI tag-suggester config: pick the LLM provider (Ollama / OpenAI-compatible). */
 export function ConfigPanel() {
   const { data, isLoading, isError, error, refetch } = useConfig()
   if (isLoading) return <Skeleton className="h-72 w-full rounded-card" />
@@ -35,8 +35,8 @@ function TaggingForm({ config }: { config: AppConfig }) {
   const [minConfidence, setMinConfidence] = useState(String(sug.min_confidence))
   const [autoTag, setAutoTag] = useState(config.tagging.auto_tag_on_ingest)
 
-  // Suggestions are always AI/LLM — the keyword backend is unreliable, so it is no
-  // longer selectable. Only the provider (local Ollama vs OpenAI-compatible) varies.
+  // Tag suggestion is LLM-only; tagging is otherwise manual. Only the provider
+  // (local Ollama vs OpenAI-compatible) varies — there is no local backend.
   const isOpenAI = provider === 'openai_compat'
   const keyIsSet = sug.api_key === SECRET_MASK
 
