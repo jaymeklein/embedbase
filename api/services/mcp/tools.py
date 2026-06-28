@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
 from api.models.search import SearchRequest
 from api.services import documents as doc_svc
 from api.services import workspaces as ws_svc
@@ -47,6 +47,7 @@ async def search_documents(
     embedder: EmbeddingAdapter,
     vector_store: VectorStoreAdapter,
     redis_client: Any,
+    reranker: Reranker | None = None,
 ) -> dict[str, Any]:
     """Run a hybrid (semantic + BM25) search across one or more collections.
 
@@ -61,6 +62,7 @@ async def search_documents(
         embedder: Embedding adapter for the query vector.
         vector_store: Vector store to search.
         redis_client: Redis client backing the BM25 read path.
+        reranker: Optional cross-encoder reranker (None when disabled/not loaded).
 
     Returns:
         A JSON-serialisable ``SearchResponse`` dict with results and stats.
@@ -81,6 +83,7 @@ async def search_documents(
         embedder=embedder,
         vector_store=vector_store,
         redis_client=redis_client,
+        reranker=reranker,
     )
     return response.model_dump(mode="json")
 

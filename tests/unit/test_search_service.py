@@ -309,6 +309,36 @@ def test_search_collection_falls_back_to_semantic_when_no_bm25():
     assert mode == SearchMode.SEMANTIC_ONLY
 
 
+class _ReverseReranker:
+    """Test reranker that reverses the candidate order (proves it ran)."""
+
+    def rerank(self, query: str, results: list[SearchResult]) -> list[SearchResult]:
+        return list(reversed(results))
+
+
+def test_search_collection_applies_reranker_before_top_k():
+    candidates = [_result("a", score=0.9), _result("b", score=0.5), _result("c", score=0.1)]
+    vs = FakeVectorStore(candidates)
+    results, _, _, _ = search_collection(
+        "col1", [0.1], "q", top_k=2,
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        reranker=_ReverseReranker(),
+    )
+    # Reversed -> c, b, a; truncated to top_k=2 -> c, b (the reranker reordered
+    # the full pool before the cut, so "c" survives despite the lowest vector score).
+    assert [r.chunk_id for r in results] == ["c", "b"]
+
+
+def test_search_collection_no_reranker_keeps_order():
+    candidates = [_result("a", score=0.9), _result("b", score=0.5)]
+    vs = FakeVectorStore(candidates)
+    results, _, _, _ = search_collection(
+        "col1", [0.1], "q", top_k=5,
+        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+    )
+    assert [r.chunk_id for r in results] == ["a", "b"]
+
+
 def test_search_collection_filters_applied_after_ranking():
     from api.services import search as search_module
 

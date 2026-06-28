@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
 from api.db import AsyncSessionLocal
 from api.models.config import AppConfig, TaggingConfig
 
@@ -14,6 +14,7 @@ from api.models.config import AppConfig, TaggingConfig
 
 _embedding_adapter: EmbeddingAdapter | None = None
 _vector_store: VectorStoreAdapter | None = None
+_reranker: Reranker | None = None
 _redis_client: Any = None
 _app_config: AppConfig | None = None
 
@@ -50,6 +51,21 @@ def get_embedding_adapter() -> EmbeddingAdapter | None:
 
 def get_vector_store() -> VectorStoreAdapter | None:
     return _vector_store
+
+
+def set_reranker(reranker: Reranker | None) -> None:
+    global _reranker
+    _reranker = reranker
+
+
+def get_reranker() -> Reranker | None:
+    """Return the reranker singleton, or ``None`` when disabled/not loaded.
+
+    Optional by design — there is no ``require_*`` variant: search degrades to
+    RRF-only ranking when the reranker is absent, so callers pass it straight
+    through (a ``None`` simply skips the rerank stage).
+    """
+    return _reranker
 
 
 def set_redis_client(client: Any) -> None:

@@ -5,9 +5,10 @@ from typing import Any
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
 from api.dependencies import (
     get_db,
+    get_reranker,
     require_embedding_adapter,
     require_redis_client,
     require_vector_store,
@@ -27,6 +28,7 @@ async def search(
     embedder: EmbeddingAdapter = Depends(require_embedding_adapter),
     vector_store: VectorStoreAdapter = Depends(require_vector_store),
     redis_client: Any = Depends(require_redis_client),
+    reranker: Reranker | None = Depends(get_reranker),
 ) -> SearchResponse:
     """Run a hybrid (semantic + BM25) search across one or more collections.
 
@@ -37,6 +39,7 @@ async def search(
         embedder: Embedding adapter injected via Depends.
         vector_store: Vector store adapter injected via Depends.
         redis_client: Redis client injected via Depends (raises 503 if not ready).
+        reranker: Optional cross-encoder reranker (None when disabled/not loaded).
 
     Returns:
         SearchResponse with ranked results and per-collection stats.
@@ -47,4 +50,5 @@ async def search(
         embedder=embedder,
         vector_store=vector_store,
         redis_client=redis_client,
+        reranker=reranker,
     )

@@ -88,6 +88,19 @@ class SearchConfig(BaseModel):
     bm25_cache_ttl: int = 60
 
 
+class RerankerConfig(BaseModel):
+    # Cross-encoder second-stage reranker. Reorders the over-fetched candidate
+    # pool by true query-document relevance before the top_k cut — the biggest
+    # precision win over RRF-only fusion. LLM-free: a local sentence-transformers
+    # CrossEncoder, like the embedding model. Off by default so existing
+    # deployments don't silently take on a model download + extra latency; flip
+    # ``enabled`` to turn it on.
+    enabled: bool = False
+    provider: str = "cross_encoder"  # "cross_encoder"
+    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_n: int = 50  # max candidates scored per collection (caps cross-encoder cost)
+
+
 class ParserConfig(BaseModel):
     pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
     docling_ocr: bool = False  # enable OCR for scanned pages
@@ -136,6 +149,7 @@ class TaggingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
+    reranker: RerankerConfig = RerankerConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
     chunking: ChunkingConfig = ChunkingConfig()
     parsers: ParserConfig = ParserConfig()
