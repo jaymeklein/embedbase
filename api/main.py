@@ -134,7 +134,7 @@ async def _warm_up_adapters(app_config: AppConfig) -> None:
         from api.adapters.vector_store import get_vector_store as resolve_store
         from api.dependencies import get_embedding_adapter as _get_emb
         _emb = _get_emb()
-        dims = _emb.dimensions if _emb else 384
+        dims = _emb.dimensions if _emb else 768  # embeddinggemma default dim
         vector_store = await asyncio.to_thread(resolve_store, app_config.vector_store, dims)
         set_vector_store(vector_store)
         logger.info("vector store ready", backend=app_config.vector_store.backend)

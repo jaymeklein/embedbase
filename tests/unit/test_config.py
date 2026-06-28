@@ -8,8 +8,8 @@ from api.models.config import AppConfig
 
 def test_defaults_are_populated():
     cfg = AppConfig()
-    assert cfg.embedding.provider == "sentence_transformers"
-    assert cfg.embedding.model == "all-MiniLM-L6-v2"
+    assert cfg.embedding.provider == "ollama"
+    assert cfg.embedding.model == "embeddinggemma"
     assert cfg.embedding.batch_size == 32
     assert cfg.vector_store.backend == "chroma"
     assert cfg.vector_store.chroma.port == CHROMA_PORT
