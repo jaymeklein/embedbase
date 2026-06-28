@@ -9,13 +9,9 @@ if TYPE_CHECKING:
 
 
 def get_tag_suggester(config: "TaggingConfig") -> TagSuggester:
-    """Resolve and instantiate the configured tag suggester."""
+    """Resolve and instantiate the configured tag suggester (LLM-only)."""
     suggester = config.suggester
     backend = suggester.backend
-
-    if backend == "keyword":
-        from api.adapters.tagging.keyword import KeywordTagSuggester
-        return KeywordTagSuggester(max_tags=suggester.max_tags)
 
     if backend == "llm":
         from api.adapters.tagging.llm import LLMTagSuggester
