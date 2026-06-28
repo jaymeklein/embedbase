@@ -1,5 +1,6 @@
 """Unit tests for search_collection and multi_collection_search."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -62,6 +63,27 @@ class FakeVectorStore:
     def delete_document(self, *args: object) -> None: ...
     def delete_collection(self, *args: object) -> None: ...
     def list_documents(self, *args: object) -> list: ...
+
+
+class AsyncRunEmbedder:
+    """Mimics OllamaAdapter.embed, which calls asyncio.run() internally.
+
+    Guards the regression where multi_collection_search called embed() directly on
+    the running event loop — fatal for this adapter (asyncio.run() raises there).
+    """
+
+    def embed(self, text: str) -> list[float]:
+        async def _go() -> list[float]:
+            return [0.1, 0.2, 0.3]
+
+        return asyncio.run(_go())
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3]] * len(texts)
+
+    @property
+    def dimensions(self) -> int:
+        return 3
 
 
 class FakeEmbedder:
@@ -480,6 +502,26 @@ async def test_multi_collection_search_uses_default_fan_out_when_not_set():
         redis_client=FakeRedis(),
     )
     assert vs.last_top_k == 5 * _DEFAULT_FAN_OUT
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_embedder_using_asyncio_run_does_not_crash():
+    """Regression: an Ollama-style embedder (embed() -> asyncio.run) must work on
+    the async search path. embed() is offloaded via asyncio.to_thread, so its
+    inner asyncio.run() runs in a worker thread with no running loop."""
+    from api.services import search as search_module
+
+    search_module._bm25_cache.clear()
+    vs = FakeVectorStore([_result("c1", score=0.9)])
+    request = SearchRequest(query="q", collection_ids=["col1"])
+    response = await multi_collection_search(
+        request,
+        db=_make_db_mock(),
+        embedder=AsyncRunEmbedder(),
+        vector_store=vs,
+        redis_client=FakeRedis(),
+    )
+    assert [r.chunk_id for r in response.results] == ["c1"]
 
 
 @pytest.mark.asyncio

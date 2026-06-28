@@ -72,6 +72,6 @@ async def test_warm_up_swallows_embedding_failure_and_still_inits_store(monkeypa
     await _warm_up_adapters(_fake_config())  # must not raise
 
     assert deps.get_embedding_adapter() is None
-    # Store still initialised, with the 384 fallback dimension.
+    # Store still initialised, with the 768 fallback dimension (embeddinggemma).
     assert deps.get_vector_store() == "STORE"
-    assert captured["dims"] == 384
+    assert captured["dims"] == 768

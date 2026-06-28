@@ -455,7 +455,10 @@ async def multi_collection_search(
         SearchResponse with ranked results, stats, and timing fields.
     """
     t0 = monotonic()
-    query_vector = embedder.embed(request.query)
+    # Off the event loop: the Ollama adapter's embed() calls asyncio.run() (which
+    # raises if invoked on the running loop), and the sentence-transformers one is
+    # CPU-blocking — a worker thread is correct for both.
+    query_vector = await asyncio.to_thread(embedder.embed, request.query)
     embed_ms = int((monotonic() - t0) * 1000)
     fan_out = request.fan_out if request.fan_out is not None else _DEFAULT_FAN_OUT
     infos = await _get_collections_info(db, request.collection_ids)

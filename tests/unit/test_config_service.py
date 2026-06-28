@@ -64,7 +64,7 @@ def test_get_masked_config_masks_set_secrets_and_blanks_empty():
     assert data["embedding"]["api_key"] == cs.SECRET_MASK  # set -> masked
     assert data["vector_store"]["chroma"]["auth_token"] == cs.SECRET_MASK
     assert data["vector_store"]["pgvector"]["password"] == ""  # unset -> blank
-    assert data["embedding"]["provider"] == "sentence_transformers"  # non-secret intact
+    assert data["embedding"]["provider"] == "ollama"  # non-secret intact
 
 
 def test_get_masked_config_masks_tagging_suggester_api_key():

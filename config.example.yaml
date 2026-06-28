@@ -3,8 +3,8 @@
 # via PUT /config without restarting the stack (except vector_store.backend).
 
 embedding:
-  provider: sentence_transformers  # sentence_transformers | ollama | openai_compat
-  model: all-MiniLM-L6-v2
+  provider: ollama  # ollama | sentence_transformers | openai_compat
+  model: embeddinggemma  # 768-dim, multilingual; needs `ollama pull embeddinggemma`
   batch_size: 32
   # Ollama settings (provider: ollama)
   # base_url: http://host.docker.internal:11434

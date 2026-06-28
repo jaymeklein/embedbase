@@ -16,8 +16,8 @@ services:
     image: embedbase/api:1.0.0
     environment:
       - VECTOR_STORE=${VECTOR_STORE:-chroma}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-ollama}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CHROMA_HOST=${CHROMA_HOST:-chroma}
       - CHROMA_PORT=${CHROMA_PORT:-8000}
@@ -65,8 +65,8 @@ services:
     image: embedbase/worker:1.0.0
     environment:
       - VECTOR_STORE=${VECTOR_STORE:-chroma}
-      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-sentence_transformers}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-ollama}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CHROMA_HOST=${CHROMA_HOST:-chroma}
       - CHROMA_PORT=${CHROMA_PORT:-8000}
