@@ -37,3 +37,4 @@ CLAUDE.md
 .claude/*
 .vscode/launch.json
 .vscode/settings.json
+.playwright-mcp/

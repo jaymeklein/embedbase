@@ -31,6 +31,7 @@ from api.routers import (
     search,
     tags,
     workspaces,
+    ws,
 )
 from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 from api.settings import settings
@@ -207,6 +208,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(indexing.router)
     app.include_router(config.router)
+    app.include_router(ws.router)
 
     # Standalone OpenAPI reference of just the integration endpoints (after routers
     # are registered so their routes exist to filter).

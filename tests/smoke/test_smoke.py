@@ -32,7 +32,14 @@ def test_openapi_schema_generates():
 
 
 def test_all_routers_are_wired():
-    paths = {route.path for route in create_app().routes}
+    # FastAPI 0.137 / Starlette 1.3 wrap included routers in lazy `_IncludedRouter`
+    # objects that have no `.path`, so iterating `app.routes` for paths breaks. Read
+    # the HTTP paths from the OpenAPI schema and union in the non-schema top-level
+    # routes (e.g. the `/mcp` mount) — both are stable public surfaces.
+    app = create_app()
+    paths = set(app.openapi()["paths"]) | {
+        r.path for r in app.routes if getattr(r, "path", None)
+    }
     expected = {
         "/healthz",
         "/metrics",
