@@ -10,7 +10,15 @@ from api.models.tagging import TagSuggestion
 class ParserAdapter(Protocol):
     """Converts a file on disk into a list of text chunks."""
 
-    def parse(self, file_path: str, document_id: str) -> list[Chunk]: ...
+    def parse(self, file_path: str, document_id: str) -> list[Chunk]:
+        """Parse ``file_path`` into chunks.
+
+        A parser MAY additionally accept an ``on_progress(current, total)`` keyword
+        to report progress — the PDF parser does, and the worker passes it only when
+        present (see ``worker._parse_with_progress``). It's intentionally kept off
+        this Protocol so parsers that don't support it still conform.
+        """
+        ...
 
     def supported_extensions(self) -> list[str]: ...
 
