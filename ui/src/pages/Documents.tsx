@@ -249,12 +249,15 @@ function DocumentList({
 }
 
 /** Inline progress bar for active rows — determinate when a page/batch total is known,
- *  an indeterminate shimmer otherwise (Docling, the pre-`pct` parse start, the upload).
- *  The caller passes the label: "Uploading" while the bytes are still being POSTed,
- *  "Ingesting" once the server is parsing/embedding/storing. */
-function IngestProgress({ label, progress }: { label: string; progress?: IngestionProgress }) {
+ *  an indeterminate shimmer otherwise (Docling, the queued wait, the upload). The label
+ *  is driven by whether ingestion has actually started: "Uploading" until the first WS
+ *  progress event lands (bytes POSTing, then queued), "Ingesting" once the worker is
+ *  parsing/embedding/storing. doc.status can't drive this — the list only refetches on
+ *  the terminal event, so it's stale at "pending" for the whole run. */
+function IngestProgress({ progress }: { progress?: IngestionProgress }) {
   const pct = progress?.pct ?? null
   const determinate = pct != null
+  const label = progress ? 'Ingesting' : 'Uploading'
   return (
     <div className="flex w-40 shrink-0 flex-col gap-1">
       <div className="flex items-center justify-between text-xs text-ink-muted">
@@ -350,7 +353,7 @@ function DocumentRow({
               </p>
             </div>
           </div>
-          <IngestProgress label="Uploading" progress={progress} />
+          <IngestProgress progress={progress} />
         </div>
       </div>
     )
@@ -380,7 +383,7 @@ function DocumentRow({
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (
-            <IngestProgress label="Ingesting" progress={progress} />
+            <IngestProgress progress={progress} />
           ) : (
             <StatusBadge status={doc.status ?? 'pending'} />
           )}
