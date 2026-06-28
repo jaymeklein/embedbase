@@ -1025,8 +1025,8 @@ components:
         embedding:
           $ref: '#/components/schemas/EmbeddingConfig'
           default:
-            provider: sentence_transformers
-            model: all-MiniLM-L6-v2
+            provider: ollama
+            model: embeddinggemma
             batch_size: 32
             concurrency: 8
         vector_store:
@@ -1246,11 +1246,11 @@ components:
         provider:
           type: string
           title: Provider
-          default: sentence_transformers
+          default: ollama
         model:
           type: string
           title: Model
-          default: all-MiniLM-L6-v2
+          default: embeddinggemma
         batch_size:
           type: integer
           title: Batch Size

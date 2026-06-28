@@ -24,8 +24,12 @@ def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: s
 
 
 class EmbeddingConfig(BaseModel):
-    provider: str = "sentence_transformers"
-    model: str = "all-MiniLM-L6-v2"
+    # Default: Ollama serving Google's embeddinggemma (2025) — a modern, compact,
+    # multilingual retrieval model (768-dim). Requires a reachable Ollama with the
+    # model pulled (`ollama pull embeddinggemma`). Switch provider to
+    # "sentence_transformers" for a self-contained, in-process model.
+    provider: str = "ollama"  # "ollama" | "sentence_transformers" | "openai_compat"
+    model: str = "embeddinggemma"
     batch_size: int = 32
     base_url: str | None = None
     api_key: str | None = None
