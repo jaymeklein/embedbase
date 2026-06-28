@@ -16,6 +16,7 @@ from api.dependencies import (
     set_app_config,
     set_embedding_adapter,
     set_redis_client,
+    set_reranker,
     set_vector_store,
 )
 from api.middleware import RequestIDMiddleware, configure_logging
@@ -139,6 +140,18 @@ async def _warm_up_adapters(app_config: AppConfig) -> None:
         logger.info("vector store ready", backend=app_config.vector_store.backend)
     except Exception as exc:
         logger.error("vector store unavailable", error=str(exc))
+
+    # Reranker is optional (off by default). A failure here just leaves it None,
+    # so search keeps working with RRF-only ranking.
+    try:
+        from api.adapters.reranker import get_reranker as resolve_reranker
+        reranker = await asyncio.to_thread(resolve_reranker, app_config.reranker)
+        set_reranker(reranker)
+        if reranker is not None:
+            logger.info("reranker ready", provider=app_config.reranker.provider,
+                        model=app_config.reranker.model)
+    except Exception as exc:
+        logger.error("reranker unavailable", error=str(exc))
 
 
 @asynccontextmanager
