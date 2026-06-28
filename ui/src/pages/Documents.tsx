@@ -18,6 +18,10 @@ import {
 } from '../api/hooks'
 import { api } from '../api/client'
 import type { DocumentSummary } from '../api/types'
+import {
+  useIngestionProgress,
+  type IngestionProgress,
+} from '../realtime/useIngestionProgress'
 import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
 import { collectTags, TagFilterBar } from '../components/tags/TagFilterBar'
@@ -203,6 +207,7 @@ function DocumentList({
   onRetry: () => void
   onDelete: (doc: DocumentSummary) => void
 }) {
+  const progressById = useIngestionProgress(wsId, colId)
   if (isLoading) {
     return (
       <Card className="divide-y divide-border">
@@ -230,9 +235,48 @@ function DocumentList({
   return (
     <Card className="divide-y divide-border">
       {data.map((doc) => (
-        <DocumentRow key={doc.document_id} wsId={wsId} colId={colId} doc={doc} onDelete={onDelete} />
+        <DocumentRow
+          key={doc.document_id}
+          wsId={wsId}
+          colId={colId}
+          doc={doc}
+          progress={progressById[doc.document_id]}
+          onDelete={onDelete}
+        />
       ))}
     </Card>
+  )
+}
+
+/** Inline progress bar for active rows — determinate when a page/batch total is known,
+ *  an indeterminate shimmer otherwise (Docling, the queued wait, the upload). The label
+ *  is driven by whether ingestion has actually started: "Uploading" until the first WS
+ *  progress event lands (bytes POSTing, then queued), "Ingesting" once the worker is
+ *  parsing/embedding/storing. doc.status can't drive this — the list only refetches on
+ *  the terminal event, so it's stale at "pending" for the whole run. */
+function IngestProgress({ progress }: { progress?: IngestionProgress }) {
+  const pct = progress?.pct ?? null
+  const determinate = pct != null
+  const label = progress ? 'Ingesting' : 'Uploading'
+  return (
+    <div className="flex w-40 shrink-0 flex-col gap-1">
+      <div className="flex items-center justify-between text-xs text-ink-muted">
+        <span>{label}</span>
+        {determinate && <span className="tabular-nums">{pct}%</span>}
+      </div>
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-canvas">
+        {determinate ? (
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        ) : (
+          // ponytail: reuse the Skeleton shimmer (a swept band, not a full bar) so the
+          // indeterminate state never flashes as 100% before the first real pct lands.
+          <div className="absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-accent/70 to-transparent" />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -241,11 +285,13 @@ function DocumentRow({
   wsId,
   colId,
   doc,
+  progress,
   onDelete,
 }: {
   wsId: string
   colId: string
   doc: DocumentSummary
+  progress?: IngestionProgress
   onDelete: (doc: DocumentSummary) => void
 }) {
   const [showError, setShowError] = useState(false)
@@ -292,6 +338,27 @@ function DocumentRow({
       },
     )
 
+  // Optimistic pre-upload row: the bytes are still being POSTed, so there is no
+  // server-side document yet — show just name + an Uploading bar, no actions.
+  if (doc.status === 'uploading') {
+    return (
+      <div className="p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <FileText className="h-7 w-7 shrink-0 text-ink-faint" />
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
+              <p className="text-xs text-ink-faint">
+                {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
+              </p>
+            </div>
+          </div>
+          <IngestProgress progress={progress} />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between gap-3">
@@ -315,7 +382,11 @@ function DocumentRow({
               {showError ? 'Hide' : 'Why?'}
             </button>
           )}
-          <StatusBadge status={doc.status ?? 'pending'} />
+          {doc.status === 'pending' || doc.status === 'processing' ? (
+            <IngestProgress progress={progress} />
+          ) : (
+            <StatusBadge status={doc.status ?? 'pending'} />
+          )}
           <IndexBadge
             doc={doc}
             busy={indexMut.isPending}
