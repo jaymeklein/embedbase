@@ -59,7 +59,9 @@ async def realtime_ws(
         return
 
     channel = realtime.channel(topic)
-    client = aioredis.from_url(settings.redis_url, decode_responses=True)
+    # Typed Any: the installed redis (6.x) has aclose(), but the types-redis stub CI
+    # pins still only knows close() — annotate to skip that stale-stub attr check.
+    client: Any = aioredis.from_url(settings.redis_url, decode_responses=True)
     pubsub = client.pubsub()
     await pubsub.subscribe(channel)
     try:
