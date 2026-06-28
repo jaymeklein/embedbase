@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from api.models.redis import CorpusConfig
+from api.services import realtime
 from api.services.redis.redis import get_corpus
 from worker.celery_app import celery_app
 from worker.config import get_config
@@ -350,6 +352,23 @@ def _reindex_collection_bm25(
 # ---------------------------------------------------------------------------
 
 
+def _parse_with_progress(parser: Any, file_path: str, document_id: str, emit: Any) -> list[Chunk]:
+    """Call ``parser.parse``, threading a per-page progress callback when supported.
+
+    Only parsers that declare an ``on_progress`` keyword (currently the PyMuPDF PDF
+    parser) receive page callbacks; every other parser is called exactly as before.
+    Docling is opaque (a single ``convert()``), so it reports only the ``parsing``
+    start the caller already emitted.
+    """
+    if "on_progress" in inspect.signature(parser.parse).parameters:
+        return parser.parse(
+            file_path,
+            document_id,
+            on_progress=lambda current, total: emit("parsing", current, total),
+        )
+    return parser.parse(file_path, document_id)
+
+
 def _run_ingestion(
     job_id: str,
     file_path: str,
@@ -371,6 +390,32 @@ def _run_ingestion(
     vector_store = vector_store or _vector_store()
     redis_client = redis_client or _redis()
     config = config or get_config()
+
+    def emit(
+        phase: str,
+        current: int | None = None,
+        total: int | None = None,
+        status: str = "processing",
+    ) -> None:
+        """Best-effort publish of a progress event; never breaks ingestion."""
+        try:
+            pct = round(100 * current / total) if current is not None and total else None
+            realtime.publish(
+                redis_client,
+                f"ingestion:{collection_id}",
+                {
+                    "document_id": document_id,
+                    "collection_id": collection_id,
+                    "phase": phase,
+                    "current": current,
+                    "total": total,
+                    "pct": pct,
+                    "status": status,
+                },
+                snapshot_key=document_id,
+            )
+        except Exception:  # pragma: no cover - progress is best-effort
+            logger.debug("progress emit failed", document_id=document_id, phase=phase)
 
     # --- Idempotency guard ---------------------------------------------------
     with session_factory() as session:
@@ -403,20 +448,27 @@ def _run_ingestion(
         session.commit()
 
     # --- Parse → chunk -------------------------------------------------------
-    parser = get_parser(file_type, config.chunking, parsers=config.parsers)
-    chunks = parser.parse(file_path, document_id)
+    try:
+        emit("parsing")
+        parser = get_parser(file_type, config.chunking, parsers=config.parsers)
+        chunks = _parse_with_progress(parser, file_path, document_id, emit)
 
-    # --- Embed (batched) → upsert -------------------------------------------
-    if chunks:
-        _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
-        _apply_effective_tags(session_factory, collection_id, document_id, chunks)
-        batch_size = config.embedding.batch_size
-        texts = [c.text for c in chunks]
-        vectors: list[list[float]] = []
-        for start in range(0, len(texts), batch_size):
-            vectors.extend(embedder.embed_batch(texts[start : start + batch_size]))
-        vector_store.upsert(collection_id, chunks, vectors)
-        _update_bm25_index(redis_client, collection_id, chunks)
+        # --- Embed (batched) → upsert ---------------------------------------
+        if chunks:
+            _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
+            _apply_effective_tags(session_factory, collection_id, document_id, chunks)
+            batch_size = config.embedding.batch_size
+            texts = [c.text for c in chunks]
+            vectors: list[list[float]] = []
+            for start in range(0, len(texts), batch_size):
+                emit("embedding", current=start, total=len(texts))
+                vectors.extend(embedder.embed_batch(texts[start : start + batch_size]))
+            emit("storing", current=len(texts), total=len(texts))
+            vector_store.upsert(collection_id, chunks, vectors)
+            _update_bm25_index(redis_client, collection_id, chunks)
+    except Exception:
+        emit("failed", status="failed")
+        raise
 
     # --- Mark done -----------------------------------------------------------
     chunk_count = len(chunks)
@@ -429,6 +481,7 @@ def _run_ingestion(
         _set_job_status(session, job_id, "done", chunk_count=chunk_count)
         session.commit()
 
+    emit("done", current=chunk_count, total=chunk_count, status="done")
     logger.info("ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count)
     return chunk_count
 

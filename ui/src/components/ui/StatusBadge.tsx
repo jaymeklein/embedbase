@@ -1,8 +1,9 @@
 import { cn } from '../../lib/cn'
 
-export type DocStatus = 'pending' | 'processing' | 'done' | 'failed' | 'deleting'
+export type DocStatus = 'uploading' | 'pending' | 'processing' | 'done' | 'failed' | 'deleting'
 
 const MAP: Record<DocStatus, { label: string; dot: string; text: string }> = {
+  uploading: { label: 'Uploading', dot: 'bg-accent animate-pulse', text: 'text-accent' },
   pending: { label: 'Pending', dot: 'bg-pending', text: 'text-ink-muted' },
   processing: { label: 'Processing', dot: 'bg-warn animate-pulse', text: 'text-warn' },
   done: { label: 'Done', dot: 'bg-ok', text: 'text-ok' },

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from api.models.chunk import Chunk, ChunkMetadata
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from api.models.config import ChunkingConfig
 
 
@@ -18,7 +20,13 @@ class PDFParser:
     def supported_extensions(self) -> list[str]:
         return [".pdf"]
 
-    def parse(self, file_path: str, document_id: str) -> list[Chunk]:
+    def parse(
+        self,
+        file_path: str,
+        document_id: str,
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[Chunk]:
         import fitz  # PyMuPDF
 
         filename = os.path.basename(file_path)
@@ -27,6 +35,9 @@ class PDFParser:
             total_pages = doc.page_count
             chunk_index = 0
             for page_number, page in enumerate(doc, start=1):
+                if on_progress:
+                    # Report every page scanned (incl. blank/skipped) for smooth progress.
+                    on_progress(page_number, total_pages)
                 text = page.get_text("text").strip()
                 if not text:
                     # Skip image-only / blank pages — nothing to embed.

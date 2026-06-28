@@ -160,8 +160,9 @@ export interface MintedApiKey {
 
 // ── Documents ───────────────────────────────────────────────────────────────
 
-/** Ingestion lifecycle states; `null` when a document has no job row yet. */
-export type DocStatus = 'pending' | 'processing' | 'done' | 'failed' | 'deleting'
+/** Ingestion lifecycle states; `null` when a document has no job row yet.
+ *  `uploading` is client-only — the multipart POST is still in flight. */
+export type DocStatus = 'uploading' | 'pending' | 'processing' | 'done' | 'failed' | 'deleting'
 
 /** A row from `GET .../documents` (document joined to its latest job status). */
 export interface DocumentSummary {
