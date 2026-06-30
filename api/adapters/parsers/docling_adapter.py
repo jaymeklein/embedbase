@@ -103,6 +103,38 @@ def detect_accelerator() -> AcceleratorProfile:
     return AcceleratorProfile(device="cuda", flash_attention=flash, batch_size=_GPU_BATCH_SIZE)
 
 
+def accelerator_status() -> dict[str, Any]:
+    """Report GPU suitability for docling, for the config UI's PDF-backend picker.
+
+    ``compatible`` means an Ampere-or-newer CUDA GPU (capability >= 8.0) — the line
+    above which docling runs fast. No GPU, or an older card (e.g. Turing 7.5),
+    returns ``compatible=False`` so the UI can warn and prefer PyMuPDF.
+    """
+    try:
+        capability = _cuda_compute_capability()
+    except ImportError:
+        capability = None
+    if capability is None:
+        return {"device": "cpu", "capability": None, "name": None, "compatible": False}
+    major, minor = capability
+    return {
+        "device": "cuda",
+        "capability": f"{major}.{minor}",
+        "name": _gpu_name(),
+        "compatible": capability >= _FLASH_ATTENTION_MIN_CAPABILITY,
+    }
+
+
+def _gpu_name() -> str | None:
+    """Best-effort CUDA device name; None if torch is absent or the call fails."""
+    try:
+        import torch
+
+        return str(torch.cuda.get_device_name(0))
+    except Exception:
+        return None
+
+
 def _validate_accelerator(device: str, flash_attention: bool) -> None:
     """Validate the device string and flash-attention support, failing fast.
 

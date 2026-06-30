@@ -41,7 +41,7 @@ async def test_config_get_returns_masked_secrets(master_client):
     assert r.status_code == 200
     body = r.json()
     assert body["embedding"]["api_key"] == cs.SECRET_MASK  # never the real value
-    assert body["embedding"]["provider"] == "sentence_transformers"
+    assert body["embedding"]["provider"] == "ollama"
 
 
 async def test_config_put_applies_and_returns_version(master_client, monkeypatch, tmp_path):

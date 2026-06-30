@@ -23,6 +23,7 @@ from api.db import AsyncSessionLocal
 from api.dependencies import (
     get_embedding_adapter,
     get_redis_client,
+    get_reranker,
     get_vector_store,
 )
 from api.models.config import MCPConfig
@@ -70,6 +71,7 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
                 embedder=embedder,
                 vector_store=vector_store,
                 redis_client=redis_client,
+                reranker=get_reranker(),  # optional — None skips the rerank stage
             )
 
     @server.tool()

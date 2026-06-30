@@ -3,8 +3,8 @@
 # via PUT /config without restarting the stack (except vector_store.backend).
 
 embedding:
-  provider: sentence_transformers  # sentence_transformers | ollama | openai_compat
-  model: all-MiniLM-L6-v2
+  provider: ollama  # ollama | sentence_transformers | openai_compat | gemini
+  model: embeddinggemma  # 768-dim, multilingual; needs `ollama pull embeddinggemma`
   batch_size: 32
   # Ollama settings (provider: ollama)
   # base_url: http://host.docker.internal:11434
@@ -12,6 +12,9 @@ embedding:
   # OpenAI-compatible settings (provider: openai_compat)
   # base_url: http://host.docker.internal:1234
   # api_key: ""
+  # Gemini settings (provider: gemini) — model e.g. gemini-embedding-2
+  # api_key: ""                       # required: Google AI Studio API key
+  # output_dimensionality: 768        # optional: truncate 3072-dim output
 
 vector_store:
   backend: chroma  # chroma | pgvector | qdrant
@@ -40,7 +43,9 @@ chunking:
     fallback_window_lines: 50
 
 parsers:
-  pdf_backend: pymupdf       # "pymupdf" (fast, text PDFs) | "docling" (OCR + tables)
+  # pdf_backend: pymupdf     # leave unset and the Settings UI pre-selects from the
+                             # detected GPU (docling on Ampere+, else pymupdf); once
+                             # you pick one it's saved. "pymupdf" (fast) | "docling" (OCR + tables)
   docling_ocr: false         # OCR scanned / image-only pages
   docling_ocr_engine: easyocr  # "easyocr" | "tesseract" | "rapidocr"
   docling_tables: true       # recognise table structure (emitted as Markdown)
