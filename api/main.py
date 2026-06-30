@@ -16,6 +16,7 @@ from api.dependencies import (
     set_app_config,
     set_embedding_adapter,
     set_redis_client,
+    set_reranker,
     set_vector_store,
 )
 from api.middleware import RequestIDMiddleware, configure_logging
@@ -133,12 +134,24 @@ async def _warm_up_adapters(app_config: AppConfig) -> None:
         from api.adapters.vector_store import get_vector_store as resolve_store
         from api.dependencies import get_embedding_adapter as _get_emb
         _emb = _get_emb()
-        dims = _emb.dimensions if _emb else 384
+        dims = _emb.dimensions if _emb else 768  # embeddinggemma default dim
         vector_store = await asyncio.to_thread(resolve_store, app_config.vector_store, dims)
         set_vector_store(vector_store)
         logger.info("vector store ready", backend=app_config.vector_store.backend)
     except Exception as exc:
         logger.error("vector store unavailable", error=str(exc))
+
+    # Reranker is optional (off by default). A failure here just leaves it None,
+    # so search keeps working with RRF-only ranking.
+    try:
+        from api.adapters.reranker import get_reranker as resolve_reranker
+        reranker = await asyncio.to_thread(resolve_reranker, app_config.reranker)
+        set_reranker(reranker)
+        if reranker is not None:
+            logger.info("reranker ready", provider=app_config.reranker.provider,
+                        model=app_config.reranker.model)
+    except Exception as exc:
+        logger.error("reranker unavailable", error=str(exc))
 
 
 @asynccontextmanager
