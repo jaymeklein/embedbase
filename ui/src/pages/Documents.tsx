@@ -367,8 +367,10 @@ function DocumentRow({
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-ink">{doc.filename}</p>
             <p className="text-xs text-ink-faint">
-              {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)} · updated{' '}
-              {timeAgo(doc.updated_at)}
+              {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
+              {doc.chunk_count != null &&
+                ` · ${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}{' '}
+              · updated {timeAgo(doc.updated_at)}
             </p>
           </div>
         </div>

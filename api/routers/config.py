@@ -27,6 +27,12 @@ async def list_ollama_models(base_url: str | None = None):
     return await asyncio.to_thread(config_service.list_ollama_models, base_url)
 
 
+@router.get("/accelerator")
+async def get_accelerator():
+    # Off the event loop: the CUDA probe imports torch (heavy, blocking).
+    return await asyncio.to_thread(config_service.get_accelerator_status)
+
+
 @router.get("/reload-status/{version_id}")
 async def get_reload_status(version_id: str):
     return config_service.get_reload_status(version_id)
