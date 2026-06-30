@@ -8,6 +8,7 @@
 
 import { getMasterKey, notifyUnauthorized } from './tokenStore'
 import type {
+  Accelerator,
   ApiKey,
   AppConfig,
   Collection,
@@ -289,6 +290,7 @@ export const api = {
   updateConfig: (body: AppConfig) => request<unknown>('/config', { method: 'PUT', body }),
   listOllamaModels: (baseUrl?: string) =>
     request<string[]>(`/config/ollama-models${baseUrl ? `?base_url=${enc(baseUrl)}` : ''}`),
+  getAccelerator: () => request<Accelerator>('/config/accelerator'),
 
   // ── System ────────────────────────────────────────────────────────────────
   healthz: () => request<Health>('/healthz'),

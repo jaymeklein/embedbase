@@ -188,6 +188,7 @@ async def list_documents(
             doc_t.c.file_type,
             doc_t.c.file_size,
             doc_t.c.chunk_count,
+            doc_t.c.embedding_model,
             doc_t.c.created_at,
             doc_t.c.updated_at,
             job_t.c.status,

@@ -88,6 +88,19 @@ class VectorStoreAdapter(Protocol):
 
 
 @runtime_checkable
+class Reranker(Protocol):
+    """Re-orders candidate search results by joint query-document relevance.
+
+    A second-stage cross-encoder: unlike the vector/BM25 scores (computed
+    independently per side), ``rerank`` scores the query and each candidate's
+    text *together*. ``rerank`` is synchronous (like EmbeddingAdapter) and is
+    driven from a worker thread by the search service.
+    """
+
+    def rerank(self, query: str, results: list[SearchResult]) -> list[SearchResult]: ...
+
+
+@runtime_checkable
 class TagSuggester(Protocol):
     """Proposes topical tags for a body of text.
 

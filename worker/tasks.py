@@ -37,8 +37,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# task_time_limit in celery_app.py is 600s; allow a margin before reclaiming.
-STALE_PROCESSING_SECONDS = 660
+# Reclaim a "processing" job only once it has outlived the hard task limit (plus a
+# margin) — otherwise it's still running, just slow (CPU docling). Tracks
+# CELERY_TASK_TIME_LIMIT so the two never drift apart.
+STALE_PROCESSING_SECONDS = int(os.environ.get("CELERY_TASK_TIME_LIMIT", "1860")) + 60
 
 # Lazily-built singletons. Tests override these module globals (or pass deps
 # directly to ``_run_ingestion``) to avoid real Redis / Chroma / model loads.
@@ -476,7 +478,11 @@ def _run_ingestion(
         session.execute(
             update(documents)
             .where(documents.c.id == document_id)
-            .values(chunk_count=chunk_count, updated_at=_now())
+            .values(
+                chunk_count=chunk_count,
+                embedding_model=config.embedding.model,
+                updated_at=_now(),
+            )
         )
         _set_job_status(session, job_id, "done", chunk_count=chunk_count)
         session.commit()
@@ -578,6 +584,19 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
             db.commit()
+            collection_empty = (
+                db.execute(
+                    select(documents.c.id)
+                    .where(documents.c.collection_id == collection_id)
+                    .limit(1)
+                ).first()
+                is None
+            )
+        # Last document gone: drop the vector collection so the next ingestion
+        # recreates it at the current embedding dimension (model may have changed).
+        if collection_empty:
+            _vector_store().delete_collection(collection_id)
+            logger.info("collection emptied; dropped vector collection", collection_id=collection_id)
     except SoftTimeLimitExceeded:
         raise
     except Exception as exc:

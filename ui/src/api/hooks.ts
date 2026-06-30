@@ -59,6 +59,11 @@ export function useConfig() {
   return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false })
 }
 
+/** GPU suitability for the docling PDF backend (drives the backend picker's default + warning). */
+export function useAccelerator() {
+  return useQuery({ queryKey: ['config', 'accelerator'], queryFn: () => api.getAccelerator(), retry: false })
+}
+
 /**
  * Models installed on the Ollama server, for the suggester model picker.
  * Re-fetches when the edited base URL changes; only enabled when asked for.

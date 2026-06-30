@@ -28,14 +28,17 @@ import yaml
 from fastapi import HTTPException
 
 from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
+from api.adapters.reranker import get_reranker as resolve_reranker
 from api.adapters.vector_store import get_vector_store as resolve_store
 from api.dependencies import (
     get_app_config,
     get_embedding_adapter,
     get_redis_client,
+    get_reranker,
     get_vector_store,
     set_app_config,
     set_embedding_adapter,
+    set_reranker,
     set_vector_store,
 )
 from api.models.config import AppConfig
@@ -47,8 +50,8 @@ from api.services.config_reload import (
 )
 
 # A point-in-time snapshot of the API's live adapters + config, captured before a
-# PUT so a worker rejection can be rolled back.
-_Snapshot = tuple[Any, Any, AppConfig]
+# PUT so a worker rejection can be rolled back: (embed, store, reranker, config).
+_Snapshot = tuple[Any, Any, Any, AppConfig]
 
 # Write-only secret fields: never returned by GET, and preserved on PUT when the
 # client echoes the mask sentinel back unchanged.
@@ -126,15 +129,17 @@ def _merge_secrets(incoming: dict[str, Any], current: AppConfig) -> dict[str, An
     return merged
 
 
-def _build_adapters(config: AppConfig) -> tuple[Any, Any]:
-    """Build the embedding + vector-store adapters (the PUT dry run).
+def _build_adapters(config: AppConfig) -> tuple[Any, Any, Any]:
+    """Build the embedding + vector-store + reranker adapters (the PUT dry run).
 
     Eager construction means a bad model name or unreachable backend raises here,
-    before ``config.yaml`` is touched.
+    before ``config.yaml`` is touched. The reranker is ``None`` when disabled, so
+    flipping it on is what loads (and validates) the cross-encoder model.
     """
     embed = resolve_embedding(config.embedding)
     store = resolve_store(config.vector_store, embed.dimensions)
-    return embed, store
+    reranker = resolve_reranker(config.reranker)
+    return embed, store, reranker
 
 
 def _atomic_write(data: dict[str, Any], path: Path) -> None:
@@ -169,22 +174,23 @@ def _record_applied(version_id: str) -> dict[str, Any]:
     return status
 
 
-def _validate_and_build(merged: dict[str, Any]) -> tuple[Any, Any, AppConfig]:
+def _validate_and_build(merged: dict[str, Any]) -> tuple[Any, Any, Any, AppConfig]:
     """Validate the merged config and build its adapters; raise 422 on failure."""
     try:
         new_config = AppConfig.model_validate(merged)
-        embed, store = _build_adapters(new_config)
+        embed, store, reranker = _build_adapters(new_config)
     except HTTPException:
         raise
     except Exception as exc:  # invalid config or unbuildable adapter
         raise HTTPException(422, f"Invalid configuration: {exc}") from exc
-    return embed, store, new_config
+    return embed, store, reranker, new_config
 
 
-def _swap_live(embed: Any, store: Any, config: AppConfig) -> None:
+def _swap_live(embed: Any, store: Any, reranker: Any, config: AppConfig) -> None:
     """Atomically point the API's live singletons at a new adapter set + config."""
     set_embedding_adapter(embed)
     set_vector_store(store)
+    set_reranker(reranker)
     set_app_config(config)
 
 
@@ -212,12 +218,14 @@ def apply_config(payload: AppConfig) -> dict[str, Any]:
             rejects the config (the change is rolled back).
     """
     current = _require_config()
-    previous: _Snapshot = (get_embedding_adapter(), get_vector_store(), current)
+    previous: _Snapshot = (
+        get_embedding_adapter(), get_vector_store(), get_reranker(), current
+    )
     merged = _merge_secrets(payload.model_dump(), current)
-    embed, store, new_config = _validate_and_build(merged)
+    embed, store, reranker, new_config = _validate_and_build(merged)
     path = _config_path()
     _atomic_write(merged, path)
-    _swap_live(embed, store, new_config)
+    _swap_live(embed, store, reranker, new_config)
     return _propagate(uuid.uuid4().hex[:12], previous, path)
 
 
@@ -256,11 +264,18 @@ def _await_or_rollback(
 
 def _rollback(redis_client: Any, version_id: str, previous: _Snapshot, path: Path) -> None:
     """Restore the previous config file + API adapters and tell workers to revert."""
-    prev_embed, prev_store, prev_config = previous
+    prev_embed, prev_store, prev_reranker, prev_config = previous
     _restore_backup(path)
-    _swap_live(prev_embed, prev_store, prev_config)
+    _swap_live(prev_embed, prev_store, prev_reranker, prev_config)
     publish_reload(redis_client, version_id, rollback=True)
     mark_rolled_back(redis_client, version_id)
+
+
+def get_accelerator_status() -> dict[str, Any]:
+    """Report GPU suitability for docling (config UI's PDF-backend picker)."""
+    from api.adapters.parsers.docling_adapter import accelerator_status
+
+    return accelerator_status()
 
 
 def list_ollama_models(base_url: str | None = None) -> list[str]:

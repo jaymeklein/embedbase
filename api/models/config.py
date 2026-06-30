@@ -24,12 +24,18 @@ def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: s
 
 
 class EmbeddingConfig(BaseModel):
-    provider: str = "sentence_transformers"
-    model: str = "all-MiniLM-L6-v2"
+    # Default: Ollama serving Google's embeddinggemma (2025) — a modern, compact,
+    # multilingual retrieval model (768-dim). Requires a reachable Ollama with the
+    # model pulled (`ollama pull embeddinggemma`). Switch provider to
+    # "sentence_transformers" for a self-contained, in-process model.
+    provider: str = "ollama"  # "ollama" | "sentence_transformers" | "openai_compat" | "gemini"
+    model: str = "embeddinggemma"
     batch_size: int = 32
     base_url: str | None = None
     api_key: str | None = None
     concurrency: int = 8
+    # Gemini only: truncate the (default 3072-dim) vector; the model re-normalises.
+    output_dimensionality: int | None = None
 
 
 class ChromaConfig(BaseModel):
@@ -88,8 +94,24 @@ class SearchConfig(BaseModel):
     bm25_cache_ttl: int = 60
 
 
+class RerankerConfig(BaseModel):
+    # Cross-encoder second-stage reranker. Reorders the over-fetched candidate
+    # pool by true query-document relevance before the top_k cut — the biggest
+    # precision win over RRF-only fusion. LLM-free: a local sentence-transformers
+    # CrossEncoder, like the embedding model. Off by default so existing
+    # deployments don't silently take on a model download + extra latency; flip
+    # ``enabled`` to turn it on.
+    enabled: bool = False
+    provider: str = "cross_encoder"  # "cross_encoder"
+    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    top_n: int = 50  # max candidates scored per collection (caps cross-encoder cost)
+
+
 class ParserConfig(BaseModel):
-    pdf_backend: str = "pymupdf"  # "pymupdf" | "docling"
+    # None = the user has never picked a backend; the UI then pre-selects one from
+    # the detected GPU (docling on Ampere+, else pymupdf). Any saved value is honoured
+    # as-is. None parses as pymupdf (see adapters/parsers/__init__.py).
+    pdf_backend: str | None = None  # None (unset) | "pymupdf" | "docling"
     docling_ocr: bool = False  # enable OCR for scanned pages
     docling_ocr_engine: str = "easyocr"  # "easyocr" | "tesseract" | "rapidocr"
     docling_tables: bool = True  # table structure recognition
@@ -114,7 +136,9 @@ class MCPConfig(BaseModel):
 
 
 class TagSuggesterConfig(BaseModel):
-    backend: str = "keyword"  # "keyword" (local) | "llm"
+    # Tag suggestion is LLM-only (no local/keyword backend); tagging is otherwise
+    # manual. "llm" is the only supported value.
+    backend: str = "llm"
     provider: str = "ollama"  # llm provider: "ollama" | "openai_compat"
     model: str = "llama3"
     base_url: str | None = None
@@ -134,6 +158,7 @@ class TaggingConfig(BaseModel):
 
 class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
+    reranker: RerankerConfig = RerankerConfig()
     vector_store: VectorStoreConfig = VectorStoreConfig()
     chunking: ChunkingConfig = ChunkingConfig()
     parsers: ParserConfig = ParserConfig()

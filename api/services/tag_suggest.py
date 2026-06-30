@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.tagging import get_tag_suggester
@@ -73,9 +74,24 @@ def _rank(
 
 
 async def _suggest(text: str, existing: list[str], tagging: TaggingConfig) -> dict[str, Any]:
-    """Run the configured suggester off the event loop and shape the response."""
-    suggester = get_tag_suggester(tagging)
-    suggestions = await asyncio.to_thread(suggester.suggest, text, existing)
+    """Run the configured LLM suggester off the event loop and shape the response.
+
+    Tag suggestion is LLM-only (there is no local/keyword fallback). An
+    unconfigured/unknown backend or an unreachable LLM both surface as a clear
+    503 the UI can show, rather than an opaque 500.
+
+    Raises:
+        HTTPException: 503 when the LLM integration is missing or the call fails.
+    """
+    try:
+        suggester = get_tag_suggester(tagging)
+        suggestions = await asyncio.to_thread(suggester.suggest, text, existing)
+    except Exception as exc:  # unknown backend or network/LLM failure
+        raise HTTPException(
+            status_code=503,
+            detail="AI tag suggestion needs a working LLM integration "
+            f"(Settings → AI tag suggester): {exc}",
+        ) from exc
     ranked = _rank(suggestions, existing, tagging.suggester.min_confidence)
     return {"suggestions": [s.model_dump() for s in ranked]}
 

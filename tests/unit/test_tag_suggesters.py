@@ -3,35 +3,8 @@
 import pytest
 
 from api.adapters.tagging import get_tag_suggester
-from api.adapters.tagging.keyword import KeywordTagSuggester
 from api.adapters.tagging.llm import LLMTagSuggester, _parse_suggestions, list_ollama_models
 from api.models.config import TaggingConfig, TagSuggesterConfig
-
-# ── KeywordTagSuggester ───────────────────────────────────────────────────────
-
-def test_keyword_ranks_by_frequency_with_confidence():
-    out = KeywordTagSuggester(max_tags=5).suggest(
-        "kubernetes kubernetes kubernetes scaling scaling deployment", []
-    )
-    assert out[0].confidence == 1.0
-    assert all(s.name == s.name.lower() for s in out)
-
-
-def test_keyword_excludes_existing_and_respects_max():
-    text = "alpha alpha beta beta gamma gamma delta delta epsilon epsilon"
-    out = KeywordTagSuggester(max_tags=2).suggest(text, ["alpha"])
-    assert len(out) == 2
-    assert all(s.name != "alpha" for s in out)
-
-
-def test_keyword_empty_text_returns_empty():
-    assert KeywordTagSuggester().suggest("   ", []) == []
-
-
-def test_keyword_filters_stopwords_and_short_tokens():
-    out = KeywordTagSuggester().suggest("the of an to is be", [])
-    assert out == []
-
 
 # ── _parse_suggestions ────────────────────────────────────────────────────────
 
@@ -190,14 +163,21 @@ def test_list_ollama_models_blank_url_uses_default(monkeypatch):
 
 # ── registry ──────────────────────────────────────────────────────────────────
 
-def test_registry_keyword():
-    cfg = TaggingConfig(suggester=TagSuggesterConfig(backend="keyword"))
-    assert isinstance(get_tag_suggester(cfg), KeywordTagSuggester)
-
-
 def test_registry_llm():
     cfg = TaggingConfig(suggester=TagSuggesterConfig(backend="llm"))
     assert isinstance(get_tag_suggester(cfg), LLMTagSuggester)
+
+
+def test_registry_default_is_llm():
+    # Tag suggestion is LLM-only; the default backend must resolve to the LLM suggester.
+    assert isinstance(get_tag_suggester(TaggingConfig()), LLMTagSuggester)
+
+
+def test_registry_keyword_backend_no_longer_exists():
+    # The local keyword backend was removed — any non-LLM value is unknown.
+    cfg = TaggingConfig(suggester=TagSuggesterConfig(backend="keyword"))
+    with pytest.raises(ValueError, match="Unknown tag suggester backend"):
+        get_tag_suggester(cfg)
 
 
 def test_registry_unknown_backend_raises():

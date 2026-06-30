@@ -30,4 +30,13 @@ def get_embedding_adapter(config: "EmbeddingConfig") -> EmbeddingAdapter:
             api_key=config.api_key or "",
         )
 
+    if provider == "gemini":
+        from api.adapters.embeddings.gemini import GeminiAdapter
+        return GeminiAdapter(
+            model=config.model,
+            api_key=config.api_key or "",
+            base_url=config.base_url or "https://generativelanguage.googleapis.com",
+            output_dimensionality=config.output_dimensionality,
+        )
+
     raise ValueError(f"Unknown embedding provider: {provider!r}")
