@@ -271,6 +271,13 @@ def _rollback(redis_client: Any, version_id: str, previous: _Snapshot, path: Pat
     mark_rolled_back(redis_client, version_id)
 
 
+def get_accelerator_status() -> dict[str, Any]:
+    """Report GPU suitability for docling (config UI's PDF-backend picker)."""
+    from api.adapters.parsers.docling_adapter import accelerator_status
+
+    return accelerator_status()
+
+
 def list_ollama_models(base_url: str | None = None) -> list[str]:
     """List models installed on the Ollama server for the config UI's model picker.
 

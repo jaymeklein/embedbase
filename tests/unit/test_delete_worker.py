@@ -150,8 +150,44 @@ def test_delete_task_hard_deletes_sqlite_row(monkeypatch) -> None:
 
     delete_document.apply(args=["doc1", "col1"])
 
-    fake_session.execute.assert_called_once()
+    assert fake_session.execute.called  # row delete + remaining-docs check
     fake_session.commit.assert_called_once()
+
+
+def test_delete_task_drops_collection_when_emptied(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    fake_vs = MagicMock()
+    fake_session = MagicMock()
+    fake_session.__enter__ = MagicMock(return_value=fake_session)
+    fake_session.__exit__ = MagicMock(return_value=False)
+    fake_session.execute.return_value.first.return_value = None  # no documents remain
+
+    monkeypatch.setattr("worker.tasks._vector_store_singleton", fake_vs)
+    monkeypatch.setattr("worker.tasks._redis_singleton", FakeRedis())
+    monkeypatch.setattr("worker.tasks.SessionLocal", MagicMock(return_value=fake_session))
+
+    delete_document.apply(args=["doc1", "col1"])
+
+    fake_vs.delete_collection.assert_called_once_with("col1")
+
+
+def test_delete_task_keeps_collection_when_docs_remain(monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    fake_vs = MagicMock()
+    fake_session = MagicMock()
+    fake_session.__enter__ = MagicMock(return_value=fake_session)
+    fake_session.__exit__ = MagicMock(return_value=False)
+    fake_session.execute.return_value.first.return_value = ("doc2",)  # a document remains
+
+    monkeypatch.setattr("worker.tasks._vector_store_singleton", fake_vs)
+    monkeypatch.setattr("worker.tasks._redis_singleton", FakeRedis())
+    monkeypatch.setattr("worker.tasks.SessionLocal", MagicMock(return_value=fake_session))
+
+    delete_document.apply(args=["doc1", "col1"])
+
+    fake_vs.delete_collection.assert_not_called()
 
 
 def test_delete_task_retries_on_vector_store_error(monkeypatch) -> None:

@@ -26,7 +26,7 @@ _FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "docling"
 
 def test_parser_config_defaults():
     cfg = ParserConfig()
-    assert cfg.pdf_backend == "pymupdf"
+    assert cfg.pdf_backend is None  # unset → UI pre-selects from GPU; parses as pymupdf
     assert cfg.docling_ocr is False
     assert cfg.docling_ocr_engine == "easyocr"
     assert cfg.docling_tables is True
@@ -116,6 +116,39 @@ def test_flash_attention_on_ampere_constructs(monkeypatch):
     monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (8, 6))
     parser = mod.DoclingParser(device="cuda", flash_attention=True)
     assert parser._flash_attention is True
+
+
+# ── accelerator_status (config UI's PDF-backend picker) ───────────────────────
+
+
+def test_accelerator_status_no_gpu(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: None)
+    status = mod.accelerator_status()
+    assert status == {"device": "cpu", "capability": None, "name": None, "compatible": False}
+
+
+def test_accelerator_status_old_gpu_is_incompatible(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (7, 5))  # Turing
+    monkeypatch.setattr(mod, "_gpu_name", lambda: "RTX 2060 Super")
+    status = mod.accelerator_status()
+    assert status["device"] == "cuda"
+    assert status["capability"] == "7.5"
+    assert status["compatible"] is False
+
+
+def test_accelerator_status_ampere_is_compatible(monkeypatch):
+    import api.adapters.parsers.docling_adapter as mod
+
+    monkeypatch.setattr(mod, "_cuda_compute_capability", lambda: (8, 6))  # Ampere
+    monkeypatch.setattr(mod, "_gpu_name", lambda: "RTX 3080")
+    status = mod.accelerator_status()
+    assert status["device"] == "cuda"
+    assert status["compatible"] is True
+    assert status["name"] == "RTX 3080"
 
 
 # ── Auto-detection (zero-config GPU) ──────────────────────────────────────────
