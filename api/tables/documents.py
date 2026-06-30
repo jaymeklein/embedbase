@@ -19,5 +19,9 @@ documents = Table(
     Column("created_at", String, nullable=False),
     Column("updated_at", String, nullable=False),
     Column("status", String, nullable=True),
+    # The embedding model that produced this document's vectors. NULL = unknown
+    # (ingested before this column existed). Compare to the live config to find
+    # documents needing re-ingestion after a model change.
+    Column("embedding_model", String, nullable=True),
     Index("documents_collection_idx", "collection_id"),
 )

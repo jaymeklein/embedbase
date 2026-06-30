@@ -311,9 +311,9 @@ export interface Health {
 
 // ── Config (mirrors api/models/config.py; secrets masked by GET) ─────────────
 
-/** The tag-suggester backend config (keyword = local, llm = Ollama/OpenAI-compat). */
+/** The tag-suggester config — LLM-only (Ollama / OpenAI-compatible). */
 export interface TagSuggesterConfig {
-  backend: string // "keyword" | "llm"
+  backend: string // always "llm" (tag suggestion is LLM-only)
   provider: string // "ollama" | "openai_compat"
   model: string
   base_url: string | null
@@ -327,11 +327,38 @@ export interface TaggingConfig {
   auto_tag_on_ingest: boolean
 }
 
+/** The embedding-model config. Changing provider/model changes vector dimensions. */
+export interface EmbeddingConfig {
+  provider: string // "ollama" | "sentence_transformers" | "openai_compat" | "gemini"
+  model: string
+  batch_size: number
+  base_url: string | null
+  api_key: string | null // masked on GET as SECRET_MASK; write-only
+  concurrency: number
+  output_dimensionality: number | null // gemini only
+}
+
+/** Parser config — only the PDF backend is edited in the UI; the rest round-trips. */
+export interface ParserConfig {
+  pdf_backend: string | null // null = never picked (UI pre-selects from GPU) | "pymupdf" | "docling"
+  [key: string]: unknown
+}
+
+/** `GET /config/accelerator` — GPU suitability for the docling PDF backend. */
+export interface Accelerator {
+  device: string // "cuda" | "cpu"
+  capability: string | null // CUDA compute capability, e.g. "8.6"
+  name: string | null // GPU name, when present
+  compatible: boolean // Ampere+ CUDA → docling runs fast
+}
+
 /**
  * `GET /config` — the live AppConfig with secrets masked. Only the fields the
  * Settings UI edits are typed; every other section round-trips untouched on PUT.
  */
 export interface AppConfig {
+  embedding: EmbeddingConfig
+  parsers: ParserConfig
   tagging: TaggingConfig
   [section: string]: unknown
 }
