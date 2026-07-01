@@ -1,20 +1,18 @@
-"""Unit tests for the worker idempotency / stale-processing guard.
+"""Unit tests for the worker idempotency / progress-heartbeat guard.
 
 Verifies that _run_ingestion:
-  - Skips a job whose status is 'processing' with a fresh timestamp.
-  - Re-processes (reclaims) a job whose status is 'processing' but whose
-    processing_started_at is older than STALE_PROCESSING_SECONDS.
+  - Skips a 'processing' job that still has a live heartbeat (another worker is
+    actively progressing it).
+  - Reclaims a 'processing' job whose heartbeat has expired (it stopped making
+    progress), regardless of how long it had been running.
 """
 
-from datetime import UTC, datetime, timedelta
-
-import pytest
 from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from api.tables import documents, job_records, metadata
-from worker.tasks import STALE_PROCESSING_SECONDS, _run_ingestion
+from worker.tasks import _heartbeat_key, _run_ingestion
 
 
 class FakeEmbedder:
@@ -33,6 +31,16 @@ class FakeStore:
     def upsert(self, collection_id: str, chunks: list, vectors: list) -> None:
         self.upserts.append((collection_id, chunks, vectors))
 
+    def iter_document_chunks(self, collection_id: str, document_id: str) -> list:
+        out: list = []
+        for _cid, chunks, _vec in self.upserts:
+            out.extend(
+                (c.id, c.metadata.document_id, c.text)
+                for c in chunks
+                if c.metadata.document_id == document_id
+            )
+        return out
+
 
 class FakeRedis:
     def __init__(self) -> None:
@@ -43,6 +51,9 @@ class FakeRedis:
 
     def set(self, key: str, value: str, ex: int | None = None) -> None:
         self._store[key] = value
+
+    def exists(self, key: str) -> int:
+        return 1 if key in self._store else 0
 
     def incr(self, key: str) -> int:
         self._store[key] = str(int(self._store.get(key, 0)) + 1)
@@ -81,40 +92,43 @@ def _seed(factory, job_id: str, status: str, processing_started_at=None) -> None
         s.commit()
 
 
-def test_fresh_processing_job_is_skipped(tmp_path):
-    """A job in 'processing' with a fresh timestamp must not be re-ingested."""
+def test_processing_job_with_live_heartbeat_is_skipped(tmp_path):
+    """A 'processing' job that still has a heartbeat must not be re-ingested —
+    even if it has been running a long time (it's progressing, not stuck)."""
     factory = _db_factory(tmp_path)
-    now = datetime.now(UTC).replace(tzinfo=None)
-    _seed(factory, "job_fresh", "processing", processing_started_at=now)
+    _seed(factory, "job_live", "processing")
+
+    redis = FakeRedis()
+    redis.set(_heartbeat_key("job_live"), "1")  # another worker is beating
 
     store = FakeStore()
     result = _run_ingestion(
-        "job_fresh", str(tmp_path / "x.txt"), "col_1", "doc_1", ".txt",
+        "job_live", str(tmp_path / "x.txt"), "col_1", "doc_1", ".txt",
         session_factory=factory,
         embedder=FakeEmbedder(),
         vector_store=store,
-        redis_client=FakeRedis(),
+        redis_client=redis,
     )
     assert result == 0
     assert store.upserts == []
 
 
-def test_stale_processing_job_is_reclaimed(tmp_path):
-    """A job in 'processing' older than STALE_PROCESSING_SECONDS must be re-ingested."""
+def test_processing_job_without_heartbeat_is_reclaimed(tmp_path):
+    """A 'processing' job whose heartbeat has expired (stopped progressing) is
+    reclaimed and re-ingested."""
     factory = _db_factory(tmp_path)
-    stale_ts = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=STALE_PROCESSING_SECONDS + 60)
-    _seed(factory, "job_stale", "processing", processing_started_at=stale_ts)
+    _seed(factory, "job_dead", "processing")
 
     txt = tmp_path / "doc.txt"
     txt.write_text("the quick brown fox " * 50)
 
     store = FakeStore()
     result = _run_ingestion(
-        "job_stale", str(txt), "col_1", "doc_1", ".txt",
+        "job_dead", str(txt), "col_1", "doc_1", ".txt",
         session_factory=factory,
         embedder=FakeEmbedder(),
         vector_store=store,
-        redis_client=FakeRedis(),
+        redis_client=FakeRedis(),  # no heartbeat seeded
     )
     assert result > 0
     assert len(store.upserts) > 0
