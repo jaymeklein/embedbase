@@ -24,7 +24,6 @@ from sqlalchemy.pool import StaticPool
 from api.dependencies import (
     get_db,
     require_embedding_adapter,
-    require_redis_client,
     require_vector_store,
 )
 from api.main import create_app
@@ -53,15 +52,6 @@ class _FakeEmbedder:
         return 3
 
 
-class _FakeRedis:
-    """No BM25 corpus -> search falls back to semantic_only."""
-
-    def get(self, key: str) -> object:
-        return None
-
-    def set(self, key: str, value: object, ex: int | None = None) -> None: ...
-
-
 class _SeededVectorStore:
     def __init__(self, by_collection: dict[str, list[SearchResult]]) -> None:
         self._by = by_collection
@@ -70,6 +60,12 @@ class _SeededVectorStore:
         self, collection_id: str, vector: list[float], top_k: int, filters: dict | None = None
     ) -> list[SearchResult]:
         return [r.model_copy() for r in self._by.get(collection_id, [])][:top_k]
+
+    def bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        # No FTS matches -> search falls back to semantic_only (as before).
+        return {}
 
     def delete_document(self, collection_id: str, document_id: str) -> None:
         self._by[collection_id] = [
@@ -140,7 +136,6 @@ async def search_app():
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[require_embedding_adapter] = lambda: _FakeEmbedder()
     app.dependency_overrides[require_vector_store] = lambda: store
-    app.dependency_overrides[require_redis_client] = lambda: _FakeRedis()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac, store

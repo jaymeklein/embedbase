@@ -5,9 +5,7 @@ requires one edit.  Do not repeat these literals elsewhere in the codebase.
 """
 
 # Internal Docker-network ports (container-to-container; no host conflict risk)
-CHROMA_PORT: int = 8000
 POSTGRES_PORT: int = 5432
-QDRANT_PORT: int = 6333
 REDIS_PORT: int = 6379
 
 # Derived full Redis URL (avoids repeating the port literal in URL strings)

@@ -1,9 +1,10 @@
 """Synchronous database access for Celery tasks.
 
 Celery tasks are plain sync functions, so the worker uses a synchronous
-SQLAlchemy engine against the same SQLite file the API serves. Table objects are
-imported from ``api.tables`` (Core ``Table`` definitions, no engine/settings
-coupling) so both processes share one schema definition.
+SQLAlchemy engine against the same database the API serves (``DATABASE_URL``,
+SQLite by default). Table objects are imported from ``api.tables`` (Core
+``Table`` definitions, no engine/settings coupling) so both processes share
+one schema definition.
 """
 
 from __future__ import annotations
@@ -45,17 +46,19 @@ __all__ = [
 ]
 
 _DB_PATH = os.environ.get("DATABASE_PATH", "/store/embedbase.db")
+_DB_URL = os.environ.get("DATABASE_URL") or f"sqlite:///{_DB_PATH}"
 
-engine = create_engine(f"sqlite:///{_DB_PATH}", future=True)
+engine = create_engine(_DB_URL, future=True)
 
-
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragmas(dbapi_conn, _record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+# Pragmas are SQLite-only (no-op / invalid on Postgres).
+if engine.dialect.name == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, _record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 SessionLocal = sessionmaker(engine, class_=Session, expire_on_commit=False)

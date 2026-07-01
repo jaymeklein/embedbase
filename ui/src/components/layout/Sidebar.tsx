@@ -14,10 +14,34 @@ const ITEMS: NavItem[] = [
   { to: '/workspaces', label: 'Workspaces', icon: FolderKanban },
   { to: '/graph', label: 'Graph', icon: Workflow },
   { to: '/search', label: 'Search', icon: Search },
+]
+
+// Grouped under the "Admin" heading in the sidebar.
+const ADMIN_ITEMS: NavItem[] = [
   { to: '/indexing', label: 'Indexing', icon: DatabaseZap },
   { to: '/ingestion-queue', label: 'Ingestion Queue', icon: ListChecks },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
+
+function NavItemLink({ to, label, icon: Icon, end }: NavItem) {
+  return (
+    <NavLink
+      to={to}
+      end={end}
+      className={({ isActive }) =>
+        cn(
+          'flex items-center gap-2.5 rounded-control px-3 py-2 text-[13px] font-medium transition-colors duration-150',
+          isActive
+            ? 'bg-accent-weak text-accent'
+            : 'text-ink-muted hover:bg-canvas hover:text-ink',
+        )
+      }
+    >
+      <Icon className="h-5 w-5" />
+      {label}
+    </NavLink>
+  )
+}
 
 export function Sidebar() {
   return (
@@ -29,23 +53,14 @@ export function Sidebar() {
         <span className="font-semibold tracking-tight text-ink">EmbedBase</span>
       </div>
       <nav className="flex flex-col gap-0.5 px-3 py-2">
-        {ITEMS.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-2.5 rounded-control px-3 py-2 text-[13px] font-medium transition-colors duration-150',
-                isActive
-                  ? 'bg-accent-weak text-accent'
-                  : 'text-ink-muted hover:bg-canvas hover:text-ink',
-              )
-            }
-          >
-            <Icon className="h-5 w-5" />
-            {label}
-          </NavLink>
+        {ITEMS.map((item) => (
+          <NavItemLink key={item.to} {...item} />
+        ))}
+        <div className="mt-4 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+          Admin
+        </div>
+        {ADMIN_ITEMS.map((item) => (
+          <NavItemLink key={item.to} {...item} />
         ))}
       </nav>
     </aside>
