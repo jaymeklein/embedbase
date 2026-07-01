@@ -37,10 +37,47 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-# Reclaim a "processing" job only once it has outlived the hard task limit (plus a
-# margin) — otherwise it's still running, just slow (CPU docling). Tracks
-# CELERY_TASK_TIME_LIMIT so the two never drift apart.
-STALE_PROCESSING_SECONDS = int(os.environ.get("CELERY_TASK_TIME_LIMIT", "1860")) + 60
+# A "processing" job is alive while it keeps a fresh heartbeat, refreshed on every
+# progress event. This is what makes a long-but-advancing ingestion safe: the work
+# is chunked (each chunk is fast and individually bounded by the embed adapter's
+# per-request timeout), so a job that keeps making progress is healthy no matter how
+# long it runs — it never trips a wall-clock total-time limit. Only a job that STOPS
+# progressing lets its heartbeat expire and gets reclaimed. The TTL must exceed the
+# largest gap between progress events (an opaque docling convert is the worst case).
+HEARTBEAT_TTL = int(os.environ.get("INGESTION_HEARTBEAT_TTL", "600"))  # 10 min
+
+# Global progress topic for the Ingestion Queue tab — fed alongside the
+# per-collection ``ingestion:{collection_id}`` topic the Documents view uses.
+_QUEUE_TOPIC = "ingestion-queue"
+
+
+def _heartbeat_key(job_id: str) -> str:
+    return f"ingest:hb:{job_id}"
+
+
+def _beat(redis_client: Any, job_id: str) -> None:
+    """Refresh a job's progress heartbeat; best-effort (never breaks ingestion)."""
+    try:
+        redis_client.set(_heartbeat_key(job_id), "1", ex=HEARTBEAT_TTL)
+    except Exception:  # pragma: no cover - heartbeat is best-effort
+        logger.debug("heartbeat failed", job_id=job_id)
+
+
+def _job_alive(redis_client: Any, job_id: str) -> bool:
+    """True while a job's heartbeat is fresh. On a redis error, assume alive — a
+    transient blip must not trigger reclaiming (and double-processing) a live job."""
+    try:
+        return bool(redis_client.exists(_heartbeat_key(job_id)))
+    except Exception:  # pragma: no cover
+        return True
+
+
+def _clear_beat(redis_client: Any, job_id: str) -> None:
+    """Drop a job's heartbeat on task exit; best-effort (never breaks ingestion)."""
+    try:
+        redis_client.delete(_heartbeat_key(job_id))
+    except Exception:  # pragma: no cover - best-effort
+        logger.debug("heartbeat clear failed", job_id=job_id)
 
 # Lazily-built singletons. Tests override these module globals (or pass deps
 # directly to ``_run_ingestion``) to avoid real Redis / Chroma / model loads.
@@ -371,6 +408,18 @@ def _parse_with_progress(parser: Any, file_path: str, document_id: str, emit: An
     return parser.parse(file_path, document_id)
 
 
+def _chunk_label(chunk: Chunk) -> str:
+    """Short human label for a chunk in the Ingestion Queue's live list."""
+    md = chunk.metadata
+    if md.heading_path:
+        return md.heading_path[:80]
+    if md.page_number is not None:
+        return f"p.{md.page_number}"
+    if md.symbol_name:
+        return md.symbol_name[:80]
+    return " ".join(chunk.text.split())[:80]
+
+
 def _run_ingestion(
     job_id: str,
     file_path: str,
@@ -393,39 +442,59 @@ def _run_ingestion(
     redis_client = redis_client or _redis()
     config = config or get_config()
 
+    # Identity for the queue view (filename + collection name), resolved once.
+    with session_factory() as _s:
+        filename = _s.execute(
+            select(job_records.c.filename).where(job_records.c.job_id == job_id)
+        ).scalar() or document_id
+        collection_name = _s.execute(
+            select(collections.c.name).where(collections.c.id == collection_id)
+        ).scalar() or collection_id
+
     def emit(
         phase: str,
         current: int | None = None,
         total: int | None = None,
         status: str = "processing",
+        chunks: list[dict[str, Any]] | None = None,
+        error: str | None = None,
     ) -> None:
-        """Best-effort publish of a progress event; never breaks ingestion."""
+        """Best-effort publish of a progress event; never breaks ingestion.
+
+        Fans out to two topics: ``ingestion:{collection_id}`` (the per-collection
+        Documents view) and the global ``ingestion-queue`` (the Ingestion Queue tab).
+        ``chunks`` carries the labels of the chunks a batch just embedded, for the
+        queue's live per-chunk list; ``error`` the failure reason on a ``failed`` event.
+        """
+        _beat(redis_client, job_id)  # progress = alive; resets the stale timer
         try:
             pct = round(100 * current / total) if current is not None and total else None
+            payload: dict[str, Any] = {
+                "document_id": document_id,
+                "collection_id": collection_id,
+                "collection_name": collection_name,
+                "filename": filename,
+                "phase": phase,
+                "current": current,
+                "total": total,
+                "pct": pct,
+                "status": status,
+            }
+            if chunks:
+                payload["chunks"] = chunks
+            if error:
+                payload["error"] = error
             realtime.publish(
-                redis_client,
-                f"ingestion:{collection_id}",
-                {
-                    "document_id": document_id,
-                    "collection_id": collection_id,
-                    "phase": phase,
-                    "current": current,
-                    "total": total,
-                    "pct": pct,
-                    "status": status,
-                },
-                snapshot_key=document_id,
+                redis_client, f"ingestion:{collection_id}", payload, snapshot_key=document_id
             )
+            realtime.publish(redis_client, _QUEUE_TOPIC, payload, snapshot_key=document_id)
         except Exception:  # pragma: no cover - progress is best-effort
             logger.debug("progress emit failed", document_id=document_id, phase=phase)
 
     # --- Idempotency guard ---------------------------------------------------
     with session_factory() as session:
         row = session.execute(
-            select(
-                job_records.c.status,
-                job_records.c.processing_started_at,
-            ).where(job_records.c.job_id == job_id)
+            select(job_records.c.status).where(job_records.c.job_id == job_id)
         ).fetchone()
         if row is None:
             logger.warning("ingest: unknown job", job_id=job_id)
@@ -434,13 +503,13 @@ def _run_ingestion(
             logger.info("ingest: already done", job_id=job_id)
             return 0
         if row.status == "processing":
-            started = row.processing_started_at
-            now = datetime.now(UTC).replace(tzinfo=None)
-            elapsed = (now - started).total_seconds() if started else 0
-            if started is None or elapsed < STALE_PROCESSING_SECONDS:
+            # Still beating → another worker is actively progressing it; back off.
+            # No heartbeat → it stopped (crashed/lost), so reclaim it regardless of
+            # how long it ran — long-but-progressing jobs keep their heartbeat alive.
+            if _job_alive(redis_client, job_id):
                 logger.info("ingest: already handling", job_id=job_id)
                 return 0
-            logger.warning("ingest: reclaiming stale job", job_id=job_id, elapsed_s=int(elapsed))
+            logger.warning("ingest: reclaiming job with no heartbeat", job_id=job_id)
         _set_job_status(
             session,
             job_id,
@@ -448,48 +517,87 @@ def _run_ingestion(
             processing_started_at=datetime.now(UTC).replace(tzinfo=None),
         )
         session.commit()
+    _beat(redis_client, job_id)  # first heartbeat, before any slow work begins
 
-    # --- Parse → chunk -------------------------------------------------------
+    # The finally drops this execution's heartbeat on ANY exit (done, failed, or a
+    # worker restart killing the task) so the next delivery reclaims it cleanly
+    # instead of seeing a stale "alive" beat and backing off.
     try:
-        emit("parsing")
-        parser = get_parser(file_type, config.chunking, parsers=config.parsers)
-        chunks = _parse_with_progress(parser, file_path, document_id, emit)
+        # --- Parse → chunk ---------------------------------------------------
+        try:
+            emit("parsing")
+            parser = get_parser(file_type, config.chunking, parsers=config.parsers)
+            chunks = _parse_with_progress(parser, file_path, document_id, emit)
 
-        # --- Embed (batched) → upsert ---------------------------------------
-        if chunks:
-            _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
-            _apply_effective_tags(session_factory, collection_id, document_id, chunks)
-            batch_size = config.embedding.batch_size
-            texts = [c.text for c in chunks]
-            vectors: list[list[float]] = []
-            for start in range(0, len(texts), batch_size):
-                emit("embedding", current=start, total=len(texts))
-                vectors.extend(embedder.embed_batch(texts[start : start + batch_size]))
-            emit("storing", current=len(texts), total=len(texts))
-            vector_store.upsert(collection_id, chunks, vectors)
-            _update_bm25_index(redis_client, collection_id, chunks)
-    except Exception:
-        emit("failed", status="failed")
-        raise
+            # --- Embed (batched) → upsert, resumable -------------------------
+            if chunks:
+                # Resume: skip chunks already stored for this document. Chunk ids are
+                # deterministic (document_id + index), so re-parsing yields the same ids
+                # and anything already in the store was embedded by a prior (interrupted)
+                # run. If the embedding model changed since, the stored vectors are stale
+                # → re-embed all (the per-batch upsert overwrites them by id).
+                with session_factory() as _s:
+                    doc_model = _s.execute(
+                        select(documents.c.embedding_model).where(documents.c.id == document_id)
+                    ).scalar()
+                model_changed = doc_model is not None and doc_model != config.embedding.model
+                existing_ids: set[str] = (
+                    set()
+                    if model_changed
+                    else {cid for cid, _, _ in vector_store.iter_document_chunks(collection_id, document_id)}
+                )
 
-    # --- Mark done -----------------------------------------------------------
-    chunk_count = len(chunks)
-    with session_factory() as session:
-        session.execute(
-            update(documents)
-            .where(documents.c.id == document_id)
-            .values(
-                chunk_count=chunk_count,
-                embedding_model=config.embedding.model,
-                updated_at=_now(),
+                _apply_effective_tags(session_factory, collection_id, document_id, chunks)
+                if not existing_ids:  # fresh run only — auto-tagging is doc-level/expensive
+                    _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
+
+                pending = [c for c in chunks if c.id not in existing_ids]
+                total = len(chunks)
+                done = total - len(pending)  # already persisted by a prior run
+                if done:
+                    logger.info("ingest: resuming", job_id=job_id, done=done, total=total)
+                batch_size = config.embedding.batch_size
+                emit("embedding", current=done, total=total)  # show the resume point at once
+                for start in range(0, len(pending), batch_size):
+                    batch = pending[start : start + batch_size]
+                    vectors = embedder.embed_batch([c.text for c in batch])
+                    vector_store.upsert(collection_id, batch, vectors)  # persist now → resumable
+                    done += len(batch)
+                    # Reveal the chunks this batch just embedded, as they occur.
+                    emit(
+                        "embedding",
+                        current=done,
+                        total=total,
+                        chunks=[{"index": c.metadata.chunk_index, "label": _chunk_label(c)} for c in batch],
+                    )
+                emit("storing", current=total, total=total)
+                # Rebuild this document's BM25 entries from the store — idempotent, so
+                # a resumed run doesn't duplicate corpus rows.
+                _reindex_document_bm25(redis_client, vector_store, collection_id, document_id)
+        except Exception as exc:
+            emit("failed", status="failed", error=str(exc)[:300])
+            raise
+
+        # --- Mark done -------------------------------------------------------
+        chunk_count = len(chunks)
+        with session_factory() as session:
+            session.execute(
+                update(documents)
+                .where(documents.c.id == document_id)
+                .values(
+                    chunk_count=chunk_count,
+                    embedding_model=config.embedding.model,
+                    updated_at=_now(),
+                )
             )
-        )
-        _set_job_status(session, job_id, "done", chunk_count=chunk_count)
-        session.commit()
+            _set_job_status(session, job_id, "done", chunk_count=chunk_count)
+            session.commit()
 
-    emit("done", current=chunk_count, total=chunk_count, status="done")
-    logger.info("ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count)
-    return chunk_count
+        emit("done", current=chunk_count, total=chunk_count, status="done")
+        logger.info("ingest complete", job_id=job_id, document_id=document_id, chunks=chunk_count)
+        return chunk_count
+    finally:
+        _clear_beat(redis_client, job_id)
 
 
 def _mark_failed(job_id: str, error: str) -> None:
