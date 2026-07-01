@@ -205,6 +205,7 @@ def _rank_candidates(
         ranked = _rank_by_bm25(candidates, bm25_scores)
         for rank, result in enumerate(ranked, start=1):
             result.rank = rank
+            result.score = bm25_scores.get(result.chunk_id, 0.0)  # report the real BM25 score
         return ranked, SearchMode.BM25
     fused = _reciprocal_rank_fusion(candidates, _rank_by_bm25(candidates, bm25_scores), alpha)
     return fused, SearchMode.HYBRID
@@ -284,12 +285,17 @@ _RRF_K = 60
 def _merge_collections_rrf(per_collection: list[list[SearchResult]]) -> list[SearchResult]:
     """Fuse per-collection result lists with second-level Reciprocal Rank Fusion.
 
-    Each collection's results are already rank-ordered. Re-scoring every result
-    by ``1 / (k + rank_within_collection)`` and globally sorting normalises the
-    differing raw-score scales across backends (e.g. Chroma/pgvector
-    ``1 - distance`` vs Qdrant's native similarity) so no single collection's
-    score range dominates the merge. Results are copied via model_copy() so the
-    per-collection originals are not mutated.
+    RRF re-scores every result by ``1 / (k + rank_within_collection)`` to normalise
+    the differing raw-score scales ACROSS backends (e.g. Chroma/pgvector
+    ``1 - distance`` vs Qdrant's native similarity) so no single collection's score
+    range dominates the merge.
+
+    But that fusion score is a rank-only value (identical for every query) — so when
+    only ONE collection contributed results there is nothing to normalise, and
+    overwriting would replace the real relevance score (similarity / BM25 / hybrid)
+    with a meaningless constant. In that case we keep the per-collection scores as-is;
+    RRF only kicks in for a genuine cross-collection merge. Results are copied via
+    model_copy() so the per-collection originals are not mutated.
 
     Args:
         per_collection: One rank-ordered result list per collection.
@@ -297,6 +303,14 @@ def _merge_collections_rrf(per_collection: list[list[SearchResult]]) -> list[Sea
     Returns:
         New, globally re-ranked list of copied SearchResult objects.
     """
+    contributing = [results for results in per_collection if results]
+    if len(contributing) == 1:
+        # Single source: preserve the real scores; the list is already rank-ordered.
+        merged = [result.model_copy() for result in contributing[0]]
+        for rank, result in enumerate(merged, start=1):
+            result.rank = rank
+        return merged
+
     fused: list[SearchResult] = []
     for results in per_collection:
         for rank, result in enumerate(results, start=1):
