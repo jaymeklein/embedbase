@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { DatabaseZap, FolderKanban, LayoutDashboard, Search, Settings, Workflow, type LucideIcon } from 'lucide-react'
+import { DatabaseZap, FolderKanban, LayoutDashboard, ListChecks, Search, Settings, Workflow, type LucideIcon } from 'lucide-react'
 import { cn } from '../../lib/cn'
 
 interface NavItem {
@@ -15,6 +15,7 @@ const ITEMS: NavItem[] = [
   { to: '/graph', label: 'Graph', icon: Workflow },
   { to: '/search', label: 'Search', icon: Search },
   { to: '/indexing', label: 'Indexing', icon: DatabaseZap },
+  { to: '/ingestion-queue', label: 'Ingestion Queue', icon: ListChecks },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

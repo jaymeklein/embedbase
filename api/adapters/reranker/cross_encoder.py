@@ -27,7 +27,10 @@ class CrossEncoderReranker:
         head, tail = results[: self._top_n], results[self._top_n :]
         scores = self._model.predict([(query, r.text) for r in head])
         scored = sorted(zip(head, scores, strict=True), key=lambda p: p[1], reverse=True)
-        ordered = [r for r, _ in scored]
+        ordered = []
+        for r, s in scored:
+            r.score = float(s)  # surface the cross-encoder relevance as the result score
+            ordered.append(r)
         ranked = ordered + tail
         for rank, result in enumerate(ranked, start=1):
             result.rank = rank
