@@ -2,7 +2,7 @@
 
 import warnings
 
-from api.constants import CHROMA_PORT
+from api.constants import POSTGRES_PORT
 from api.models.config import AppConfig
 
 
@@ -11,8 +11,8 @@ def test_defaults_are_populated():
     assert cfg.embedding.provider == "ollama"
     assert cfg.embedding.model == "embeddinggemma"
     assert cfg.embedding.batch_size == 32
-    assert cfg.vector_store.backend == "chroma"
-    assert cfg.vector_store.chroma.port == CHROMA_PORT
+    assert cfg.vector_store.host == "postgres"
+    assert cfg.vector_store.port == POSTGRES_PORT
     assert cfg.chunking.sliding_window.max_tokens == 512
     assert cfg.chunking.sliding_window.overlap_tokens == 64
     assert cfg.chunking.csv.rows_per_chunk == 10

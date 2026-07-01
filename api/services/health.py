@@ -10,7 +10,8 @@ import time
 from functools import lru_cache
 from typing import Any
 
-from api.adapters.base import EmbeddingAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter
+from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.models.config import AppConfig
 from api.settings import settings
 
@@ -44,7 +45,7 @@ def lan_ip() -> str:
 
 
 async def build_health(
-    store: VectorStoreAdapter | None,
+    store: PgvectorAdapter | None,
     embedding_adapter: EmbeddingAdapter | None,
     config: AppConfig | None = None,
 ) -> dict[str, Any]:
@@ -52,9 +53,9 @@ async def build_health(
 
     The vector-store probe is a real round-trip (``store.ping()``) run off the
     event loop, so ``vector_store_connected`` reflects actual reachability rather
-    than merely whether an adapter object was constructed. The displayed backend
-    and embedding provider/model come from the live :class:`AppConfig` (the
-    editable config), not from ``.env``.
+    than merely whether an adapter object was constructed. The embedding
+    provider/model come from the live :class:`AppConfig` (the editable config),
+    not from ``.env``.
 
     Args:
         store: The active vector-store adapter, or None before startup completes.
@@ -69,7 +70,7 @@ async def build_health(
         "status": "ok",
         "service": "api",
         "version": _VERSION,
-        "vector_store": config.vector_store.backend if config else "unknown",
+        "vector_store": "postgres",
         "vector_store_connected": connected,
         "embedding_provider": config.embedding.provider if config else "unknown",
         "embedding_model": config.embedding.model if config else "unknown",

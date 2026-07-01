@@ -22,7 +22,6 @@ from starlette.types import ASGIApp
 from api.db import AsyncSessionLocal
 from api.dependencies import (
     get_embedding_adapter,
-    get_redis_client,
     get_reranker,
     get_vector_store,
 )
@@ -58,7 +57,6 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
         """Hybrid semantic + keyword search across one or more collections."""
         embedder = _require(get_embedding_adapter(), "Embedding")
         vector_store = _require(get_vector_store(), "Vector store")
-        redis_client = _require(get_redis_client(), "Redis")
         async with AsyncSessionLocal() as db:
             return await tools.search_documents(
                 query=query,
@@ -70,7 +68,6 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
                 db=db,
                 embedder=embedder,
                 vector_store=vector_store,
-                redis_client=redis_client,
                 reranker=get_reranker(),  # optional — None skips the rerank stage
             )
 

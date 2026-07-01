@@ -8,7 +8,8 @@ management-plane routers.
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_db, get_tagging_config, require_redis_client
+from api.adapters.vector_store.pgvector import PgvectorAdapter
+from api.dependencies import get_db, get_tagging_config, require_vector_store
 from api.models.config import TaggingConfig
 from api.schemas.tags import TagCreate, TagMerge, TagUpdate
 from api.services import tag_suggest
@@ -111,11 +112,11 @@ async def suggest_collection_tags(
     ws_id: str,
     col_id: str,
     db: AsyncSession = Depends(get_db),
-    redis: object = Depends(require_redis_client),
+    vector_store: PgvectorAdapter = Depends(require_vector_store),
     tagging: TaggingConfig = Depends(get_tagging_config),
 ):
     return await tag_suggest.suggest_collection_tags(
-        ws_id, col_id, db=db, redis=redis, tagging=tagging
+        ws_id, col_id, db=db, vector_store=vector_store, tagging=tagging
     )
 
 
@@ -125,9 +126,9 @@ async def suggest_document_tags(
     col_id: str,
     doc_id: str,
     db: AsyncSession = Depends(get_db),
-    redis: object = Depends(require_redis_client),
+    vector_store: PgvectorAdapter = Depends(require_vector_store),
     tagging: TaggingConfig = Depends(get_tagging_config),
 ):
     return await tag_suggest.suggest_document_tags(
-        ws_id, col_id, doc_id, db=db, redis=redis, tagging=tagging
+        ws_id, col_id, doc_id, db=db, vector_store=vector_store, tagging=tagging
     )

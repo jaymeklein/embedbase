@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from api.constants import CHROMA_PORT, POSTGRES_PORT, QDRANT_PORT
+from api.constants import POSTGRES_PORT
 
 
 def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: str = "") -> None:
@@ -38,31 +38,15 @@ class EmbeddingConfig(BaseModel):
     output_dimensionality: int | None = None
 
 
-class ChromaConfig(BaseModel):
-    host: str = "chroma"
-    port: int = CHROMA_PORT
-    auth_token: str = "embedbase-internal"
+class VectorStoreConfig(BaseModel):
+    """Connection settings for the pgvector-backed chunk store (Postgres only)."""
 
-
-class PgvectorConfig(BaseModel):
     host: str = "postgres"
     port: int = POSTGRES_PORT
     database: str = "embedbase"
     user: str = "embedbase"
     password: str = ""
     index_min_rows: int = 100
-
-
-class QdrantConfig(BaseModel):
-    host: str = "qdrant"
-    port: int = QDRANT_PORT
-
-
-class VectorStoreConfig(BaseModel):
-    backend: str = "chroma"
-    chroma: ChromaConfig = ChromaConfig()
-    pgvector: PgvectorConfig = PgvectorConfig()
-    qdrant: QdrantConfig = QdrantConfig()
 
 
 class SlidingWindowConfig(BaseModel):
@@ -91,7 +75,6 @@ class SearchConfig(BaseModel):
     retrieval_fan_out: int = 4
     max_fan_out: int = 10
     hybrid_default_alpha: float = 0.7
-    bm25_cache_ttl: int = 60
 
 
 class RerankerConfig(BaseModel):

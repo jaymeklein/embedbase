@@ -27,7 +27,7 @@ from typing import Any, TypeVar
 
 from api.models.chunk import Chunk
 from api.models.document import DocumentSummary
-from api.models.search import SearchResult
+from api.models.search import SearchFilters, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +65,26 @@ _UPSERT_SQL = (
     "text = EXCLUDED.text, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding"
 )
 
+# {filter} is an optional AND-chain of metadata predicates (see _metadata_filter_sql),
+# folded into the WHERE so restrictive tag/filename filters cut rows during the index
+# scan instead of after it (Phase 4 pre-filter pushdown) — correct top-k, fewer rows.
 _SEARCH_SQL = (
     "SELECT id, text, metadata, 1 - (embedding <=> $1) AS score "
-    "FROM chunks WHERE collection_id = $2 "
+    "FROM chunks WHERE collection_id = $2{filter} "
     "ORDER BY embedding <=> $1 LIMIT $3"
+)
+
+# Real BM25 via ParadeDB pg_search: the ``text ||| $2`` match operator tokenizes
+# the raw query and matches chunks containing any of its terms (OR, recall-first),
+# scored by ``pdb.score(id)`` = Okapi BM25. Scoped to the vector candidate set
+# ($3) — the search service only ever re-ranks candidates, so scoring just those
+# keeps this tiny. ``collection_id`` is in the index (filter pushdown).
+# ponytail: ``|||`` (match-any-term) over ``@@@`` (query-string) so raw user
+# queries with punctuation don't hit the query-string parser.
+_BM25_SQL = (
+    "SELECT id, pdb.score(id) AS score "
+    "FROM chunks WHERE collection_id = $1 AND id = ANY($3::text[]) "
+    "AND text ||| $2"
 )
 
 _LIST_SQL = (
@@ -78,6 +94,38 @@ _LIST_SQL = (
     "WHERE collection_id = $1 AND metadata->>'document_id' IS NOT NULL "
     "GROUP BY 1, 2, 3"
 )
+
+
+def _metadata_filter_sql(
+    filters: SearchFilters | None, next_param: int
+) -> tuple[str, list[Any]]:
+    """Build an AND-chained WHERE fragment + params for metadata pre-filtering.
+
+    Placeholders start at ``$<next_param>`` so callers append the returned params
+    after their fixed args. Mirrors ``api.services.search._matches``: language and
+    filename are exact-match; ``tags`` requires every requested tag present (jsonb
+    array containment ``@>``). Returns ``("", [])`` when there is nothing to filter.
+    """
+    if filters is None:
+        return "", []
+    conditions: list[str] = []
+    params: list[Any] = []
+    idx = next_param
+    if filters.language:
+        conditions.append(f"metadata->>'language' = ${idx}")
+        params.append(filters.language)
+        idx += 1
+    if filters.filename:
+        conditions.append(f"metadata->>'filename' = ${idx}")
+        params.append(filters.filename)
+        idx += 1
+    if filters.tags:
+        conditions.append(f"metadata->'tags' @> ${idx}::jsonb")
+        params.append(json.dumps(filters.tags))
+        idx += 1
+    if not conditions:
+        return "", []
+    return " AND " + " AND ".join(conditions), params
 
 
 class PgvectorAdapter:
@@ -98,12 +146,14 @@ class PgvectorAdapter:
     # -- connection / schema bootstrap --------------------------------------
 
     async def _bootstrap_schema(self) -> None:
-        """Enable the vector extension and create the shared ``chunks`` table."""
+        """Enable the vector + pg_search extensions and create the ``chunks`` table."""
         import asyncpg
 
         conn = await asyncpg.connect(**self._conn_kwargs)
         try:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            # ParadeDB pg_search: real Okapi BM25 inside Postgres (@@@ / paradedb.score).
+            await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_search")
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS chunks ("
                 "id text PRIMARY KEY, collection_id text NOT NULL, text text NOT NULL, "
@@ -112,6 +162,16 @@ class PgvectorAdapter:
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS chunks_collection_id_idx ON chunks (collection_id)"
+            )
+            # Drop the native-FTS stand-in if a prior build created it (idempotent).
+            await conn.execute("DROP INDEX IF EXISTS chunks_text_tsv_idx")
+            await conn.execute("ALTER TABLE chunks DROP COLUMN IF EXISTS text_tsv")
+            # Lexical/BM25 (Phase 3): a pg_search BM25 index over text, maintained
+            # incrementally on every upsert — no corpus, no rebuild. collection_id
+            # is included so the search's WHERE filter pushes into the index scan.
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_bm25_idx ON chunks "
+                "USING bm25 (id, text, collection_id) WITH (key_field = 'id')"
             )
         finally:
             await conn.close()
@@ -216,11 +276,15 @@ class PgvectorAdapter:
 
     # -- search -------------------------------------------------------------
 
-    async def _search(self, collection_id: str, vector: list[float],
-                      top_k: int) -> list[SearchResult]:
+    async def _search(self, collection_id: str, vector: list[float], top_k: int,
+                      filters: SearchFilters | None = None) -> list[SearchResult]:
+        # $1 vector, $2 collection_id, $3 top_k; filter params (if any) start at $4.
+        frag, extra = _metadata_filter_sql(filters, 4)
         pool = await self._get_pool()
         async with pool.acquire() as conn:
-            rows = await conn.fetch(_SEARCH_SQL, vector, collection_id, top_k)
+            rows = await conn.fetch(
+                _SEARCH_SQL.format(filter=frag), vector, collection_id, top_k, *extra
+            )
         return [
             SearchResult(
                 chunk_id=row["id"], text=row["text"], score=float(row["score"]),
@@ -230,20 +294,54 @@ class PgvectorAdapter:
         ]
 
     def search(self, collection_id: str, vector: list[float], top_k: int,
-               filters: dict | None = None) -> list[SearchResult]:
+               filters: SearchFilters | None = None) -> list[SearchResult]:
         """Return the ``top_k`` most cosine-similar chunks in a collection.
 
         Args:
             collection_id: Collection to search.
             vector: Query embedding.
             top_k: Maximum results to return.
-            filters: Accepted for Protocol compatibility; metadata filtering is
-                applied by the search service after ranking (mirrors Chroma).
+            filters: Optional metadata pre-filter (language/filename/tags) folded
+                into the SQL ``WHERE`` (Phase 4 pushdown) so the DB returns only
+                matching rows — fewer scanned, correct top-k under restrictive
+                filters. The search service still re-applies them portably.
 
         Returns:
             Ranked results with ``score`` = ``1 - cosine_distance``.
         """
-        return self._runner.run(self._search(collection_id, vector, top_k))
+        return self._runner.run(self._search(collection_id, vector, top_k, filters))
+
+    # -- lexical / BM25 -----------------------------------------------------
+
+    async def _bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(_BM25_SQL, collection_id, query, chunk_ids)
+        return {row["id"]: float(row["score"]) for row in rows}
+
+    def bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        """Return BM25 relevance scores for the given chunks against ``query``.
+
+        Real Okapi BM25 via ParadeDB ``pg_search`` (``|||`` match + ``pdb.score``)
+        replaces the old Redis BM25 corpus. Scoped to ``chunk_ids`` (the vector
+        candidate set) since the search service only re-ranks candidates.
+
+        Args:
+            collection_id: Collection to score within.
+            query: Raw user query (parsed by ``websearch_to_tsquery``).
+            chunk_ids: Candidate chunk ids to score.
+
+        Returns:
+            ``chunk_id -> score`` for the candidates whose text matches the query;
+            non-matching candidates are simply absent (treated as 0 downstream).
+        """
+        if not chunk_ids:
+            return {}
+        return self._runner.run(self._bm25_scores(collection_id, query, chunk_ids))
 
     async def _iter_document_chunks(
         self, collection_id: str, document_id: str
@@ -262,6 +360,18 @@ class PgvectorAdapter:
     ) -> list[tuple[str, str, str]]:
         """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
         return self._runner.run(self._iter_document_chunks(collection_id, document_id))
+
+    async def _collection_texts(self, collection_id: str) -> list[str]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT text FROM chunks WHERE collection_id = $1", collection_id
+            )
+        return [row["text"] or "" for row in rows]
+
+    def collection_texts(self, collection_id: str) -> list[str]:
+        """Return the stored text of every chunk in a collection (tag suggestion)."""
+        return self._runner.run(self._collection_texts(collection_id))
 
     # -- tag sync -----------------------------------------------------------
 

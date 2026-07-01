@@ -48,15 +48,6 @@ class _FakeEmbedder:
         return 3
 
 
-class _FakeRedis:
-    """No BM25 corpus -> search falls back to semantic_only."""
-
-    def get(self, key: str) -> object:
-        return None
-
-    def set(self, key: str, value: object, ex: int | None = None) -> None: ...
-
-
 class _SeededVectorStore:
     def __init__(self, by_collection: dict[str, list[SearchResult]]) -> None:
         self._by = by_collection
@@ -65,6 +56,12 @@ class _SeededVectorStore:
         self, collection_id: str, vector: list[float], top_k: int, filters: dict | None = None
     ) -> list[SearchResult]:
         return [r.model_copy() for r in self._by.get(collection_id, [])][:top_k]
+
+    def bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        # No FTS matches -> search falls back to semantic_only.
+        return {}
 
     def delete_document(self, collection_id: str, document_id: str) -> None:
         self._by[collection_id] = [
@@ -159,7 +156,6 @@ async def test_search_documents_merges_two_collections(seeded):
             db=db,
             embedder=_FakeEmbedder(),
             vector_store=store,
-            redis_client=_FakeRedis(),
         )
 
     results = out["results"]
@@ -179,7 +175,6 @@ async def test_search_documents_clamps_top_k_to_max_results(seeded):
             db=db,
             embedder=_FakeEmbedder(),
             vector_store=store,
-            redis_client=_FakeRedis(),
         )
     assert len(out["results"]) <= 20
 

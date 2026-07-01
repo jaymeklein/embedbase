@@ -1,11 +1,10 @@
 """Overlay environment variables onto raw config before validation.
 
-The docker-compose overrides (``docker-compose.postgres.yml`` /
-``docker-compose.qdrant.yml``) pass the vector-store selection and connection
-details as environment variables, and the secret ``POSTGRES_PASSWORD`` is kept
-out of ``config.yaml`` on purpose. This helper lets those env vars win over the
-(chroma-defaulted) ``vector_store`` section without restructuring the config
-model, and is shared by the API and worker config loaders.
+``docker-compose.yml`` passes the Postgres connection details as environment
+variables, and the secret ``POSTGRES_PASSWORD`` is kept out of ``config.yaml``
+on purpose. This helper lets those env vars win over the ``vector_store``
+section without restructuring the config model, and is shared by the API and
+worker config loaders.
 """
 
 from __future__ import annotations
@@ -15,17 +14,11 @@ from typing import Any
 
 # (env var name, nested path within the vector_store section).
 _VECTOR_STORE_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("VECTOR_STORE", ("backend",)),
-    ("CHROMA_HOST", ("chroma", "host")),
-    ("CHROMA_PORT", ("chroma", "port")),
-    ("CHROMA_AUTH_TOKEN", ("chroma", "auth_token")),
-    ("POSTGRES_HOST", ("pgvector", "host")),
-    ("POSTGRES_PORT", ("pgvector", "port")),
-    ("POSTGRES_DB", ("pgvector", "database")),
-    ("POSTGRES_USER", ("pgvector", "user")),
-    ("POSTGRES_PASSWORD", ("pgvector", "password")),
-    ("QDRANT_HOST", ("qdrant", "host")),
-    ("QDRANT_PORT", ("qdrant", "port")),
+    ("POSTGRES_HOST", ("host",)),
+    ("POSTGRES_PORT", ("port",)),
+    ("POSTGRES_DB", ("database",)),
+    ("POSTGRES_USER", ("user",)),
+    ("POSTGRES_PASSWORD", ("password",)),
 )
 
 _INT_KEYS = frozenset({"port"})
