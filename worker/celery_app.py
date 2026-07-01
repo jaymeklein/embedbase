@@ -7,12 +7,14 @@ from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 redis_url = os.environ.get("REDIS_URL", _REDIS_URL_DEFAULT)
 result_backend = redis_url.replace("/0", "/1")
 
-# Ingestion time limits. Defaults fit CPU-bound docling on large PDFs (layout +
-# table inference runs minutes/doc); the old 9-min limit killed those mid-convert.
-# Lower them for a GPU/pymupdf-only deploy. STALE_PROCESSING_SECONDS in tasks.py
-# tracks the hard limit, so a reclaimed task is genuinely dead, not just slow.
-_HARD_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", "1860"))      # 31 min
-_SOFT_LIMIT = int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "1800"))  # 30 min
+# Ingestion time limits are a *backstop*, not the primary guard. The real bounds are
+# per-unit and progress-based: each embed request times out in the adapter, and a job
+# that stops making progress is caught by its heartbeat (worker/tasks.py). So a long
+# job that keeps embedding chunks is never killed for taking a while — these limits
+# only catch a worker wedged in an opaque C call. Generous default (a 1400-page PDF on
+# CPU is ~15-40 min of steady progress); raise via env for very large corpora.
+_HARD_LIMIT = int(os.environ.get("CELERY_TASK_TIME_LIMIT", "14460"))      # 4h + 1m
+_SOFT_LIMIT = int(os.environ.get("CELERY_TASK_SOFT_TIME_LIMIT", "14400"))  # 4h backstop
 
 celery_app = Celery(
     "embedbase",
