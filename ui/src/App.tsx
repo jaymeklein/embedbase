@@ -10,6 +10,7 @@ import Documents from './pages/Documents'
 import Graph from './pages/Graph'
 import Search from './pages/Search'
 import Indexing from './pages/Indexing'
+import IngestionQueue from './pages/IngestionQueue'
 import Settings from './pages/Settings'
 
 export default function App() {
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/graph" element={<Graph />} />
         <Route path="/search" element={<Search />} />
         <Route path="/indexing" element={<Indexing />} />
+        <Route path="/ingestion-queue" element={<IngestionQueue />} />
         <Route path="/settings" element={<Settings />} />
       </Route>
     </Routes>
