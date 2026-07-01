@@ -135,6 +135,16 @@ def test_merge_collections_rrf_empty():
     assert _merge_collections_rrf([]) == []
 
 
+def test_merge_collections_rrf_single_collection_preserves_real_scores():
+    # Regression: one collection contributed → keep the real relevance scores, don't
+    # overwrite them with the rank-only RRF value (1/(60+rank)) that made every score
+    # identical across queries.
+    per_collection = [[_result("a", score=0.91), _result("b", score=0.42)]]
+    merged = _merge_collections_rrf(per_collection)
+    assert [r.score for r in merged] == [0.91, 0.42]
+    assert [r.rank for r in merged] == [1, 2]
+
+
 def test_merge_collections_rrf_interleaves_by_rank():
     # Each collection's top hit must outrank either collection's second hit.
     per_collection = [[_result("a1"), _result("a2")], [_result("b1"), _result("b2")]]
@@ -525,11 +535,15 @@ async def test_multi_collection_search_embedder_using_asyncio_run_does_not_crash
 
 
 @pytest.mark.asyncio
-async def test_multi_collection_search_results_sorted_descending():
+async def test_multi_collection_search_preserves_real_descending_scores():
+    # A single collection with a store that returns candidates already ranked by
+    # similarity (the vector-store contract). The service must surface those REAL
+    # scores in order — not overwrite them with the rank-only RRF value that made
+    # every result score a constant ~1/61.
     from api.services import search as search_module
 
     search_module._bm25_cache.clear()
-    candidates = [_result("a", score=0.3), _result("b", score=0.9), _result("c", score=0.5)]
+    candidates = [_result("b", score=0.9), _result("c", score=0.5), _result("a", score=0.3)]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="q", collection_ids=["col1"])
     response = await multi_collection_search(
@@ -540,4 +554,5 @@ async def test_multi_collection_search_results_sorted_descending():
         redis_client=FakeRedis(),
     )
     scores = [r.score for r in response.results]
+    assert scores == [0.9, 0.5, 0.3]  # real similarities preserved, descending
     assert scores == sorted(scores, reverse=True)

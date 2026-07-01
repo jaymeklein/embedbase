@@ -86,9 +86,32 @@ def start_listener() -> threading.Thread:
     return thread
 
 
+def _clear_stale_heartbeats() -> None:
+    """Drop leftover ingestion heartbeats on worker boot.
+
+    A fresh worker has no task running yet, so any ``ingest:hb:*`` key is from a
+    process that died (a reload/crash that skipped the task's ``finally`` cleanup).
+    Clearing them lets a redelivered ingest task reclaim the job instead of seeing a
+    stale 'alive' heartbeat and skipping — which would orphan the job.
+
+    ponytail: assumes one worker (concurrency=1, the deployment). With multiple
+    workers this would wipe peers' live heartbeats; gate on a worker-id then.
+    """
+    try:
+        client = _redis_client()
+        keys = list(client.scan_iter(match="ingest:hb:*"))
+        if keys:
+            client.delete(*keys)
+            logger.info("cleared stale ingestion heartbeats", count=len(keys))
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.error("could not clear stale heartbeats", error=str(exc))
+
+
 @worker_process_init.connect
 def _on_worker_process_init(**_: Any) -> None:
-    """Celery hook: start the reload listener in each forked worker process."""
+    """Celery hook: per forked worker process — clear dead heartbeats, then start the
+    config-reload listener."""
+    _clear_stale_heartbeats()
     try:
         start_listener()
     except Exception as exc:  # pragma: no cover - never block worker startup
