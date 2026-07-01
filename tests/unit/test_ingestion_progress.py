@@ -25,8 +25,18 @@ class FakeEmbedder:
 
 
 class FakeStore:
+    def __init__(self):
+        self.chunks = []
+
     def upsert(self, collection_id, chunks, vectors):
-        pass
+        self.chunks.extend(chunks)
+
+    def iter_document_chunks(self, collection_id, document_id):
+        return [
+            (c.id, c.metadata.document_id, c.text)
+            for c in self.chunks
+            if c.metadata.document_id == document_id
+        ]
 
 
 class RecordingRedis:
@@ -97,15 +107,24 @@ def test_emits_progress_phases_to_collection_topic(tmp_path):
 
     assert result > 0
     phases = redis.phases()
-    # Lifecycle: a parsing start, ≥1 embedding batch, a storing step, then done.
-    assert phases[0] == "parsing"
-    assert "embedding" in phases
-    assert "storing" in phases
-    assert phases[-1] == "done"
-    # Everything published to the collection's channel, snapshotted by document_id.
-    channel = realtime.channel("ingestion:col_1")
-    assert all(ch == channel for ch, _ in redis.published)
-    assert "doc_1" in redis.hashes.get(channel, {})
+    assert "embedding" in phases and "storing" in phases
+
+    # Fanned out to both the collection topic (Documents view) and the global
+    # ingestion-queue topic (Ingestion Queue tab), each snapshotted by document_id.
+    col_channel = realtime.channel("ingestion:col_1")
+    queue_channel = realtime.channel("ingestion-queue")
+    assert {ch for ch, _ in redis.published} == {col_channel, queue_channel}
+    col_phases = [p["phase"] for ch, p in redis.published if ch == col_channel]
+    assert col_phases[0] == "parsing" and col_phases[-1] == "done"
+    assert "doc_1" in redis.hashes.get(col_channel, {})
+    assert "doc_1" in redis.hashes.get(queue_channel, {})
+
+    # Queue events carry file identity and the per-chunk labels (live list).
+    queue_events = [p for ch, p in redis.published if ch == queue_channel]
+    assert all(p["filename"] == "d.txt" and p["collection_name"] for p in queue_events)
+    embed_chunks = [p for p in queue_events if p["phase"] == "embedding" and p.get("chunks")]
+    assert embed_chunks and "index" in embed_chunks[0]["chunks"][0]
+
     # Terminal event carries done status at 100%.
     done = redis.published[-1][1]
     assert done["status"] == "done"
@@ -130,3 +149,51 @@ def test_failed_emit_never_breaks_ingestion(tmp_path):
     )
     # Ingestion still completes despite every emit raising.
     assert result > 0
+
+
+class _CountingEmbedder(FakeEmbedder):
+    """FakeEmbedder that records how many chunk texts it embedded."""
+
+    def __init__(self):
+        self.embedded = 0
+
+    def embed_batch(self, texts):
+        self.embedded += len(texts)
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
+def test_reingest_resumes_and_skips_stored_chunks(tmp_path):
+    """A re-run over a document already in the store embeds nothing new (resume) but
+    still reports the full chunk count."""
+    from sqlalchemy import insert
+
+    factory = _db_factory(tmp_path)
+    _seed_pending(factory, job_id="job_r1", document_id="doc_r")
+    txt = tmp_path / "r.txt"
+    txt.write_text("the quick brown fox jumps over the lazy dog " * 80)
+
+    store = FakeStore()
+    emb1 = _CountingEmbedder()
+    n1 = _run_ingestion(
+        "job_r1", str(txt), "col_1", "doc_r", ".txt",
+        session_factory=factory, embedder=emb1, vector_store=store, redis_client=RecordingRedis(),
+    )
+    assert n1 > 0
+    assert emb1.embedded == n1  # fresh run embedded every chunk
+
+    # Second job for the SAME document, store already populated → resume.
+    with factory() as s:
+        s.execute(insert(job_records).values(
+            job_id="job_r2", document_id="doc_r", collection_id="col_1",
+            filename="r.txt", file_type="txt", status="pending",
+            created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00",
+        ))
+        s.commit()
+
+    emb2 = _CountingEmbedder()
+    n2 = _run_ingestion(
+        "job_r2", str(txt), "col_1", "doc_r", ".txt",
+        session_factory=factory, embedder=emb2, vector_store=store, redis_client=RecordingRedis(),
+    )
+    assert n2 == n1  # same total
+    assert emb2.embedded == 0  # resumed: nothing re-embedded
