@@ -35,6 +35,15 @@ class FakeStore:
     def upsert(self, collection_id, chunks, vectors):
         self.upserts.append((collection_id, chunks, vectors))
 
+    def iter_document_chunks(self, collection_id, document_id):
+        # (chunk_id, document_id, text) triples for the resume/skip check.
+        return [
+            (c.id, c.metadata.document_id, c.text)
+            for _cid, chunks, _vec in self.upserts
+            for c in chunks
+            if c.metadata.document_id == document_id
+        ]
+
 
 class FakeRedis:
     def __init__(self):
