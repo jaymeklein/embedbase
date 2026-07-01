@@ -98,8 +98,8 @@ def _load_app_config() -> AppConfig:
         with open(config_path) as f:
             data = yaml.safe_load(f) or {}
 
-    # Env vars (e.g. from docker-compose.postgres.yml or .env) override the file so
-    # the vector-store backend + secrets and the docling models path can be selected
+    # Env vars (e.g. from docker-compose.yml or .env) override the file so the
+    # Postgres connection + secrets and the docling models path can be selected
     # without editing config.yaml.
     data = overlay_parser_env(overlay_vector_store_env(data))
     try:
@@ -137,7 +137,7 @@ async def _warm_up_adapters(app_config: AppConfig) -> None:
         dims = _emb.dimensions if _emb else 768  # embeddinggemma default dim
         vector_store = await asyncio.to_thread(resolve_store, app_config.vector_store, dims)
         set_vector_store(vector_store)
-        logger.info("vector store ready", backend=app_config.vector_store.backend)
+        logger.info("vector store ready", host=app_config.vector_store.host)
     except Exception as exc:
         logger.error("vector store unavailable", error=str(exc))
 
@@ -163,7 +163,7 @@ async def lifespan(app: FastAPI):
     app.state.config = app_config
     set_app_config(app_config)
     logger.info("config loaded", provider=app_config.embedding.provider,
-                vector_store=app_config.vector_store.backend)
+                vector_store_host=app_config.vector_store.host)
 
     # 2. SQLite — run Alembic migrations (pragmas set via engine event)
     await init_db()

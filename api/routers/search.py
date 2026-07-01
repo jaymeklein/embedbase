@@ -1,16 +1,14 @@
 """Search router: POST /search — multi-collection hybrid search."""
 
-from typing import Any
-
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker
+from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.dependencies import (
     get_db,
     get_reranker,
     require_embedding_adapter,
-    require_redis_client,
     require_vector_store,
 )
 from api.models.search import SearchRequest, SearchResponse
@@ -26,8 +24,7 @@ async def search(
     db: AsyncSession = Depends(get_db),
     _principal: object = Depends(require_master),
     embedder: EmbeddingAdapter = Depends(require_embedding_adapter),
-    vector_store: VectorStoreAdapter = Depends(require_vector_store),
-    redis_client: Any = Depends(require_redis_client),
+    vector_store: PgvectorAdapter = Depends(require_vector_store),
     reranker: Reranker | None = Depends(get_reranker),
 ) -> SearchResponse:
     """Run a hybrid (semantic + BM25) search across one or more collections.
@@ -37,8 +34,7 @@ async def search(
         db: Injected async database session for collection metadata.
         _principal: Authenticated master principal (enforces auth, value unused).
         embedder: Embedding adapter injected via Depends.
-        vector_store: Vector store adapter injected via Depends.
-        redis_client: Redis client injected via Depends (raises 503 if not ready).
+        vector_store: Vector store adapter injected via Depends (also does FTS).
         reranker: Optional cross-encoder reranker (None when disabled/not loaded).
 
     Returns:
@@ -49,6 +45,5 @@ async def search(
         db=db,
         embedder=embedder,
         vector_store=vector_store,
-        redis_client=redis_client,
         reranker=reranker,
     )

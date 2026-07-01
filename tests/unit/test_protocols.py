@@ -1,17 +1,11 @@
 """The adapter Protocols are @runtime_checkable; verify conformance."""
 
-from api.adapters.base import EmbeddingAdapter, ParserAdapter, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, ParserAdapter
 from api.adapters.parsers.pdf import PDFParser
-from api.adapters.vector_store.chroma import ChromaAdapter
 
 
 def test_parser_adapter_conformance():
     assert isinstance(PDFParser(), ParserAdapter)
-
-
-def test_vector_store_adapter_conformance():
-    # Constructing the Chroma adapter does not open a connection.
-    assert isinstance(ChromaAdapter(host="h", port=1), VectorStoreAdapter)
 
 
 def test_embedding_adapter_conformance():

@@ -163,7 +163,6 @@ async def list_documents(
     db: AsyncSession,
     col_id: str,
     tags: list[str] | None = None,
-    redis_client: Any = None,
 ) -> list[dict]:
     """Return active documents in ``col_id`` with status, tags, and optional filter.
 
@@ -172,13 +171,11 @@ async def list_documents(
         col_id: Collection whose documents to list.
         tags: Optional tag names; only documents carrying *all* of them are
             returned (AND filter).
-        redis_client: When provided, each row gets an ``indexed`` bool reflecting
-            BM25 corpus membership (omitted entirely when not provided).
 
     Returns:
-        One mapping per active document including its ``status`` and ``tags``.
+        One mapping per active document including its ``status``, ``tags``, and an
+        ``indexed`` bool (true once the document has stored/FTS-searchable chunks).
     """
-    from api.services.indexing import indexed_doc_ids
     from api.services.tags import attach_tags, matching_entity_ids
 
     stmt = (
@@ -203,10 +200,9 @@ async def list_documents(
         stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
     rows = _dedupe_by_document(r._mapping for r in (await db.execute(stmt)).fetchall())
     rows = await attach_tags("document", rows, "document_id", db)
-    if redis_client is not None:
-        indexed = indexed_doc_ids(redis_client, col_id)
-        for row in rows:
-            row["indexed"] = row["document_id"] in indexed
+    for row in rows:
+        # FTS-indexed once chunks are stored; chunk_count is set when ingestion finishes.
+        row["indexed"] = bool(row.get("chunk_count"))
     return rows
 
 

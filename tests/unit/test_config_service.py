@@ -57,14 +57,19 @@ def test_get_masked_config_masks_set_secrets_and_blanks_empty():
     dependencies.set_app_config(
         AppConfig(
             embedding=EmbeddingConfig(api_key="sk-secret"),
-            vector_store=VectorStoreConfig(),  # chroma.auth_token set, pgvector.password ""
+            vector_store=VectorStoreConfig(password="pg-secret"),
         )
     )
     data = cs.get_masked_config()
     assert data["embedding"]["api_key"] == cs.SECRET_MASK  # set -> masked
-    assert data["vector_store"]["chroma"]["auth_token"] == cs.SECRET_MASK
-    assert data["vector_store"]["pgvector"]["password"] == ""  # unset -> blank
+    assert data["vector_store"]["password"] == cs.SECRET_MASK
     assert data["embedding"]["provider"] == "ollama"  # non-secret intact
+
+
+def test_get_masked_config_blanks_unset_vector_store_password():
+    dependencies.set_app_config(AppConfig())
+    data = cs.get_masked_config()
+    assert data["vector_store"]["password"] == ""  # unset -> blank
 
 
 def test_get_masked_config_masks_tagging_suggester_api_key():

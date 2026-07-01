@@ -17,7 +17,7 @@ def _fake_config() -> SimpleNamespace:
     """A stand-in AppConfig exposing only the attributes the helper reads."""
     return SimpleNamespace(
         embedding=SimpleNamespace(provider="sentence_transformers", model="m"),
-        vector_store=SimpleNamespace(backend="chroma"),
+        vector_store=SimpleNamespace(host="postgres"),
         reranker=SimpleNamespace(provider="cross_encoder", model="r"),
     )
 

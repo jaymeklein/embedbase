@@ -286,6 +286,16 @@ paths:
         schema:
           type: string
           title: Ws Id
+      - name: tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          title: Tag
       - name: authorization
         in: header
         required: false
@@ -668,7 +678,8 @@ paths:
       tags:
       - documents
       summary: List Documents
-      description: List all documents in a collection with their ingestion status.
+      description: List all documents in a collection with their ingestion + index
+        status.
       operationId: list_documents_workspaces__ws_id__collections__col_id__documents_get
       parameters:
       - name: ws_id
@@ -683,6 +694,16 @@ paths:
         schema:
           type: string
           title: Col Id
+      - name: tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: array
+            items:
+              type: string
+          - type: 'null'
+          title: Tag
       - name: authorization
         in: header
         required: false
@@ -859,6 +880,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /documents/{doc_id}/raw:
+    get:
+      tags:
+      - documents
+      summary: Get Document Raw
+      description: Serve a document's original bytes for inline viewing / opening.
+      operationId: get_document_raw_documents__doc_id__raw_get
+      parameters:
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /documents/{doc_id}:
     delete:
       tags:
@@ -899,6 +962,790 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/tags:
+    post:
+      tags:
+      - tags
+      summary: Create Tag
+      operationId: create_tag_workspaces__ws_id__tags_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - tags
+      summary: List Tags
+      operationId: list_tags_workspaces__ws_id__tags_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/tags/merge:
+    post:
+      tags:
+      - tags
+      summary: Merge Tags
+      operationId: merge_tags_workspaces__ws_id__tags_merge_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagMerge'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/tags/{tag_id}:
+    patch:
+      tags:
+      - tags
+      summary: Update Tag
+      operationId: update_tag_workspaces__ws_id__tags__tag_id__patch
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TagUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - tags
+      summary: Delete Tag
+      operationId: delete_tag_workspaces__ws_id__tags__tag_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/tags/{tag_id}/items:
+    get:
+      tags:
+      - tags
+      summary: Tag Items
+      operationId: tag_items_workspaces__ws_id__tags__tag_id__items_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/assigned-tags/{tag_id}:
+    put:
+      tags:
+      - tags
+      summary: Assign Workspace Tag
+      operationId: assign_workspace_tag_workspaces__ws_id__assigned_tags__tag_id__put
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - tags
+      summary: Unassign Workspace Tag
+      operationId: unassign_workspace_tag_workspaces__ws_id__assigned_tags__tag_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/tags/{tag_id}:
+    put:
+      tags:
+      - tags
+      summary: Assign Collection Tag
+      operationId: assign_collection_tag_workspaces__ws_id__collections__col_id__tags__tag_id__put
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - tags
+      summary: Unassign Collection Tag
+      operationId: unassign_collection_tag_workspaces__ws_id__collections__col_id__tags__tag_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/tags/{tag_id}:
+    put:
+      tags:
+      - tags
+      summary: Assign Document Tag
+      operationId: assign_document_tag_workspaces__ws_id__collections__col_id__documents__doc_id__tags__tag_id__put
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - tags
+      summary: Unassign Document Tag
+      operationId: unassign_document_tag_workspaces__ws_id__collections__col_id__documents__doc_id__tags__tag_id__delete
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: tag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Tag Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/suggest-tags:
+    post:
+      tags:
+      - tags
+      summary: Suggest Collection Tags
+      operationId: suggest_collection_tags_workspaces__ws_id__collections__col_id__suggest_tags_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/suggest-tags:
+    post:
+      tags:
+      - tags
+      summary: Suggest Document Tags
+      operationId: suggest_document_tags_workspaces__ws_id__collections__col_id__documents__doc_id__suggest_tags_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/graph:
+    get:
+      tags:
+      - graph
+      summary: Workspace Graph
+      operationId: workspace_graph_workspaces__ws_id__graph_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: link_types
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+          default:
+          - tags
+          title: Link Types
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/graph:
+    get:
+      tags:
+      - graph
+      summary: Collection Graph
+      operationId: collection_graph_workspaces__ws_id__collections__col_id__graph_get
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: link_types
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: string
+          default:
+          - tags
+          title: Link Types
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /search:
     post:
       tags:
@@ -909,9 +1756,9 @@ paths:
         \ filters.\n    db: Injected async database session for collection metadata.\n\
         \    _principal: Authenticated master principal (enforces auth, value unused).\n\
         \    embedder: Embedding adapter injected via Depends.\n    vector_store:\
-        \ Vector store adapter injected via Depends.\n    redis_client: Redis client\
-        \ injected via Depends (raises 503 if not ready).\n\nReturns:\n    SearchResponse\
-        \ with ranked results and per-collection stats."
+        \ Vector store adapter injected via Depends (also does FTS).\n    reranker:\
+        \ Optional cross-encoder reranker (None when disabled/not loaded).\n\nReturns:\n\
+        \    SearchResponse with ranked results and per-collection stats."
       operationId: search_search_post
       parameters:
       - name: authorization
@@ -949,29 +1796,288 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /indexing/status:
+    get:
+      tags:
+      - indexing
+      summary: Index Status
+      description: Return BM25 index coverage grouped by workspace and collection.
+      operationId: index_status_indexing_status_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/index:
+    post:
+      tags:
+      - indexing
+      summary: Index Collection
+      description: Enqueue a BM25 (re)index of every active document in a collection.
+      operationId: index_collection_workspaces__ws_id__collections__col_id__index_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexEnqueueResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/index:
+    post:
+      tags:
+      - indexing
+      summary: Index Document
+      description: Enqueue a BM25 (re)index of a single document.
+      operationId: index_document_workspaces__ws_id__collections__col_id__documents__doc_id__index_post
+      parameters:
+      - name: ws_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Ws Id
+      - name: col_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Col Id
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexEnqueueResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /config:
     get:
       tags:
       - config
       summary: Get Config
       operationId: get_config_config_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     put:
       tags:
       - config
       summary: Update Config
       operationId: update_config_config_put
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
       requestBody:
+        required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/AppConfig'
-        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config/ollama-models:
+    get:
+      tags:
+      - config
+      summary: List Ollama Models
+      operationId: list_ollama_models_config_ollama_models_get
+      parameters:
+      - name: base_url
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /config/accelerator:
+    get:
+      tags:
+      - config
+      summary: Get Accelerator
+      operationId: get_accelerator_config_accelerator_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
       responses:
         '200':
           description: Successful Response
@@ -997,6 +2103,22 @@ paths:
         schema:
           type: string
           title: Version Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
       responses:
         '200':
           description: Successful Response
@@ -1029,24 +2151,22 @@ components:
             model: embeddinggemma
             batch_size: 32
             concurrency: 8
+        reranker:
+          $ref: '#/components/schemas/RerankerConfig'
+          default:
+            enabled: false
+            provider: cross_encoder
+            model: cross-encoder/ms-marco-MiniLM-L-6-v2
+            top_n: 50
         vector_store:
           $ref: '#/components/schemas/VectorStoreConfig'
           default:
-            backend: chroma
-            chroma:
-              auth_token: embedbase-internal
-              host: chroma
-              port: 8000
-            pgvector:
-              database: embedbase
-              host: postgres
-              index_min_rows: 100
-              password: ''
-              port: 5432
-              user: embedbase
-            qdrant:
-              host: qdrant
-              port: 6333
+            host: postgres
+            port: 5432
+            database: embedbase
+            user: embedbase
+            password: ''
+            index_min_rows: 100
         chunking:
           $ref: '#/components/schemas/ChunkingConfig'
           default:
@@ -1061,11 +2181,10 @@ components:
         parsers:
           $ref: '#/components/schemas/ParserConfig'
           default:
-            pdf_backend: pymupdf
             docling_ocr: false
             docling_ocr_engine: easyocr
             docling_tables: true
-            docling_device: cpu
+            docling_device: auto
             docling_flash_attention: false
             docling_ocr_batch_size: 8
             docling_layout_batch_size: 8
@@ -1077,18 +2196,26 @@ components:
             retrieval_fan_out: 4
             max_fan_out: 10
             hybrid_default_alpha: 0.7
-            bm25_cache_ttl: 60
         mcp:
           $ref: '#/components/schemas/MCPConfig'
           default:
             enabled: true
             rate_limit_rpm: 60
             max_results: 20
-        logging:
-          $ref: '#/components/schemas/LoggingConfig'
+        tagging:
+          $ref: '#/components/schemas/TaggingConfig'
           default:
-            level: info
-            format: json
+            suggester:
+              backend: llm
+              max_tags: 8
+              min_confidence: 0.8
+              model: llama3
+              provider: ollama
+            auto_tag_on_ingest: false
+        max_file_size_mb:
+          type: integer
+          title: Max File Size Mb
+          default: 50
       type: object
       title: AppConfig
     Body_upload_document_flat_documents_post:
@@ -1115,22 +2242,6 @@ components:
       required:
       - file
       title: Body_upload_document_workspaces__ws_id__collections__col_id__documents_post
-    ChromaConfig:
-      properties:
-        host:
-          type: string
-          title: Host
-          default: chroma
-        port:
-          type: integer
-          title: Port
-          default: 8000
-        auth_token:
-          type: string
-          title: Auth Token
-          default: embedbase-internal
-      type: object
-      title: ChromaConfig
     ChunkingConfig:
       properties:
         sliding_window:
@@ -1183,6 +2294,39 @@ components:
       - name
       title: CollectionCreate
       description: Body for POST /workspaces/{ws_id}/collections.
+    CollectionIndexStatus:
+      properties:
+        collection_id:
+          type: string
+          title: Collection Id
+        collection_name:
+          type: string
+          title: Collection Name
+        total:
+          type: integer
+          title: Total
+        indexed:
+          type: integer
+          title: Indexed
+        unindexed:
+          type: integer
+          title: Unindexed
+        pending:
+          type: integer
+          title: Pending
+        failed:
+          type: integer
+          title: Failed
+      type: object
+      required:
+      - collection_id
+      - collection_name
+      - total
+      - indexed
+      - unindexed
+      - pending
+      - failed
+      title: CollectionIndexStatus
     CollectionStat:
       properties:
         name:
@@ -1269,8 +2413,101 @@ components:
           type: integer
           title: Concurrency
           default: 8
+        output_dimensionality:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Output Dimensionality
       type: object
       title: EmbeddingConfig
+    GraphEdge:
+      properties:
+        source:
+          type: string
+          title: Source
+        target:
+          type: string
+          title: Target
+      type: object
+      required:
+      - source
+      - target
+      title: GraphEdge
+      description: A ``file → tag`` link.
+    GraphNode:
+      properties:
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        kind:
+          type: string
+          enum:
+          - file
+          - tag
+          title: Kind
+        heat:
+          type: integer
+          title: Heat
+        heat_pct:
+          type: number
+          title: Heat Pct
+        degree:
+          type: integer
+          title: Degree
+        meta:
+          additionalProperties: true
+          type: object
+          title: Meta
+      type: object
+      required:
+      - id
+      - label
+      - kind
+      - heat
+      - heat_pct
+      - degree
+      title: GraphNode
+      description: "A graph node: a file (document) or a tag hub.\n\nAttributes:\n\
+        \    id: Document id for files, tag id for tag hubs.\n    label: Display name\
+        \ (filename or tag name).\n    kind: ``\"file\"`` or ``\"tag\"``.\n    heat:\
+        \ Tag usage count for tag hubs; ``0`` for files.\n    heat_pct: ``heat / max_heat``\
+        \ in ``[0, 1]`` (``0`` when there is no heat).\n    degree: Number of incident\
+        \ edges.\n    meta: Kind-specific extras (file: ``file_type``; tag: ``color``)."
+    GraphResponse:
+      properties:
+        nodes:
+          items:
+            $ref: '#/components/schemas/GraphNode'
+          type: array
+          title: Nodes
+        edges:
+          items:
+            $ref: '#/components/schemas/GraphEdge'
+          type: array
+          title: Edges
+        tag_counts:
+          additionalProperties:
+            type: integer
+          type: object
+          title: Tag Counts
+        max_heat:
+          type: integer
+          title: Max Heat
+      type: object
+      required:
+      - nodes
+      - edges
+      - tag_counts
+      - max_heat
+      title: GraphResponse
+      description: "The graph for a scope: nodes, edges, and a heat summary.\n\nAttributes:\n\
+        \    nodes: File nodes followed by tag hub nodes.\n    edges: One ``file →\
+        \ tag`` edge per tag a file carries.\n    tag_counts: Tag name → number of\
+        \ files carrying it.\n    max_heat: Largest single tag usage count (``0``\
+        \ when there are no tags)."
     HTTPValidationError:
       properties:
         detail:
@@ -1280,18 +2517,25 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
-    LoggingConfig:
+    IndexEnqueueResponse:
       properties:
-        level:
-          type: string
-          title: Level
-          default: info
-        format:
-          type: string
-          title: Format
-          default: json
+        task_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Task Id
       type: object
-      title: LoggingConfig
+      title: IndexEnqueueResponse
+    IndexStatusResponse:
+      properties:
+        workspaces:
+          items:
+            $ref: '#/components/schemas/WorkspaceIndexStatus'
+          type: array
+          title: Workspaces
+          default: []
+      type: object
+      title: IndexStatusResponse
     MCPConfig:
       properties:
         enabled:
@@ -1311,9 +2555,10 @@ components:
     ParserConfig:
       properties:
         pdf_backend:
-          type: string
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Pdf Backend
-          default: pymupdf
         docling_ocr:
           type: boolean
           title: Docling Ocr
@@ -1329,7 +2574,7 @@ components:
         docling_device:
           type: string
           title: Docling Device
-          default: cpu
+          default: auto
         docling_flash_attention:
           type: boolean
           title: Docling Flash Attention
@@ -1342,48 +2587,33 @@ components:
           type: integer
           title: Docling Layout Batch Size
           default: 8
+        docling_artifacts_path:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Docling Artifacts Path
       type: object
       title: ParserConfig
-    PgvectorConfig:
+    RerankerConfig:
       properties:
-        host:
+        enabled:
+          type: boolean
+          title: Enabled
+          default: false
+        provider:
           type: string
-          title: Host
-          default: postgres
-        port:
+          title: Provider
+          default: cross_encoder
+        model:
+          type: string
+          title: Model
+          default: cross-encoder/ms-marco-MiniLM-L-6-v2
+        top_n:
           type: integer
-          title: Port
-          default: 5432
-        database:
-          type: string
-          title: Database
-          default: embedbase
-        user:
-          type: string
-          title: User
-          default: embedbase
-        password:
-          type: string
-          title: Password
-          default: ''
-        index_min_rows:
-          type: integer
-          title: Index Min Rows
-          default: 100
+          title: Top N
+          default: 50
       type: object
-      title: PgvectorConfig
-    QdrantConfig:
-      properties:
-        host:
-          type: string
-          title: Host
-          default: qdrant
-        port:
-          type: integer
-          title: Port
-          default: 6333
-      type: object
-      title: QdrantConfig
+      title: RerankerConfig
     SearchConfig:
       properties:
         default_top_k:
@@ -1406,10 +2636,6 @@ components:
           type: number
           title: Hybrid Default Alpha
           default: 0.7
-        bm25_cache_ttl:
-          type: integer
-          title: Bm25 Cache Ttl
-          default: 60
       type: object
       title: SearchConfig
     SearchFilters:
@@ -1438,6 +2664,7 @@ components:
       enum:
       - hybrid
       - semantic
+      - bm25
       - semantic_only
       title: SearchMode
     SearchRequest:
@@ -1457,6 +2684,10 @@ components:
           minimum: 1.0
           title: Top K
           default: 5
+        mode:
+          anyOf:
+          - $ref: '#/components/schemas/SearchMode'
+          - type: 'null'
         hybrid:
           type: boolean
           title: Hybrid
@@ -1595,6 +2826,105 @@ components:
       - workspace_id
       - workspace_name
       title: SourceProvenance
+    TagCreate:
+      properties:
+        name:
+          type: string
+          title: Name
+        color:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Color
+      type: object
+      required:
+      - name
+      title: TagCreate
+      description: Body for POST /workspaces/{ws_id}/tags.
+    TagMerge:
+      properties:
+        source_id:
+          type: string
+          title: Source Id
+        target_id:
+          type: string
+          title: Target Id
+      type: object
+      required:
+      - source_id
+      - target_id
+      title: TagMerge
+      description: 'Body for POST /workspaces/{ws_id}/tags/merge.
+
+
+        Repoints every assignment of ``source_id`` onto ``target_id`` and then
+
+        deletes the now-empty source tag.'
+    TagSuggesterConfig:
+      properties:
+        backend:
+          type: string
+          title: Backend
+          default: llm
+        provider:
+          type: string
+          title: Provider
+          default: ollama
+        model:
+          type: string
+          title: Model
+          default: llama3
+        base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
+        max_tags:
+          type: integer
+          title: Max Tags
+          default: 8
+        min_confidence:
+          type: number
+          title: Min Confidence
+          default: 0.8
+      type: object
+      title: TagSuggesterConfig
+    TagUpdate:
+      properties:
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        color:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Color
+      type: object
+      title: TagUpdate
+      description: Body for PATCH /workspaces/{ws_id}/tags/{tag_id}.
+    TaggingConfig:
+      properties:
+        suggester:
+          $ref: '#/components/schemas/TagSuggesterConfig'
+          default:
+            backend: llm
+            provider: ollama
+            model: llama3
+            max_tags: 8
+            min_confidence: 0.8
+        auto_tag_on_ingest:
+          type: boolean
+          title: Auto Tag On Ingest
+          default: false
+      type: object
+      title: TaggingConfig
     ValidationError:
       properties:
         loc:
@@ -1623,32 +2953,34 @@ components:
       title: ValidationError
     VectorStoreConfig:
       properties:
-        backend:
+        host:
           type: string
-          title: Backend
-          default: chroma
-        chroma:
-          $ref: '#/components/schemas/ChromaConfig'
-          default:
-            host: chroma
-            port: 8000
-            auth_token: embedbase-internal
-        pgvector:
-          $ref: '#/components/schemas/PgvectorConfig'
-          default:
-            host: postgres
-            port: 5432
-            database: embedbase
-            user: embedbase
-            password: ''
-            index_min_rows: 100
-        qdrant:
-          $ref: '#/components/schemas/QdrantConfig'
-          default:
-            host: qdrant
-            port: 6333
+          title: Host
+          default: postgres
+        port:
+          type: integer
+          title: Port
+          default: 5432
+        database:
+          type: string
+          title: Database
+          default: embedbase
+        user:
+          type: string
+          title: User
+          default: embedbase
+        password:
+          type: string
+          title: Password
+          default: ''
+        index_min_rows:
+          type: integer
+          title: Index Min Rows
+          default: 100
       type: object
       title: VectorStoreConfig
+      description: Connection settings for the pgvector-backed chunk store (Postgres
+        only).
     WorkspaceCreate:
       properties:
         name:
@@ -1671,6 +3003,25 @@ components:
       - name
       title: WorkspaceCreate
       description: Body for POST /workspaces.
+    WorkspaceIndexStatus:
+      properties:
+        workspace_id:
+          type: string
+          title: Workspace Id
+        workspace_name:
+          type: string
+          title: Workspace Name
+        collections:
+          items:
+            $ref: '#/components/schemas/CollectionIndexStatus'
+          type: array
+          title: Collections
+          default: []
+      type: object
+      required:
+      - workspace_id
+      - workspace_name
+      title: WorkspaceIndexStatus
     WorkspaceUpdate:
       properties:
         name:

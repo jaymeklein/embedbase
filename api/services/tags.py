@@ -15,7 +15,6 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import Table, delete, func, insert, select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,6 +26,7 @@ from api.schemas.tags import TagMerge, TagUpdate
 from api.services import tag_bridge
 from api.services.collections import require_collection
 from api.services.workspaces import require_workspace
+from api.sql_compat import dialect_insert
 
 # kind -> (join table, entity-id column name)
 _JOIN_SPECS: dict[str, tuple[Table, str]] = {
@@ -237,7 +237,7 @@ async def tag_items(ws_id: str, tag_id: str, db: AsyncSession) -> dict[str, Any]
 async def _assign(kind: str, entity_id: str, tag_id: str, db: AsyncSession) -> None:
     """Idempotently attach ``tag_id`` to one entity (no-op if already attached)."""
     join, col = _JOIN_SPECS[kind]
-    stmt = sqlite_insert(join).values({col: entity_id, "tag_id": tag_id}).on_conflict_do_nothing()
+    stmt = dialect_insert(db.bind, join).values({col: entity_id, "tag_id": tag_id}).on_conflict_do_nothing()
     await db.execute(stmt)
     await db.commit()
 
