@@ -2,14 +2,12 @@
 
 import asyncio
 from time import monotonic
-from typing import Any
 
-from rank_bm25 import BM25Okapi
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
-from api.models.redis import CorpusConfig
+from api.adapters.base import EmbeddingAdapter, Reranker
+from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.models.search import (
     CollectionStat,
     SearchFilters,
@@ -20,17 +18,8 @@ from api.models.search import (
     SourceProvenance,
 )
 from api.services.bm25 import score_semantic, score_structured
-from api.services.logs import debug
-from api.services.redis.redis import get_corpus, get_corpus_version
 
 _DEFAULT_FAN_OUT = 4
-
-# Version-keyed in-process cache: collection_id → (version, index, chunk_ids)
-_bm25_cache: dict[str, tuple[int, BM25Okapi, list[str]]] = {}
-
-
-def _get_cached(collection_id: str) -> tuple[int, BM25Okapi, list[str]] | None:
-    return _bm25_cache.get(collection_id)
 
 
 def _matches(result: SearchResult, filters: SearchFilters) -> bool:
@@ -73,48 +62,6 @@ def apply_filters(results: list[SearchResult], filters: SearchFilters | None) ->
     if not filters:
         return results
     return [result for result in results if _matches(result, filters)]
-
-
-def _get_bm25_scores(
-    redis_client: Any,
-    corpus_config: CorpusConfig,
-    query: str,
-) -> dict[str, float]:
-    """Compute BM25 scores for each corpus entry against the given query.
-
-    Maintains a version-keyed in-process cache so the BM25Okapi index is only
-    rebuilt when a document is added or removed from the collection.
-
-    Args:
-        redis_client: An active Redis client instance.
-        corpus_config: Configuration holding the Redis keys for the corpus and version.
-        query: The search query string to score against.
-
-    Returns:
-        A mapping of chunk_id to BM25 score for every entry in the corpus.
-        Returns an empty dict when the corpus is empty or unavailable.
-    """
-    version = get_corpus_version(redis_client, corpus_config)
-    collection_id = corpus_config.collection_id
-    cached = _get_cached(collection_id)
-    if cached is None or cached[0] != version:
-        corpus = get_corpus(redis_client, corpus_config)
-        if not corpus.data:
-            return {}
-        chunk_ids = corpus.chunk_ids
-        tokenized = corpus.tokenized
-        index = BM25Okapi(tokenized)
-        _bm25_cache[collection_id] = (version, index, chunk_ids)
-        debug(
-            "rebuilt BM25 index for collection %s at version %d (%d entries)",
-            collection_id,
-            version,
-            len(chunk_ids),
-        )
-    else:
-        _, index, chunk_ids = cached
-    scores: list[float] = index.get_scores(query.lower().split()).tolist()
-    return dict(zip(chunk_ids, scores, strict=True))
 
 
 def _reciprocal_rank_fusion(
@@ -175,33 +122,35 @@ def _rank_candidates(
     mode: SearchMode,
     alpha: float,
     collection_id: str,
-    redis_client: Any,
+    vector_store: PgvectorAdapter,
 ) -> tuple[list[SearchResult], SearchMode]:
-    """Re-rank vector candidates per ``mode``; fall back when the BM25 corpus is empty.
+    """Re-rank vector candidates per ``mode``; fall back when no candidate matches.
 
     SEMANTIC keeps the vector order. HYBRID fuses vector + BM25 via RRF. BM25 ranks
     the candidates purely by BM25 score. Both BM25-using modes degrade to
-    SEMANTIC_ONLY (vector order) when the collection has no BM25 corpus yet.
+    SEMANTIC_ONLY (vector order) when no candidate matches the query's keywords.
 
     Args:
         candidates: Vector-store hits to re-rank.
-        query: Raw query text for BM25 tokenisation.
+        query: Raw query text for FTS parsing.
         mode: Requested ranking mode.
         alpha: Semantic weight for HYBRID RRF.
-        collection_id: Collection whose BM25 corpus to load.
-        redis_client: Sync Redis client backing the BM25 corpus.
+        collection_id: Collection whose chunks to score.
+        vector_store: Adapter providing Postgres FTS (``bm25_scores``).
 
     Returns:
         Tuple of (ranked results, effective mode).
     """
     if mode == SearchMode.SEMANTIC:
         return candidates, SearchMode.SEMANTIC
-    bm25_scores = _get_bm25_scores(redis_client, CorpusConfig(collection_id), query)
+    bm25_scores = vector_store.bm25_scores(
+        collection_id, query, [c.chunk_id for c in candidates]
+    )
     if not bm25_scores:
         return candidates, SearchMode.SEMANTIC_ONLY
     if mode == SearchMode.BM25:
         # ponytail: BM25-only re-ranks the vector candidate set (same recall ceiling
-        # as HYBRID). For unbounded keyword recall, rank the full Redis corpus instead.
+        # as HYBRID). For unbounded keyword recall, query FTS without the id filter.
         ranked = _rank_by_bm25(candidates, bm25_scores)
         for rank, result in enumerate(ranked, start=1):
             result.rank = rank
@@ -221,8 +170,7 @@ def search_collection(
     mode: SearchMode = SearchMode.HYBRID,
     alpha: float = 0.7,
     filters: SearchFilters | None = None,
-    vector_store: VectorStoreAdapter,
-    redis_client: Any,
+    vector_store: PgvectorAdapter,
     reranker: Reranker | None = None,
 ) -> tuple[list[SearchResult], SearchMode, int, int]:
     """Search a single collection and return ranked results.
@@ -230,14 +178,13 @@ def search_collection(
     Args:
         collection_id: The collection to search.
         query_vector: Pre-computed embedding of the query.
-        query: Raw query text (used for BM25 tokenisation).
+        query: Raw query text (used for FTS/BM25).
         top_k: Maximum number of results to return after filtering.
         fan_out: Multiplier for pre-filter candidate retrieval (clamped to 1–10).
         mode: Ranking mode (HYBRID, SEMANTIC, or BM25).
         alpha: Semantic weight in RRF (passed through to score_semantic).
         filters: Optional metadata filters applied after ranking.
-        vector_store: Adapter for vector similarity search.
-        redis_client: Sync Redis client used to load the BM25 corpus.
+        vector_store: Adapter for vector similarity search and FTS scoring.
         reranker: Optional cross-encoder; when set, reorders the over-fetched
             candidate pool by query-document relevance before the top_k cut.
 
@@ -245,12 +192,15 @@ def search_collection(
         Tuple of (results, search_mode, retrieved_before_filter, returned_after_filter).
     """
     candidates = vector_store.search(
-        collection_id, query_vector, top_k * min(max(fan_out, 1), 10)
+        collection_id, query_vector, top_k * min(max(fan_out, 1), 10), filters=filters
     )
     results, effective_mode = _rank_candidates(
-        candidates, query, mode, alpha, collection_id, redis_client
+        candidates, query, mode, alpha, collection_id, vector_store
     )
     retrieved = len(results)
+    # Postgres already pre-filtered in SQL (Phase 4); apply_filters stays as a
+    # backend-agnostic guard (the only filter on the in-memory test fakes) and is a
+    # cheap no-op once the WHERE has done the work.
     filtered = apply_filters(results, filters)
     if reranker is not None:
         filtered = reranker.rerank(query, filtered)
@@ -381,8 +331,7 @@ def _fan_out_one(
     query_vector: list[float],
     request: SearchRequest,
     *,
-    vector_store: VectorStoreAdapter,
-    redis_client: Any,
+    vector_store: PgvectorAdapter,
     fan_out: int,
     reranker: Reranker | None = None,
 ) -> tuple[list[SearchResult], SearchMode, int, int]:
@@ -392,8 +341,7 @@ def _fan_out_one(
         col_id: Collection to search.
         query_vector: Pre-computed query embedding.
         request: Full search request (top_k, hybrid, filters, etc.).
-        vector_store: Vector similarity search adapter.
-        redis_client: Redis client for the BM25 corpus.
+        vector_store: Vector similarity search + FTS adapter.
         fan_out: Candidate multiplier applied before filtering.
         reranker: Optional cross-encoder reranker (skipped when None).
 
@@ -403,7 +351,7 @@ def _fan_out_one(
     return search_collection(
         col_id, query_vector, request.query, request.top_k,
         fan_out=fan_out, mode=request.resolved_mode(), alpha=request.hybrid_alpha,
-        filters=request.filters, vector_store=vector_store, redis_client=redis_client,
+        filters=request.filters, vector_store=vector_store,
         reranker=reranker,
     )
 
@@ -445,8 +393,7 @@ async def multi_collection_search(
     *,
     db: AsyncSession,
     embedder: EmbeddingAdapter,
-    vector_store: VectorStoreAdapter,
-    redis_client: Any,
+    vector_store: PgvectorAdapter,
     reranker: Reranker | None = None,
 ) -> SearchResponse:
     """Search across one or more collections and merge with second-level RRF.
@@ -460,8 +407,7 @@ async def multi_collection_search(
         request: Parsed SearchRequest from the caller.
         db: Async database session for metadata look-ups.
         embedder: Embedding adapter used to vectorise the query.
-        vector_store: Vector store adapter for similarity search.
-        redis_client: Sync Redis client for BM25 corpus access.
+        vector_store: Vector store adapter for similarity search + FTS scoring.
         reranker: Optional cross-encoder reranker applied per collection before
             the cross-collection merge; ``None`` skips the stage (RRF-only).
 
@@ -480,7 +426,7 @@ async def multi_collection_search(
     outcomes = await asyncio.gather(*[
         asyncio.to_thread(
             _fan_out_one, cid, query_vector, request,
-            vector_store=vector_store, redis_client=redis_client, fan_out=fan_out,
+            vector_store=vector_store, fan_out=fan_out,
             reranker=reranker,
         )
         for cid in known

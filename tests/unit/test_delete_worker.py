@@ -1,16 +1,15 @@
-"""Unit tests for the worker delete task: BM25 prune, vector cleanup, hard-delete."""
+"""Unit tests for the worker delete task: vector cleanup + hard-delete.
 
-import json
+Lexical/BM25 is the STORED ``chunks.text_tsv`` column (Phase 3): deleting the
+chunks drops FTS with them, so there is no separate corpus to prune.
+"""
 
-from api.models.redis import CorpusConfig
-from worker.tasks import (
-    _delete_from_bm25_index,
-    delete_document,
-)
+from worker.tasks import delete_document
 
 
 class FakeRedis:
-    """In-memory Redis stub for BM25 corpus tests."""
+    """In-memory Redis stub (delete no longer touches BM25, but the task still
+    resolves the redis singleton for realtime — kept as a harmless double)."""
 
     def __init__(self, initial: dict | None = None) -> None:
         self.store: dict[str, str] = dict(initial or {})
@@ -26,61 +25,6 @@ class FakeRedis:
     def incr(self, key: str) -> int:
         self.store[key] = str(int(self.store.get(key, "0")) + 1)
         return int(self.store[key])
-
-
-# ---------------------------------------------------------------------------
-# _delete_from_bm25_index — pure function tests
-# ---------------------------------------------------------------------------
-
-
-def test_delete_from_bm25_index_removes_only_target() -> None:
-    corpus = [
-        ["chunk1", "doc1", "hello"],
-        ["chunk2", "doc2", "world"],
-        ["chunk3", "doc1", "again"],
-    ]
-    rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
-
-    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
-
-    result = json.loads(rds.store["bm25:col1:corpus"])
-    assert result == [["chunk2", "doc2", "world"]]
-    assert "bm25:col1:version" in rds.store
-
-def test_delete_from_bm25_index_noop_when_corpus_absent() -> None:
-    rds = FakeRedis()
-    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
-    assert "bm25:col1:corpus" not in rds.store
-
-
-def test_delete_from_bm25_index_noop_when_doc_not_present() -> None:
-    corpus = [["chunk2", "doc2", "other"]]
-    rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
-
-    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
-
-    # corpus unchanged, version not bumped
-    assert "bm25:col1:version" not in rds.store
-    assert json.loads(rds.store["bm25:col1:corpus"]) == corpus
-
-
-def test_delete_from_bm25_index_increments_version() -> None:
-    corpus = [["chunk1", "doc1", "text"]]
-    rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus), "bm25:col1:version": "5"})
-
-    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
-
-    assert rds.store["bm25:col1:version"] == "6"
-
-
-def test_delete_from_bm25_index_rewrites_without_expiry() -> None:
-    corpus = [["chunk1", "doc1", "text"]]
-    rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
-
-    _delete_from_bm25_index(rds, CorpusConfig("col1"), "doc1")
-
-    # corpus key was rewritten with no TTL — it must not silently expire.
-    assert rds.ttls["bm25:col1:corpus"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -111,27 +55,6 @@ def test_delete_task_calls_vector_store(monkeypatch) -> None:
     delete_document.apply(args=["doc1", "col1"])
 
     fake_vs.delete_document.assert_called_once_with("col1", "doc1")
-
-
-def test_delete_task_prunes_bm25_corpus(monkeypatch) -> None:
-    from unittest.mock import MagicMock
-
-    corpus = [["chunk1", "doc1", "hello"], ["chunk2", "doc2", "keep"]]
-    fake_vs = MagicMock()
-    fake_rds = FakeRedis({"bm25:col1:corpus": json.dumps(corpus)})
-    fake_session = MagicMock()
-    fake_session.__enter__ = MagicMock(return_value=fake_session)
-    fake_session.__exit__ = MagicMock(return_value=False)
-    fake_factory = MagicMock(return_value=fake_session)
-
-    monkeypatch.setattr("worker.tasks._vector_store_singleton", fake_vs)
-    monkeypatch.setattr("worker.tasks._redis_singleton", fake_rds)
-    monkeypatch.setattr("worker.tasks.SessionLocal", fake_factory)
-
-    delete_document.apply(args=["doc1", "col1"])
-
-    remaining = json.loads(fake_rds.store["bm25:col1:corpus"])
-    assert remaining == [["chunk2", "doc2", "keep"]]
 
 
 def test_delete_task_hard_deletes_sqlite_row(monkeypatch) -> None:

@@ -109,15 +109,11 @@ def test_app_config_file_size_derivation():
 
 def test_docker_compose_has_all_services():
     compose = yaml.safe_load((REPO / "docker-compose.yml").read_text())
-    assert {"api", "worker", "redis", "chroma", "nginx"}.issubset(compose["services"])
+    assert {"api", "worker", "redis", "postgres", "nginx"}.issubset(compose["services"])
 
 
 def test_compose_overrides_parse():
-    for name in (
-        "docker-compose.postgres.yml",
-        "docker-compose.qdrant.yml",
-        "docker-compose.gpu.yml",
-    ):
+    for name in ("docker-compose.gpu.yml",):
         data = yaml.safe_load((REPO / name).read_text())
         assert "services" in data
 

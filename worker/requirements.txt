@@ -9,11 +9,12 @@ structlog>=24.1.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
 PyYAML>=6.0.1
-# Shared DB schema (sync engine over the same SQLite file)
+# Shared DB schema (sync engine over the same database as the API; DATABASE_URL
+# selects SQLite (dev default) or Postgres via psycopg (v3)).
 sqlalchemy[asyncio]>=2.0.0
+psycopg[binary]>=3.1.0
 
-# Lightweight ingestion helpers (tokenisation, BM25, encoding + markdown parsing)
+# Lightweight ingestion helpers (tokenisation, encoding + markdown parsing)
 tiktoken>=0.7.0
-rank-bm25>=0.2.2
 chardet>=5.2.0
 mistune>=3.0.0

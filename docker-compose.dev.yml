@@ -2,7 +2,7 @@
 #
 #   docker compose -f docker-compose.dev.yml up
 #
-# Same backend as production (api / worker / redis / chroma are pulled from
+# Same backend as production (api / worker / redis / postgres are pulled from
 # docker-compose.yml via `extends`, so they never drift), but the frontend is a
 # Vite dev server with hot-reload instead of the nginx static build — edit
 # anything under ./ui and the browser updates live, no rebuild.
@@ -15,6 +15,7 @@ networks:
 volumes:
   embedbase_data:
   redis_data:
+  postgres_data:
   console_node_modules:
 
 services:
@@ -26,7 +27,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      chroma:
+      postgres:
         condition: service_healthy
 
   worker:
@@ -36,16 +37,18 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   redis:
     extends:
       file: docker-compose.yml
       service: redis
 
-  chroma:
+  postgres:
     extends:
       file: docker-compose.yml
-      service: chroma
+      service: postgres
 
   # Frontend: Vite dev server with hot-reload. Source is bind-mounted; edits are
   # reflected live. Proxies /api and /mcp to the api service (ui/vite.config.ts,

@@ -62,7 +62,7 @@ def test_search_request_requires_collection_ids():
 def test_app_config_defaults():
     cfg = AppConfig()
     assert cfg.embedding.provider == "ollama"
-    assert cfg.vector_store.backend == "chroma"
+    assert cfg.vector_store.host == "postgres"
     assert cfg.search.retrieval_fan_out == 4
     assert cfg.search.max_fan_out == 10
 

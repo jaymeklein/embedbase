@@ -1,9 +1,10 @@
 """BM25 index status reporting and (re)index orchestration.
 
-Index membership is derived from the BM25 corpus in Redis (a document is
-"indexed" when its chunks are present in ``bm25:{collection}:corpus``) — there is
-no separate flag to keep in sync. (Re)indexing is delegated to the worker, which
-rebuilds corpus entries straight from the vector store without re-embedding.
+Lexical/BM25 lives in the ``chunks.text_tsv`` generated column (Phase 3), so a
+document is "indexed" once it has stored chunks — i.e. ``documents.chunk_count``
+is set. There is no separate corpus to keep in sync, and (re)indexing is a no-op
+(the tsvector is auto-maintained); the /index endpoints remain as instantly
+satisfied calls.
 """
 
 from __future__ import annotations
@@ -24,21 +25,13 @@ from api.models.indexing import (
     IndexStatusResponse,
     WorkspaceIndexStatus,
 )
-from api.models.redis import CorpusConfig
 from api.services import tasks as task_producer
-from api.services.redis.redis import get_corpus
 
 _IN_FLIGHT = {"pending", "processing"}
 
 
-def indexed_doc_ids(redis_client: Any, collection_id: str) -> set[str]:
-    """Return the set of document_ids present in a collection's BM25 corpus."""
-    corpus = get_corpus(redis_client, CorpusConfig(collection_id))
-    return {entry[1] for entry in corpus.data}
-
-
 async def _active_documents(db: AsyncSession) -> list[Any]:
-    """Fetch every active document with its workspace, collection, and job status."""
+    """Fetch every active document with its workspace, collection, job status, and chunk_count."""
     stmt = (
         select(
             ws_t.c.id.label("ws_id"),
@@ -46,6 +39,7 @@ async def _active_documents(db: AsyncSession) -> list[Any]:
             col_t.c.id.label("col_id"),
             col_t.c.name.label("col_name"),
             doc_t.c.id.label("doc_id"),
+            doc_t.c.chunk_count.label("chunk_count"),
             job_t.c.status.label("status"),
         )
         .select_from(
@@ -77,29 +71,33 @@ def _collection_status(
     )
 
 
-async def get_index_overview(db: AsyncSession, redis_client: Any) -> IndexStatusResponse:
+async def get_index_overview(db: AsyncSession) -> IndexStatusResponse:
     """Return BM25 index coverage grouped by workspace then collection.
 
-    Only collections that contain at least one active document appear — empty
-    collections have nothing to index.
+    A document counts as indexed once it has stored chunks (``chunk_count`` set),
+    since its text is FTS-searchable via ``chunks.text_tsv``. Only collections
+    with at least one active document appear — empty ones have nothing to index.
     """
     # ws_id -> (ws_name, {col_id -> (col_name, {doc_id -> status})})
     tree: dict[str, tuple[str, dict[str, tuple[str, dict[str, str | None]]]]] = defaultdict(
         lambda: ("", defaultdict(lambda: ("", {})))
     )
+    indexed: set[str] = set()
     for row in await _active_documents(db):
         _, cols = tree[row.ws_id]
         tree[row.ws_id] = (row.ws_name, cols)
         _, docs = cols[row.col_id]
         cols[row.col_id] = (row.col_name, docs)
         docs[row.doc_id] = row.status  # ordered by created_at → latest job wins
+        if row.chunk_count:
+            indexed.add(row.doc_id)
 
     workspaces = [
         WorkspaceIndexStatus(
             workspace_id=ws_id,
             workspace_name=ws_name,
             collections=[
-                _collection_status(cid, cname, docs, indexed_doc_ids(redis_client, cid))
+                _collection_status(cid, cname, docs, indexed)
                 for cid, (cname, docs) in cols.items()
             ],
         )

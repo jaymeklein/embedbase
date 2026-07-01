@@ -1,9 +1,12 @@
-"""Celery ingestion tasks: parse → chunk → embed → store, plus BM25 indexing."""
+"""Celery ingestion tasks: parse → chunk → embed → store.
+
+Lexical/BM25 is the STORED ``text_tsv`` generated column on ``chunks`` (Phase 3),
+maintained automatically by the vector-store upsert — no Redis corpus write path.
+"""
 
 from __future__ import annotations
 
 import inspect
-import json
 import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -13,12 +16,10 @@ import structlog
 from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
-from api.models.redis import CorpusConfig
 from api.services import realtime
-from api.services.redis.redis import get_corpus
+from api.sql_compat import dialect_insert
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import (
@@ -215,7 +216,7 @@ def _normalize_tag(name: str) -> str:
 def _get_or_create_tag(session: Any, workspace_id: str, name: str) -> str:
     """Return the id of the workspace tag named ``name``, creating it if absent."""
     session.execute(
-        sqlite_insert(tags)
+        dialect_insert(session.bind, tags)
         .values(
             id=f"tag_{uuid4().hex[:12]}",
             workspace_id=workspace_id,
@@ -279,111 +280,13 @@ def _auto_tag_document(
                 continue
             tag_id = _get_or_create_tag(session, ws_row[0], name)
             session.execute(
-                sqlite_insert(document_tags)
+                dialect_insert(session.bind, document_tags)
                 .values(document_id=document_id, tag_id=tag_id)
                 .on_conflict_do_nothing()
             )
             applied.append(name)
         session.commit()
     logger.info("auto-tagged document", document_id=document_id, tags=applied)
-
-
-# ---------------------------------------------------------------------------
-# BM25 write path
-# ---------------------------------------------------------------------------
-
-
-def _update_bm25_index(redis_client: Any, collection_id: str, chunks: list[Chunk]) -> None:
-    """Append ``[chunk_id, document_id, text]`` triples to the collection's BM25 corpus.
-
-    Keying by chunk_id (not document_id) means each chunk gets its own BM25
-    score — a multi-chunk document no longer silently clobbers earlier scores.
-    document_id is retained as entry[1] so _delete_from_bm25_index can prune
-    all chunks for a document without a separate index.
-
-    The corpus is stored as JSON (never pickle — untrusted-deserialization risk)
-    under ``bm25:{collection_id}:corpus`` with no expiry — it mirrors the
-    permanent vector store and is only ever rewritten by ingestion/deletion, so a
-    TTL would silently break BM25 while the vectors live on. A monotonically
-    increasing ``:version`` key lets the search side invalidate its local cache.
-    """
-    if not chunks:
-        return
-    corpus_key = f"bm25:{collection_id}:corpus"
-    version_key = f"bm25:{collection_id}:version"
-
-    raw = redis_client.get(corpus_key)
-    corpus: list[list[str]] = json.loads(raw) if raw else []
-    corpus.extend([chunk.id, chunk.metadata.document_id, chunk.text] for chunk in chunks)
-
-    redis_client.set(corpus_key, json.dumps(corpus))
-    redis_client.incr(version_key)
-
-
-def _delete_from_bm25_index(redis_client: Any, corpus_config: CorpusConfig, document_id: str) -> None:
-    """Remove all corpus entries for ``document_id`` from the BM25 index.
-
-    Reads the JSON corpus from ``bm25:{collection_id}:corpus``, filters out
-    all ``[document_id, text]`` pairs, rewrites the corpus, and bumps the
-    version key so the search side invalidates its local cache.
-    No-op when the corpus key is absent or the document has no entries.
-    """
-    
-    corpus = get_corpus(redis_client, corpus_config)
-    pruned = [entry for entry in corpus.data if entry[1] != document_id]
-    if len(pruned) == len(corpus.data):
-        return
-    redis_client.set(corpus_config.corpus_key, json.dumps(pruned))
-    redis_client.incr(corpus_config.version_key)
-
-
-def _reindex_document_bm25(
-    redis_client: Any, vector_store: Any, collection_id: str, document_id: str
-) -> int:
-    """Rebuild one document's BM25 corpus entries from the vector store.
-
-    Pulls the document's stored chunks (text already lives in the vector store),
-    replaces any existing corpus entries for that document, and bumps the version.
-    No re-parsing or re-embedding — recovers BM25 even when the source file is gone.
-
-    Returns the number of chunks indexed.
-    """
-    triples: list[tuple[str, str, str]] = vector_store.iter_document_chunks(
-        collection_id, document_id
-    )
-    cfg = CorpusConfig(collection_id)
-    kept = [e for e in get_corpus(redis_client, cfg).data if e[1] != document_id]
-    kept.extend(triples)
-    redis_client.set(cfg.corpus_key, json.dumps(kept))
-    redis_client.incr(cfg.version_key)
-    return len(triples)
-
-
-def _reindex_collection_bm25(
-    redis_client: Any, vector_store: Any, session_factory: Any, collection_id: str
-) -> int:
-    """Rebuild a collection's entire BM25 corpus from the vector store in one write.
-
-    Reads every active document's chunks and replaces the corpus wholesale, so
-    indexing many documents at once cannot race on the read-modify-write. Returns
-    the total number of chunks indexed.
-    """
-    with session_factory() as session:
-        doc_ids = [
-            row[0] for row in session.execute(
-                select(documents.c.id).where(
-                    documents.c.collection_id == collection_id,
-                    documents.c.status.is_(None),
-                )
-            ).fetchall()
-        ]
-    entries: list[tuple[str, str, str]] = []
-    for doc_id in doc_ids:
-        entries.extend(vector_store.iter_document_chunks(collection_id, doc_id))
-    cfg = CorpusConfig(collection_id)
-    redis_client.set(cfg.corpus_key, json.dumps(entries))
-    redis_client.incr(cfg.version_key)
-    return len(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -571,9 +474,9 @@ def _run_ingestion(
                         chunks=[{"index": c.metadata.chunk_index, "label": _chunk_label(c)} for c in batch],
                     )
                 emit("storing", current=total, total=total)
-                # Rebuild this document's BM25 entries from the store — idempotent, so
-                # a resumed run doesn't duplicate corpus rows.
-                _reindex_document_bm25(redis_client, vector_store, collection_id, document_id)
+                # BM25/lexical is now the STORED tsvector column on `chunks`
+                # (Phase 3) — populated automatically by the upsert above. No
+                # separate corpus write.
         except Exception as exc:
             emit("failed", status="failed", error=str(exc)[:300])
             raise
@@ -684,11 +587,13 @@ def sync_document_tags(self, document_id: str, collection_id: str) -> None:
     retry_backoff_max=60,
 )
 def delete_document(self, document_id: str, collection_id: str) -> None:
-    """Remove vectors, BM25 corpus entries, and the document row for a deleted document."""
-    redis_client = _redis()
+    """Remove vectors and the document row for a deleted document.
+
+    Deleting the chunks drops their FTS ``text_tsv`` too (same rows), so there is
+    no separate lexical index to prune.
+    """
     try:
         _vector_store().delete_document(collection_id, document_id)
-        _delete_from_bm25_index(redis_client, CorpusConfig(collection_id), document_id)
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
             db.commit()
@@ -719,15 +624,13 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
     retry_backoff_max=60,
 )
 def index_document(self, document_id: str, collection_id: str) -> None:
-    """Rebuild one document's BM25 corpus entries from the vector store."""
-    try:
-        n = _reindex_document_bm25(_redis(), _vector_store(), collection_id, document_id)
-        logger.info("bm25 index complete", document_id=document_id, chunks=n)
-    except SoftTimeLimitExceeded:
-        raise
-    except Exception as exc:
-        logger.error("bm25 index failed", document_id=document_id, error=str(exc))
-        raise self.retry(exc=exc) from exc
+    """No-op: lexical/BM25 is the STORED tsvector on ``chunks`` (Phase 3).
+
+    The generated column keeps FTS current on every upsert, so there is nothing
+    to rebuild. Kept as a task so the manual /index endpoint stays a valid
+    (instantly-satisfied) call.
+    """
+    logger.info("bm25 index no-op (FTS auto-maintained)", document_id=document_id)
 
 
 @celery_app.task(
@@ -737,12 +640,8 @@ def index_document(self, document_id: str, collection_id: str) -> None:
     retry_backoff_max=60,
 )
 def index_collection(self, collection_id: str) -> None:
-    """Rebuild a whole collection's BM25 corpus from the vector store."""
-    try:
-        n = _reindex_collection_bm25(_redis(), _vector_store(), SessionLocal, collection_id)
-        logger.info("bm25 collection index complete", collection_id=collection_id, chunks=n)
-    except SoftTimeLimitExceeded:
-        raise
-    except Exception as exc:
-        logger.error("bm25 collection index failed", collection_id=collection_id, error=str(exc))
-        raise self.retry(exc=exc) from exc
+    """No-op: lexical/BM25 is the STORED tsvector on ``chunks`` (Phase 3).
+
+    See :func:`index_document` — the generated column makes a rebuild unnecessary.
+    """
+    logger.info("bm25 collection index no-op (FTS auto-maintained)", collection_id=collection_id)
