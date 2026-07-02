@@ -1,15 +1,14 @@
-"""Unit tests for search service functions: filters, RRF, and RRF scoring.
+"""Unit tests for search service filters.
 
-FTS/BM25 scoring itself lives in ``PgvectorAdapter.bm25_scores`` (Postgres,
-exercised in integration) — the service just fuses its output, tested here.
+Vector + BM25 fusion moved into a single SQL round-trip
+(``PgvectorAdapter.hybrid_search``, Phase 4 item 2), which the SQLite suite can't
+exercise — the old Python RRF (``_reciprocal_rank_fusion`` + ``services.bm25``) was
+removed with it. HYBRID routing/fallback is covered via the fake in
+``test_search_service.py``; the SQL itself is verified against live ParadeDB.
 """
 
 from api.models.search import SearchFilters, SearchResult
-from api.services.bm25 import score_semantic, score_structured
-from api.services.search import (
-    _reciprocal_rank_fusion,
-    apply_filters,
-)
+from api.services.search import apply_filters
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -73,144 +72,3 @@ def test_apply_filters_combined():
 def test_apply_filters_no_match_returns_empty():
     results = [_result("a", language="python")]
     assert apply_filters(results, SearchFilters(language="go")) == []
-
-
-# ---------------------------------------------------------------------------
-# score_semantic / score_structured
-# ---------------------------------------------------------------------------
-
-
-def test_score_semantic_descending_order():
-    results = [_result("a"), _result("b"), _result("c")]
-    scored = score_semantic(results)
-    scores = [r.score for r in scored]
-    assert scores == sorted(scores, reverse=True)
-
-
-def test_score_semantic_first_rank_highest():
-    results = [_result("first"), _result("second")]
-    scored = score_semantic(results)
-    assert scored[0].chunk_id == "first"
-
-
-def test_score_semantic_does_not_mutate_originals():
-    results = [_result("a", score=99.0), _result("b", score=99.0)]
-    score_semantic(results)
-    assert results[0].score == 99.0
-    assert results[1].score == 99.0
-
-
-def test_score_structured_descending_order():
-    results = [_result("a"), _result("b"), _result("c")]
-    scored = score_structured(results)
-    scores = [r.score for r in scored]
-    assert scores == sorted(scores, reverse=True)
-
-
-def test_score_structured_uses_bm25_weight():
-    alpha = 0.7
-    results = [_result("a")]
-    scored = score_structured(results, alpha=alpha, k=60)
-    expected = (1 - alpha) * (1 / (60 + 1))
-    assert abs(scored[0].score - expected) < 1e-9
-
-
-def test_score_structured_does_not_mutate_originals():
-    results = [_result("a", score=99.0)]
-    score_structured(results)
-    assert results[0].score == 99.0
-
-
-# ---------------------------------------------------------------------------
-# _reciprocal_rank_fusion
-# ---------------------------------------------------------------------------
-
-
-def test_rrf_fused_score_higher_for_result_in_both_lists():
-    shared = _result("shared")
-    semantic_only = _result("semantic_only")
-    bm25_only = _result("bm25_only")
-
-    fused = _reciprocal_rank_fusion(
-        vector_results=[shared, semantic_only],
-        bm25_results=[shared, bm25_only],
-    )
-    fused_by_id = {r.chunk_id: r for r in fused}
-
-    assert fused_by_id["shared"].score > fused_by_id["semantic_only"].score
-    assert fused_by_id["shared"].score > fused_by_id["bm25_only"].score
-
-
-def test_rrf_returns_all_unique_results():
-    fused = _reciprocal_rank_fusion(
-        vector_results=[_result("a"), _result("b")],
-        bm25_results=[_result("b"), _result("c")],
-    )
-    assert {r.chunk_id for r in fused} == {"a", "b", "c"}
-
-
-def test_rrf_ranks_are_assigned_sequentially():
-    fused = _reciprocal_rank_fusion(
-        vector_results=[_result("a"), _result("b")],
-        bm25_results=[_result("a"), _result("c")],
-    )
-    ranks = [r.rank for r in fused]
-    assert ranks == list(range(1, len(fused) + 1))
-
-
-def test_rrf_prefers_semantic_metadata_for_shared_chunk():
-    from api.models.search import SourceProvenance
-
-    semantic_result = SearchResult(
-        chunk_id="shared",
-        text="from vector store",
-        score=1.0,
-        source=SourceProvenance(
-            collection_id="col1",
-            collection_name="my-col",
-            workspace_id="ws1",
-            workspace_name="my-ws",
-        ),
-    )
-    bm25_result = _result("shared")
-
-    fused = _reciprocal_rank_fusion(
-        vector_results=[semantic_result],
-        bm25_results=[bm25_result],
-    )
-    assert fused[0].source is not None
-    assert fused[0].source.collection_id == "col1"
-
-
-def test_rrf_sorted_descending_by_score():
-    fused = _reciprocal_rank_fusion(
-        vector_results=[_result("a"), _result("b"), _result("c")],
-        bm25_results=[_result("a"), _result("d")],
-    )
-    scores = [r.score for r in fused]
-    assert scores == sorted(scores, reverse=True)
-
-
-def test_rrf_does_not_mutate_input_lists():
-    original_score = 42.0
-    vec = [_result("a", score=original_score)]
-    bm = [_result("b", score=original_score)]
-    _reciprocal_rank_fusion(vector_results=vec, bm25_results=bm)
-    assert vec[0].score == original_score
-    assert bm[0].score == original_score
-
-
-def test_rrf_empty_bm25_returns_semantic_only():
-    fused = _reciprocal_rank_fusion(
-        vector_results=[_result("a"), _result("b")],
-        bm25_results=[],
-    )
-    assert {r.chunk_id for r in fused} == {"a", "b"}
-
-
-def test_rrf_empty_semantic_returns_bm25_only():
-    fused = _reciprocal_rank_fusion(
-        vector_results=[],
-        bm25_results=[_result("x"), _result("y")],
-    )
-    assert {r.chunk_id for r in fused} == {"x", "y"}
