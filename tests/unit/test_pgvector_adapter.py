@@ -202,6 +202,80 @@ def test_search_folds_filter_into_where_and_appends_params():
     assert args == ([0.1, 0.2, 0.3], "col1", 2, '["ml"]')
 
 
+# --- hybrid search (Phase 4 item 2: single round-trip RRF) ------------------
+
+
+def _hybrid_row(cid, vscore, score, from_bm25, text="t", meta="{}"):
+    return {
+        "id": cid, "text": text, "metadata": meta,
+        "vscore": vscore, "score": score, "from_bm25": from_bm25,
+    }
+
+
+def test_hybrid_search_binds_params_in_order_and_emits_rrf_ctes():
+    conn = FakeConn(fetch_rows=[])
+    adapter = _adapter(conn)
+
+    adapter.hybrid_search("col1", [0.1, 0.2, 0.3], "machine learning", top_k=7, alpha=0.6)
+
+    sql, args = conn.fetch_calls[0]
+    # $1 vector, $2 collection, $3 top_k, $4 query, $5 rrf-k, $6 alpha
+    assert args == ([0.1, 0.2, 0.3], "col1", 7, "machine learning", 60, 0.6)
+    assert "WITH semantic AS" in sql and "bm25 AS" in sql and "fused AS" in sql
+    assert "UNION ALL" in sql              # the two candidate sets are fused
+    assert "embedding <=> $1" in sql       # semantic side: cosine distance
+    assert "pdb.score(id)" in sql          # bm25 side: real Okapi BM25
+    assert "text ||| $4" in sql            # bm25 match-any-term on the raw query
+
+
+def test_hybrid_search_folds_filter_into_both_ctes():
+    conn = FakeConn(fetch_rows=[])
+    adapter = _adapter(conn)
+
+    adapter.hybrid_search(
+        "col1", [0.1, 0.2, 0.3], "q", top_k=5, filters=SearchFilters(language="python")
+    )
+
+    sql, args = conn.fetch_calls[0]
+    # The pushdown predicate ($7) must appear in BOTH the semantic and bm25 CTE so a
+    # restrictive filter cuts rows during each candidate scan, not after the fusion.
+    assert sql.count("metadata->>'language' = $7") == 2
+    assert args == ([0.1, 0.2, 0.3], "col1", 5, "q", 60, 0.7, "python")
+
+
+def test_hybrid_search_matched_reports_fused_score():
+    rows = [
+        _hybrid_row("c1", vscore=0.9, score=0.02, from_bm25=1, meta='{"document_id": "d1"}'),
+        _hybrid_row("c2", vscore=0.5, score=0.01, from_bm25=0),
+    ]
+    adapter = _adapter(FakeConn(fetch_rows=rows))
+
+    results, matched = adapter.hybrid_search("col1", [0.1, 0.2, 0.3], "q", top_k=5)
+
+    assert matched is True
+    assert [r.chunk_id for r in results] == ["c1", "c2"]
+    assert results[0].score == 0.02          # fused RRF score, not the raw cosine
+    assert [r.rank for r in results] == [1, 2]
+    assert results[0].metadata["document_id"] == "d1"
+
+
+def test_hybrid_search_no_lexical_match_reports_real_cosine_and_semantic_only():
+    # from_bm25 == 0 on every row → the query matched nothing lexically. The adapter
+    # surfaces the real cosine similarity (vscore), not the rank-only RRF value, and
+    # signals matched=False so the service degrades to SEMANTIC_ONLY.
+    rows = [
+        _hybrid_row("c1", vscore=0.9, score=0.011, from_bm25=0),
+        _hybrid_row("c2", vscore=0.5, score=0.010, from_bm25=0),
+    ]
+    adapter = _adapter(FakeConn(fetch_rows=rows))
+
+    results, matched = adapter.hybrid_search("col1", [0.1, 0.2, 0.3], "q", top_k=5)
+
+    assert matched is False
+    assert [r.score for r in results] == [0.9, 0.5]
+    assert [r.rank for r in results] == [1, 2]
+
+
 # --- delete -----------------------------------------------------------------
 
 

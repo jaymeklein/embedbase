@@ -76,3 +76,6 @@ warn_unused_ignores = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "paradedb: live ParadeDB integration tests; opt-in via EMBEDBASE_TEST_PARADEDB=1 (skipped otherwise)",
+]
