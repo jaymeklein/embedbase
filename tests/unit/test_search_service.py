@@ -54,6 +54,44 @@ class FakeVectorStore:
     ) -> dict[str, float]:
         return {cid: self._bm25[cid] for cid in chunk_ids if cid in self._bm25}
 
+    def hybrid_search(
+        self, collection_id: str, vector: list[float], query: str, top_k: int,
+        *, alpha: float = 0.7, k: int = 60, filters: dict | None = None,
+    ) -> tuple[list[SearchResult], bool]:
+        """Simulate PgvectorAdapter.hybrid_search's single-round-trip RRF in Python.
+
+        Candidates in ``_bm25`` count as lexical matches (mirrors the SQL bm25 CTE
+        returning rows only for hits). No match → real cosine scores in vector order,
+        matched=False (the SEMANTIC_ONLY fallback the real adapter also returns).
+        """
+        self.last_top_k = top_k
+        candidates = self._results[:top_k]
+        scored = {
+            c.chunk_id: self._bm25[c.chunk_id] for c in candidates if c.chunk_id in self._bm25
+        }
+        if not scored:
+            out = [c.model_copy() for c in candidates]
+            for rank, r in enumerate(out, start=1):
+                r.rank = rank
+            return out, False
+        srank = {c.chunk_id: i + 1 for i, c in enumerate(candidates)}
+        brank = {
+            cid: i + 1
+            for i, (cid, _) in enumerate(sorted(scored.items(), key=lambda kv: kv[1], reverse=True))
+        }
+        fused: list[SearchResult] = []
+        for c in candidates:
+            s = alpha / (k + srank[c.chunk_id])
+            if c.chunk_id in brank:
+                s += (1 - alpha) / (k + brank[c.chunk_id])
+            copy = c.model_copy()
+            copy.score = s
+            fused.append(copy)
+        fused.sort(key=lambda r: r.score, reverse=True)
+        for rank, r in enumerate(fused, start=1):
+            r.rank = rank
+        return fused, True
+
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
     def delete_collection(self, *args: object) -> None: ...
@@ -273,6 +311,19 @@ def test_search_collection_hybrid_mode_returns_hybrid():
         mode=SearchMode.HYBRID, vector_store=vs,
     )
     assert mode == SearchMode.HYBRID
+
+
+def test_search_collection_hybrid_fuses_lexical_and_vector():
+    # Vector order is c1, c2, c3; only c3 matches lexically. RRF must lift c3 above
+    # its vector rank (single round-trip hybrid_search fuses both signals).
+    candidates = [_result("c1", score=0.9), _result("c2", score=0.8), _result("c3", score=0.7)]
+    vs = FakeVectorStore(candidates, bm25={"c3": 5.0})
+    results, mode, _, _ = search_collection(
+        "col1", [0.1], "machine learning", top_k=5,
+        mode=SearchMode.HYBRID, vector_store=vs,
+    )
+    assert mode == SearchMode.HYBRID
+    assert results[0].chunk_id == "c3"  # lexical hit fused to the top
 
 
 def test_search_collection_bm25_mode_ranks_by_keyword():
