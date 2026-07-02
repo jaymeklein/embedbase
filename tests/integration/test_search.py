@@ -11,7 +11,6 @@ from sqlalchemy.pool import StaticPool
 from api.dependencies import (
     get_db,
     require_embedding_adapter,
-    require_redis_client,
     require_vector_store,
 )
 from api.main import create_app
@@ -41,21 +40,20 @@ class _FakeEmbedder:
 
 class _FakeVectorStore:
     def search(
-        self, collection_id: str, vector: list[float], top_k: int
+        self, collection_id: str, vector: list[float], top_k: int,
+        filters: dict | None = None,
     ) -> list[SearchResult]:
         return []
+
+    def bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        return {}
 
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
     def delete_collection(self, *args: object) -> None: ...
     def list_documents(self, *args: object) -> list: ...
-
-
-class _FakeRedis:
-    def get(self, key: str) -> object:
-        return None
-
-    def set(self, key: str, value: object, ex: int | None = None) -> None: ...
 
 
 @asynccontextmanager
@@ -97,7 +95,6 @@ async def search_client():
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[require_embedding_adapter] = lambda: _FakeEmbedder()
     app.dependency_overrides[require_vector_store] = lambda: _FakeVectorStore()
-    app.dependency_overrides[require_redis_client] = lambda: _FakeRedis()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         yield ac

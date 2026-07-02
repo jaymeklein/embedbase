@@ -1,7 +1,5 @@
 """Integration tests for the AI suggest-tags endpoints."""
 
-import json
-
 import pytest
 
 import api.dependencies as deps
@@ -31,21 +29,26 @@ def _use_llm(monkeypatch, *names: str) -> None:
     monkeypatch.setattr(tag_suggest, "get_tag_suggester", lambda cfg: _FakeSuggester(*names))
 
 
-class FakeRedis:
-    def __init__(self) -> None:
-        self.m: dict[str, str] = {}
+class FakeVectorStore:
+    """Holds chunk text per collection — the source tag suggestion reads from."""
 
-    def get(self, key: str):
-        return self.m.get(key)
+    def __init__(self) -> None:
+        self.by_col: dict[str, list[tuple[str, str, str]]] = {}
+
+    def collection_texts(self, col_id: str) -> list[str]:
+        return [text for _, _, text in self.by_col.get(col_id, [])]
+
+    def iter_document_chunks(self, col_id: str, doc_id: str) -> list[tuple[str, str, str]]:
+        return [(c, d, t) for c, d, t in self.by_col.get(col_id, []) if d == doc_id]
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch, tmp_path):
-    """Stub the broker/upload dir and make a fake Redis the live client."""
+    """Stub the broker/upload dir and make a fake vector store the live one."""
     monkeypatch.setattr(settings, "upload_dir", str(tmp_path / "data"))
     monkeypatch.setattr(task_producer, "enqueue_ingest", lambda *a, **k: "task-x")
-    fake = FakeRedis()
-    monkeypatch.setattr(deps, "_redis_client", fake)
+    fake = FakeVectorStore()
+    monkeypatch.setattr(deps, "_vector_store", fake)
     return fake
 
 
@@ -70,7 +73,7 @@ async def _upload_doc(client, ws, col):
 
 
 def _seed_corpus(fake, col, entries):
-    fake.m[f"bm25:{col}:corpus"] = json.dumps([list(e) for e in entries])
+    fake.by_col[col] = [tuple(e) for e in entries]
 
 
 async def test_suggest_document_tags_endpoint(master_client, _env, monkeypatch):

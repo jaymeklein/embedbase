@@ -9,6 +9,7 @@ and metadata so existing `from api.db import X` imports stay valid.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 from sqlalchemy import event
@@ -54,21 +55,23 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 def _async_db_url() -> str:
-    return f"sqlite+aiosqlite:///{settings.database_path}"
+    """``DATABASE_URL`` (e.g. ``postgresql+psycopg://...``) if set, else SQLite dev default."""
+    return os.environ.get("DATABASE_URL") or f"sqlite+aiosqlite:///{settings.database_path}"
 
 
 engine = create_async_engine(_async_db_url(), echo=False)
 
-# Pragmas must be set on the underlying sync connection at creation time.
-# The "connect" event on the sync engine fires before the async wrapper sees
-# the connection, making this the correct place for SQLite pragmas.
-@event.listens_for(engine.sync_engine, "connect")
-def _set_sqlite_pragmas(dbapi_conn, _connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.close()
+# Pragmas are SQLite-only (no-op / invalid on Postgres). Must be set on the
+# underlying sync connection at creation time: the "connect" event on the sync
+# engine fires before the async wrapper sees the connection.
+if engine.sync_engine.dialect.name == "sqlite":
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_conn, _connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 
 
 AsyncSessionLocal = async_sessionmaker(

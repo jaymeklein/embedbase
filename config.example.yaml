@@ -1,6 +1,6 @@
 # EmbedBase configuration
 # Copy to config.yaml and edit. All settings here can be changed at runtime
-# via PUT /config without restarting the stack (except vector_store.backend).
+# via PUT /config without restarting the stack.
 
 embedding:
   provider: ollama  # ollama | sentence_transformers | openai_compat | gemini
@@ -17,20 +17,12 @@ embedding:
   # output_dimensionality: 768        # optional: truncate 3072-dim output
 
 vector_store:
-  backend: chroma  # chroma | pgvector | qdrant
-  chroma:
-    host: chroma
-    port: 8000
-  pgvector:
-    host: postgres
-    port: 5432
-    database: embedbase
-    user: embedbase
-    # password: set via POSTGRES_PASSWORD env var
-    index_min_rows: 100   # create HNSW index after this many rows
-  qdrant:
-    host: qdrant
-    port: 6333
+  host: postgres
+  port: 5432
+  database: embedbase
+  user: embedbase
+  # password: set via POSTGRES_PASSWORD env var
+  index_min_rows: 100   # create HNSW index after this many rows
 
 chunking:
   sliding_window:
@@ -66,7 +58,6 @@ search:
   retrieval_fan_out: 4    # retrieve top_k * fan_out before applying filters
   max_fan_out: 10
   hybrid_default_alpha: 0.7  # 0.0 = BM25 only, 1.0 = semantic only
-  bm25_cache_ttl: 60         # seconds — API in-process BM25 cache TTL
 
 mcp:
   enabled: true

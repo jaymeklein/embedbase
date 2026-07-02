@@ -1,7 +1,6 @@
 """Unit tests for search_collection and multi_collection_search."""
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -25,28 +24,19 @@ def _result(chunk_id: str, score: float = 1.0, **metadata: object) -> SearchResu
     return SearchResult(chunk_id=chunk_id, text="text", score=score, metadata=dict(metadata))
 
 
-class FakeRedis:
-    def __init__(self, store: dict | None = None) -> None:
-        self.store: dict = store or {}
-
-    def get(self, key: str) -> object:
-        return self.store.get(key)
-
-    def set(self, key: str, value: object, ex: int | None = None) -> None:
-        self.store[key] = value
-
-
-def _corpus_redis(collection_id: str, entries: list[list[str]], version: int = 1) -> FakeRedis:
-    """Build a FakeRedis with the given corpus triples [chunk_id, doc_id, text]."""
-    return FakeRedis({
-        f"bm25:{collection_id}:corpus": json.dumps(entries),
-        f"bm25:{collection_id}:version": str(version),
-    })
-
-
 class FakeVectorStore:
-    def __init__(self, results: list[SearchResult] | None = None) -> None:
+    """Fake adapter: canned vector hits + a canned FTS/BM25 score map.
+
+    ``bm25`` is ``{chunk_id: score}``; ``bm25_scores`` returns only the requested
+    candidates that have a score — mirroring the Postgres FTS query which returns
+    a row only when the chunk's text matches the query.
+    """
+
+    def __init__(
+        self, results: list[SearchResult] | None = None, bm25: dict[str, float] | None = None
+    ) -> None:
         self._results = results or []
+        self._bm25 = bm25 or {}
         self.last_top_k: int = 0
 
     def search(
@@ -58,6 +48,11 @@ class FakeVectorStore:
     ) -> list[SearchResult]:
         self.last_top_k = top_k
         return self._results[:top_k]
+
+    def bm25_scores(
+        self, collection_id: str, query: str, chunk_ids: list[str]
+    ) -> dict[str, float]:
+        return {cid: self._bm25[cid] for cid in chunk_ids if cid in self._bm25}
 
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
@@ -228,7 +223,7 @@ def test_search_collection_semantic_mode_returns_results():
     vs = FakeVectorStore(candidates)
     results, mode, retrieved, returned = search_collection(
         "col1", [0.1], "query", top_k=5,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
     )
     assert mode == SearchMode.SEMANTIC
     assert {r.chunk_id for r in results} == {"a", "b"}
@@ -239,7 +234,7 @@ def test_search_collection_respects_top_k():
     vs = FakeVectorStore(candidates)
     results, _, _, _ = search_collection(
         "col1", [0.1], "q", top_k=3,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
     )
     assert len(results) <= 3
 
@@ -249,7 +244,7 @@ def test_search_collection_fan_out_multiplies_candidate_request():
     vs = FakeVectorStore(candidates)
     search_collection(
         "col1", [0.1], "q", top_k=5, fan_out=4,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
     )
     assert vs.last_top_k == 20  # 5 * 4
 
@@ -259,7 +254,7 @@ def test_search_collection_fan_out_clamped_to_10():
     vs = FakeVectorStore(candidates)
     search_collection(
         "col1", [0.1], "q", top_k=5, fan_out=99,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
     )
     assert vs.last_top_k == 50  # 5 * 10
 
@@ -270,73 +265,48 @@ def test_search_collection_fan_out_clamped_to_10():
 
 
 def test_search_collection_hybrid_mode_returns_hybrid():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
-    candidates = [
-        _result("c1"),
-        _result("c2"),
-        _result("c3"),
-    ]
-    rds = _corpus_redis("col1", [
-        ["c1", "doc1", "machine learning python"],
-        ["c2", "doc2", "cooking recipes dinner"],
-        ["c3", "doc3", "gardening flowers plants"],
-    ])
-    vs = FakeVectorStore(candidates)
+    candidates = [_result("c1"), _result("c2"), _result("c3")]
+    # Only c1 matches the query's keywords (FTS returns a score for it alone).
+    vs = FakeVectorStore(candidates, bm25={"c1": 0.9})
     _, mode, _, _ = search_collection(
         "col1", [0.1], "machine learning", top_k=5,
-        mode=SearchMode.HYBRID, vector_store=vs, redis_client=rds,
+        mode=SearchMode.HYBRID, vector_store=vs,
     )
     assert mode == SearchMode.HYBRID
 
 
 def test_search_collection_bm25_mode_ranks_by_keyword():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     # Vector order puts the keyword match last; BM25 must pull it to the top.
     candidates = [
         _result("c2", score=0.9),
         _result("c3", score=0.8),
         _result("c1", score=0.1),
     ]
-    rds = _corpus_redis("col1", [
-        ["c1", "doc1", "machine learning python"],
-        ["c2", "doc2", "cooking recipes dinner"],
-        ["c3", "doc3", "gardening flowers plants"],
-    ])
-    vs = FakeVectorStore(candidates)
+    vs = FakeVectorStore(candidates, bm25={"c1": 0.9})
     results, mode, _, _ = search_collection(
         "col1", [0.1], "machine learning", top_k=5,
-        mode=SearchMode.BM25, vector_store=vs, redis_client=rds,
+        mode=SearchMode.BM25, vector_store=vs,
     )
     assert mode == SearchMode.BM25
     assert results[0].chunk_id == "c1"
     assert results[0].rank == 1
 
 
-def test_search_collection_bm25_falls_back_to_semantic_when_no_corpus():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
-    vs = FakeVectorStore([_result("c1")])
+def test_search_collection_bm25_falls_back_to_semantic_when_no_match():
+    vs = FakeVectorStore([_result("c1")])  # no bm25 scores → no keyword match
     _, mode, _, _ = search_collection(
         "col_empty", [0.1], "q", top_k=5,
-        mode=SearchMode.BM25, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.BM25, vector_store=vs,
     )
     assert mode == SearchMode.SEMANTIC_ONLY
 
 
 def test_search_collection_falls_back_to_semantic_when_no_bm25():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [_result("c1")]
-    vs = FakeVectorStore(candidates)
+    vs = FakeVectorStore(candidates)  # no bm25 scores
     _, mode, _, _ = search_collection(
         "col_empty", [0.1], "q", top_k=5,
-        mode=SearchMode.HYBRID, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.HYBRID, vector_store=vs,
     )
     assert mode == SearchMode.SEMANTIC_ONLY
 
@@ -353,7 +323,7 @@ def test_search_collection_applies_reranker_before_top_k():
     vs = FakeVectorStore(candidates)
     results, _, _, _ = search_collection(
         "col1", [0.1], "q", top_k=2,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
         reranker=_ReverseReranker(),
     )
     # Reversed -> c, b, a; truncated to top_k=2 -> c, b (the reranker reordered
@@ -366,15 +336,12 @@ def test_search_collection_no_reranker_keeps_order():
     vs = FakeVectorStore(candidates)
     results, _, _, _ = search_collection(
         "col1", [0.1], "q", top_k=5,
-        mode=SearchMode.SEMANTIC, vector_store=vs, redis_client=FakeRedis(),
+        mode=SearchMode.SEMANTIC, vector_store=vs,
     )
     assert [r.chunk_id for r in results] == ["a", "b"]
 
 
 def test_search_collection_filters_applied_after_ranking():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [
         _result("c1", language="python"),
         _result("c2", language="go"),
@@ -383,7 +350,7 @@ def test_search_collection_filters_applied_after_ranking():
     results, _, retrieved, returned = search_collection(
         "col1", [0.1], "q", top_k=5,
         mode=SearchMode.SEMANTIC, filters=SearchFilters(language="python"),
-        vector_store=vs, redis_client=FakeRedis(),
+        vector_store=vs,
     )
     assert retrieved == 2
     assert returned == 1
@@ -413,9 +380,6 @@ def _make_db_mock(collection_name: str = "my-col", workspace_id: str = "ws1",
 
 @pytest.mark.asyncio
 async def test_multi_collection_search_single_collection():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [_result("c1", score=0.9), _result("c2", score=0.5)]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="hello", collection_ids=["col1"])
@@ -424,7 +388,6 @@ async def test_multi_collection_search_single_collection():
         db=_make_db_mock(),
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert len(response.results) <= request.top_k
     assert response.search_mode in {SearchMode.HYBRID, SearchMode.SEMANTIC_ONLY}
@@ -432,9 +395,6 @@ async def test_multi_collection_search_single_collection():
 
 @pytest.mark.asyncio
 async def test_multi_collection_search_under_delivered_when_few_results():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [_result("only_one")]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="q", collection_ids=["col1"], top_k=10)
@@ -443,17 +403,12 @@ async def test_multi_collection_search_under_delivered_when_few_results():
         db=_make_db_mock(),
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert response.under_delivered is True
 
 
 @pytest.mark.asyncio
 async def test_multi_collection_search_skips_unknown_collection():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
-
     execute_result = MagicMock()
     execute_result.fetchall.return_value = []
     db = AsyncMock()
@@ -466,7 +421,6 @@ async def test_multi_collection_search_skips_unknown_collection():
         db=db,
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert response.results == []
     assert response.collection_stats == {}
@@ -474,9 +428,6 @@ async def test_multi_collection_search_skips_unknown_collection():
 
 @pytest.mark.asyncio
 async def test_multi_collection_search_populates_stats():
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [_result("c1"), _result("c2")]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
@@ -485,7 +436,6 @@ async def test_multi_collection_search_populates_stats():
         db=_make_db_mock(),
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert "col1" in response.collection_stats
     stat = response.collection_stats["col1"]
@@ -496,10 +446,8 @@ async def test_multi_collection_search_populates_stats():
 @pytest.mark.asyncio
 async def test_multi_collection_search_uses_default_fan_out_when_not_set():
     """Verify _DEFAULT_FAN_OUT (4) is used when request.fan_out is None."""
-    from api.services import search as search_module
     from api.services.search import _DEFAULT_FAN_OUT
 
-    search_module._bm25_cache.clear()
     candidates = [_result(f"c{i}") for i in range(100)]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="q", collection_ids=["col1"], top_k=5, fan_out=None)
@@ -509,7 +457,6 @@ async def test_multi_collection_search_uses_default_fan_out_when_not_set():
         db=_make_db_mock(),
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert vs.last_top_k == 5 * _DEFAULT_FAN_OUT
 
@@ -519,9 +466,6 @@ async def test_multi_collection_search_embedder_using_asyncio_run_does_not_crash
     """Regression: an Ollama-style embedder (embed() -> asyncio.run) must work on
     the async search path. embed() is offloaded via asyncio.to_thread, so its
     inner asyncio.run() runs in a worker thread with no running loop."""
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     vs = FakeVectorStore([_result("c1", score=0.9)])
     request = SearchRequest(query="q", collection_ids=["col1"])
     response = await multi_collection_search(
@@ -529,7 +473,6 @@ async def test_multi_collection_search_embedder_using_asyncio_run_does_not_crash
         db=_make_db_mock(),
         embedder=AsyncRunEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     assert [r.chunk_id for r in response.results] == ["c1"]
 
@@ -540,9 +483,6 @@ async def test_multi_collection_search_preserves_real_descending_scores():
     # similarity (the vector-store contract). The service must surface those REAL
     # scores in order — not overwrite them with the rank-only RRF value that made
     # every result score a constant ~1/61.
-    from api.services import search as search_module
-
-    search_module._bm25_cache.clear()
     candidates = [_result("b", score=0.9), _result("c", score=0.5), _result("a", score=0.3)]
     vs = FakeVectorStore(candidates)
     request = SearchRequest(query="q", collection_ids=["col1"])
@@ -551,7 +491,6 @@ async def test_multi_collection_search_preserves_real_descending_scores():
         db=_make_db_mock(),
         embedder=FakeEmbedder(),
         vector_store=vs,
-        redis_client=FakeRedis(),
     )
     scores = [r.score for r in response.results]
     assert scores == [0.9, 0.5, 0.3]  # real similarities preserved, descending
