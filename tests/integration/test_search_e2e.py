@@ -67,6 +67,13 @@ class _SeededVectorStore:
         # No FTS matches -> search falls back to semantic_only (as before).
         return {}
 
+    def hybrid_search(
+        self, collection_id: str, vector: list[float], query: str, top_k: int,
+        *, alpha: float = 0.7, k: int = 60, filters: dict | None = None,
+    ) -> tuple[list[SearchResult], bool]:
+        # No lexical matches -> HYBRID degrades to SEMANTIC_ONLY (real cosine scores).
+        return self.search(collection_id, vector, top_k, filters), False
+
     def delete_document(self, collection_id: str, document_id: str) -> None:
         self._by[collection_id] = [
             r for r in self._by.get(collection_id, []) if r.metadata.get("document_id") != document_id
