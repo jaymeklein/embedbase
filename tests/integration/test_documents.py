@@ -113,16 +113,21 @@ async def test_list_documents_shows_uploaded(client):
     assert docs[0]["status"] == "pending"
 
 
-async def test_list_documents_reports_indexed_flag(client, redis_client):
-    """With Redis present, each document carries an ``indexed`` flag from the corpus."""
-    import json
+async def test_list_documents_reports_indexed_flag(client):
+    """Each document carries an ``indexed`` flag: true once it has stored chunks
+    (``chunk_count`` set, as the worker does when ingestion finishes)."""
+    from sqlalchemy import update
+
+    from api.tables import documents as doc_t
 
     ws_id, col_id = await _setup(client)
     base = f"/workspaces/{ws_id}/collections/{col_id}/documents"
     a = (await client.post(base, files=_txt("a.txt"), headers=AUTH)).json()["document_id"]
     b = (await client.post(base, files=_txt("b.txt"), headers=AUTH)).json()["document_id"]
-    # Only document `a` has chunks in the BM25 corpus.
-    redis_client.set(f"bm25:{col_id}:corpus", json.dumps([["c1", a, "hello"]]))
+    # Only document `a` has stored chunks → only `a` is FTS-indexed.
+    async with client.session_factory() as s:
+        await s.execute(update(doc_t).where(doc_t.c.id == a).values(chunk_count=1))
+        await s.commit()
 
     by_id = {d["document_id"]: d for d in (await client.get(base, headers=AUTH)).json()}
     assert by_id[a]["indexed"] is True

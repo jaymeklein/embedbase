@@ -1,13 +1,15 @@
 """
 Alembic async migration environment.
 
-Uses async_engine_from_config so migrations run against the same
-sqlite+aiosqlite driver used by the application.  run_sync() bridges
-the async connection into Alembic's synchronous migration context.
+Uses async_engine_from_config so migrations run against whichever driver
+``DATABASE_URL`` selects (aiosqlite by default, asyncpg/psycopg for
+Postgres). run_sync() bridges the async connection into Alembic's
+synchronous migration context.
 
-render_as_batch=True is required for SQLite because SQLite does not
-support ALTER TABLE ... DROP COLUMN or ALTER TABLE ... ADD CONSTRAINT,
-so Alembic emulates those operations by rebuilding the table.
+render_as_batch is only enabled for SQLite, which does not support
+ALTER TABLE ... DROP COLUMN or ALTER TABLE ... ADD CONSTRAINT — Alembic
+emulates those by rebuilding the table. Postgres supports direct ALTER,
+so batch mode there would just be a slower, unnecessary table rebuild.
 """
 
 import asyncio
@@ -41,7 +43,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
-        render_as_batch=True,
+        render_as_batch="sqlite" in (url or ""),
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -55,7 +57,7 @@ def do_run_migrations(connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
-        render_as_batch=True,
+        render_as_batch=connection.dialect.name == "sqlite",
     )
     with context.begin_transaction():
         context.run_migrations()

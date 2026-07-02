@@ -1,5 +1,3 @@
-version: "3.9"
-
 networks:
   embedbase_net:
     driver: bridge
@@ -7,6 +5,7 @@ networks:
 volumes:
   embedbase_data:
   redis_data:
+  postgres_data:
 
 services:
   api:
@@ -15,14 +14,15 @@ services:
       dockerfile: Dockerfile
     image: embedbase/api:1.0.0
     environment:
-      - VECTOR_STORE=${VECTOR_STORE:-chroma}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-ollama}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - CHROMA_HOST=${CHROMA_HOST:-chroma}
-      - CHROMA_PORT=${CHROMA_PORT:-8000}
-      - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
-      - DATABASE_PATH=/store/embedbase.db
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-embedbase}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-embedbase}
       - MASTER_API_KEY=${MASTER_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
@@ -49,7 +49,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      chroma:
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
@@ -64,14 +64,15 @@ services:
       dockerfile: worker/Dockerfile
     image: embedbase/worker:1.0.0
     environment:
-      - VECTOR_STORE=${VECTOR_STORE:-chroma}
       - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-ollama}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-embeddinggemma}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - CHROMA_HOST=${CHROMA_HOST:-chroma}
-      - CHROMA_PORT=${CHROMA_PORT:-8000}
-      - CHROMA_AUTH_TOKEN=${CHROMA_AUTH_TOKEN:-embedbase-internal}
-      - DATABASE_PATH=/store/embedbase.db
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-embedbase}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-embedbase}
       - MASTER_API_KEY=${MASTER_API_KEY}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
@@ -91,6 +92,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     networks: [embedbase_net]
 
   redis:
@@ -105,19 +108,23 @@ services:
       retries: 5
     networks: [embedbase_net]
 
-  chroma:
-    image: chromadb/chroma:0.5.3
-    volumes:
-      - embedbase_data:/chroma/chroma
+  postgres:
+    # ParadeDB bundles pgvector + pg_search (real BM25) in one Postgres image, so
+    # vectors, relational metadata, and lexical search all share this instance.
+    image: paradedb/paradedb:latest
     environment:
-      - CHROMA_SERVER_AUTHN_CREDENTIALS=${CHROMA_AUTH_TOKEN:-embedbase-internal}
-      - CHROMA_SERVER_AUTHN_PROVIDER=chromadb.auth.token_authn.TokenAuthenticationServerProvider
-      - CHROMA_AUTH_TOKEN_TRANSPORT_HEADER=Authorization
+      - POSTGRES_DB=${POSTGRES_DB:-embedbase}
+      - POSTGRES_USER=${POSTGRES_USER:-embedbase}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      # PG18+ images (ParadeDB is PG18) store data in a version-specific subdir and
+      # want the mount at /var/lib/postgresql, not /var/lib/postgresql/data.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-embedbase}"]
       interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
     networks: [embedbase_net]
 
   nginx:

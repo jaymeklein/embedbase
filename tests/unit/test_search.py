@@ -1,33 +1,19 @@
-"""Unit tests for search service functions: filters, BM25 scoring, and RRF."""
+"""Unit tests for search service functions: filters, RRF, and RRF scoring.
 
-import json
+FTS/BM25 scoring itself lives in ``PgvectorAdapter.bm25_scores`` (Postgres,
+exercised in integration) — the service just fuses its output, tested here.
+"""
 
-import pytest
-
-from api.models.redis import CorpusConfig
 from api.models.search import SearchFilters, SearchResult
 from api.services.bm25 import score_semantic, score_structured
 from api.services.search import (
-    _get_bm25_scores,
     _reciprocal_rank_fusion,
     apply_filters,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-class FakeRedis:
-    def __init__(self, store: dict | None = None):
-        self.store: dict = store or {}
-
-    def get(self, key: str):
-        return self.store.get(key)
-
-    def set(self, key: str, value, ex=None):
-        self.store[key] = value
 
 
 def _result(chunk_id: str, score: float = 1.0, **metadata) -> SearchResult:
@@ -133,98 +119,6 @@ def test_score_structured_does_not_mutate_originals():
     results = [_result("a", score=99.0)]
     score_structured(results)
     assert results[0].score == 99.0
-
-
-# ---------------------------------------------------------------------------
-# _get_bm25_scores
-# ---------------------------------------------------------------------------
-
-
-def _corpus_redis(collection_id: str, entries: list[list[str]], version: int = 1) -> FakeRedis:
-    """Build a FakeRedis with the given corpus triples [chunk_id, doc_id, text]."""
-    return FakeRedis({
-        f"bm25:{collection_id}:corpus": json.dumps(entries),
-        f"bm25:{collection_id}:version": str(version),
-    })
-
-
-def test_get_bm25_scores_returns_scores_for_matching_query():
-    # Three docs needed: BM25 IDF = log((N-df+0.5)/(df+0.5)).
-    # With N=2 and df=1 that's log(1)=0 for all scores.
-    # A third unrelated doc pushes N to 3, making IDF positive.
-    # Entries are [chunk_id, document_id, text] triples.
-    rds = _corpus_redis("col1", [
-        ["chunk1", "doc1", "machine learning algorithms"],
-        ["chunk2", "doc2", "cooking recipes dinner"],
-        ["chunk3", "doc3", "gardening plants flowers"],
-    ])
-    config = CorpusConfig("col1")
-    scores = _get_bm25_scores(rds, config, "machine learning")
-    assert scores["chunk1"] > scores["chunk2"]
-    assert scores["chunk1"] > scores["chunk3"]
-
-
-def test_get_bm25_scores_empty_corpus_returns_empty():
-    rds = FakeRedis()
-    config = CorpusConfig("col1")
-    assert _get_bm25_scores(rds, config, "anything") == {}
-
-
-def test_get_bm25_scores_returns_all_chunk_ids():
-    entries = [["chunk1", "doc1", "hello world"], ["chunk2", "doc2", "foo bar"]]
-    rds = _corpus_redis("col2", entries)
-    config = CorpusConfig("col2")
-    scores = _get_bm25_scores(rds, config, "hello")
-    assert set(scores.keys()) == {"chunk1", "chunk2"}
-
-
-def test_get_bm25_scores_cache_avoids_rebuild(monkeypatch):
-    from api.services import search as search_module
-
-    rds = _corpus_redis("col3", [["chunk1", "doc1", "cached content"]], version=5)
-    config = CorpusConfig("col3")
-
-    build_count = 0
-    original_bm25 = __import__("rank_bm25").BM25Okapi
-
-    class CountingBM25(original_bm25):
-        def __init__(self, *args, **kwargs):
-            nonlocal build_count
-            build_count += 1
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr("api.services.search.BM25Okapi", CountingBM25)
-    search_module._bm25_cache.clear()
-
-    _get_bm25_scores(rds, config, "cached")
-    _get_bm25_scores(rds, config, "content")
-
-    assert build_count == 1
-
-
-def test_get_bm25_scores_rebuilds_on_version_change(monkeypatch):
-    from api.services import search as search_module
-
-    rds = _corpus_redis("col4", [["chunk1", "doc1", "text"]], version=1)
-    config = CorpusConfig("col4")
-
-    build_count = 0
-    original_bm25 = __import__("rank_bm25").BM25Okapi
-
-    class CountingBM25(original_bm25):
-        def __init__(self, *args, **kwargs):
-            nonlocal build_count
-            build_count += 1
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr("api.services.search.BM25Okapi", CountingBM25)
-    search_module._bm25_cache.clear()
-
-    _get_bm25_scores(rds, config, "text")
-    rds.store[f"bm25:col4:version"] = "2"
-    _get_bm25_scores(rds, config, "text")
-
-    assert build_count == 2
 
 
 # ---------------------------------------------------------------------------

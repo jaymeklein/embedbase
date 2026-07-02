@@ -24,19 +24,6 @@ docker compose up --build
 # Docs: http://localhost:8000/docs
 ```
 
-## Vector store backends
-
-```bash
-# Default — Chroma
-docker compose up
-
-# pgvector (Postgres 16)
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
-
-# Qdrant
-docker compose -f docker-compose.yml -f docker-compose.qdrant.yml up
-```
-
 ## MCP (Claude Desktop / Cursor / Zed)
 
 EmbedBase exposes an MCP server over SSE at `http://localhost:8000/mcp/sse`
@@ -122,7 +109,7 @@ is installed (built via `--build-arg INSTALL_FLASH_ATTN=true`). Turing cards (RT
 - [ ] Put Nginx behind a TLS reverse proxy (Caddy recommended)
 - [ ] Set a strong, random `MASTER_API_KEY` (min 32 chars)
 - [ ] Remove the `ports` mapping for `api` — Nginx is the only ingress
-- [ ] Set `CHROMA_AUTH_TOKEN` to a non-default value
+- [ ] Set `POSTGRES_PASSWORD` to a non-default value
 - [ ] Set `EMBEDBASE_SECURE_HEADERS=true`
 
 ## License

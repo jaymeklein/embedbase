@@ -1,6 +1,5 @@
 """Unit tests for the AI tag suggestion service (api/services/tag_suggest.py)."""
 
-import json
 from datetime import UTC, datetime
 
 import pytest
@@ -68,18 +67,21 @@ def test_rank_excludes_existing_tags():
     assert [s.name for s in out] == ["rust"]
 
 
-class FakeRedis:
-    """Minimal Redis double exposing only the ``get`` used by get_corpus."""
+class FakeVectorStore:
+    """Vector-store double exposing the text readers tag suggestion uses."""
 
-    def __init__(self, mapping: dict[str, str]):
-        self._m = mapping
+    def __init__(self, entries: list[tuple[str, str, str]]):
+        self._entries = list(entries)  # (chunk_id, document_id, text)
 
-    def get(self, key: str):
-        return self._m.get(key)
+    def collection_texts(self, col_id: str) -> list[str]:
+        return [text for _, _, text in self._entries]
+
+    def iter_document_chunks(self, col_id: str, doc_id: str) -> list[tuple[str, str, str]]:
+        return [(cid, did, text) for cid, did, text in self._entries if did == doc_id]
 
 
-def _corpus(col_id: str, entries: list[tuple[str, str, str]]) -> FakeRedis:
-    return FakeRedis({f"bm25:{col_id}:corpus": json.dumps([list(e) for e in entries])})
+def _store(entries: list[tuple[str, str, str]]) -> FakeVectorStore:
+    return FakeVectorStore(entries)
 
 
 def _now() -> str:
@@ -107,9 +109,9 @@ async def test_suggest_document_tags_from_corpus(db_session, monkeypatch):
     ws, col, doc = await _seed(db_session)
     suggester = _FakeSuggester([_sug("kubernetes", 0.9)])
     _patch_suggester(monkeypatch, suggester)
-    redis = _corpus(col, [("c1", doc, "kubernetes kubernetes scaling deployment")])
+    vs = _store([("c1", doc, "kubernetes kubernetes scaling deployment")])
     out = await tag_suggest.suggest_document_tags(
-        ws, col, doc, db=db_session, redis=redis, tagging=_llm()
+        ws, col, doc, db=db_session, vector_store=vs, tagging=_llm()
     )
     names = {s["name"] for s in out["suggestions"]}
     assert "kubernetes" in names
@@ -121,9 +123,9 @@ async def test_suggest_document_excludes_existing(db_session, monkeypatch):
     tag = await tag_svc.create_tag(ws, "kubernetes", None, db_session)
     await tag_svc.assign_document_tag(ws, col, doc, tag["id"], db_session)
     _patch_suggester(monkeypatch, _FakeSuggester([_sug("kubernetes", 0.9), _sug("scaling", 0.9)]))
-    redis = _corpus(col, [("c1", doc, "kubernetes kubernetes scaling")])
+    vs = _store([("c1", doc, "kubernetes kubernetes scaling")])
     out = await tag_suggest.suggest_document_tags(
-        ws, col, doc, db=db_session, redis=redis, tagging=_llm()
+        ws, col, doc, db=db_session, vector_store=vs, tagging=_llm()
     )
     assert all(s["name"] != "kubernetes" for s in out["suggestions"])
 
@@ -133,9 +135,9 @@ async def test_suggest_document_excludes_inherited_collection_tags(db_session, m
     tag = await tag_svc.create_tag(ws, "kubernetes", None, db_session)
     await tag_svc.assign_collection_tag(ws, col, tag["id"], db_session)  # inherited, not own
     _patch_suggester(monkeypatch, _FakeSuggester([_sug("kubernetes", 0.9), _sug("scaling", 0.9)]))
-    redis = _corpus(col, [("c1", doc, "kubernetes kubernetes scaling")])
+    vs = _store([("c1", doc, "kubernetes kubernetes scaling")])
     out = await tag_suggest.suggest_document_tags(
-        ws, col, doc, db=db_session, redis=redis, tagging=_llm()
+        ws, col, doc, db=db_session, vector_store=vs, tagging=_llm()
     )
     assert all(s["name"] != "kubernetes" for s in out["suggestions"])
 
@@ -144,9 +146,9 @@ async def test_suggest_collection_aggregates_documents(db_session, monkeypatch):
     ws, col, doc = await _seed(db_session)
     suggester = _FakeSuggester()
     _patch_suggester(monkeypatch, suggester)
-    redis = _corpus(col, [("c1", doc, "alpha alpha"), ("c2", "doc_2", "beta beta")])
+    vs = _store([("c1", doc, "alpha alpha"), ("c2", "doc_2", "beta beta")])
     await tag_suggest.suggest_collection_tags(
-        ws, col, db=db_session, redis=redis, tagging=_llm()
+        ws, col, db=db_session, vector_store=vs, tagging=_llm()
     )
     # The whole collection's text is sent to the LLM (both documents).
     assert "alpha" in (suggester.seen_text or "")
@@ -157,9 +159,9 @@ async def test_suggest_document_filters_to_that_document(db_session, monkeypatch
     ws, col, doc = await _seed(db_session)
     suggester = _FakeSuggester()
     _patch_suggester(monkeypatch, suggester)
-    redis = _corpus(col, [("c1", doc, "alpha alpha"), ("c2", "doc_other", "beta beta")])
+    vs = _store([("c1", doc, "alpha alpha"), ("c2", "doc_other", "beta beta")])
     await tag_suggest.suggest_document_tags(
-        ws, col, doc, db=db_session, redis=redis, tagging=_llm()
+        ws, col, doc, db=db_session, vector_store=vs, tagging=_llm()
     )
     # Only the target document's text is sent — sibling-document text is excluded.
     assert "alpha" in (suggester.seen_text or "")
@@ -168,13 +170,13 @@ async def test_suggest_document_filters_to_that_document(db_session, monkeypatch
 
 async def test_suggest_without_llm_integration_returns_503(db_session):
     ws, col, doc = await _seed(db_session)
-    redis = _corpus(col, [("c1", doc, "kubernetes scaling")])
+    vs = _store([("c1", doc, "kubernetes scaling")])
     # A non-LLM backend (e.g. a stale "keyword" value — that backend was removed)
     # has no integration to run, so the click must error rather than guess.
     stale = TaggingConfig(suggester=TagSuggesterConfig(backend="keyword"))
     with pytest.raises(HTTPException) as exc:
         await tag_suggest.suggest_document_tags(
-            ws, col, doc, db=db_session, redis=redis, tagging=stale
+            ws, col, doc, db=db_session, vector_store=vs, tagging=stale
         )
     assert exc.value.status_code == 503
 
@@ -187,10 +189,10 @@ async def test_suggest_llm_failure_returns_503(db_session, monkeypatch):
             raise RuntimeError("LLM unreachable")
 
     monkeypatch.setattr(tag_suggest, "get_tag_suggester", lambda cfg: _Boom())
-    redis = _corpus(col, [("c1", doc, "kubernetes scaling")])
+    vs = _store([("c1", doc, "kubernetes scaling")])
     with pytest.raises(HTTPException) as exc:
         await tag_suggest.suggest_document_tags(
-            ws, col, doc, db=db_session, redis=redis, tagging=_llm()
+            ws, col, doc, db=db_session, vector_store=vs, tagging=_llm()
         )
     assert exc.value.status_code == 503
 
@@ -199,7 +201,7 @@ async def test_suggest_collection_not_found_404(db_session):
     ws, _, _ = await _seed(db_session)
     with pytest.raises(HTTPException) as exc:
         await tag_suggest.suggest_collection_tags(
-            ws, "col_missing", db=db_session, redis=_corpus("x", []), tagging=TaggingConfig()
+            ws, "col_missing", db=db_session, vector_store=_store([]), tagging=TaggingConfig()
         )
     assert exc.value.status_code == 404
 
@@ -208,7 +210,7 @@ async def test_suggest_document_not_found_404(db_session):
     ws, col, _ = await _seed(db_session)
     with pytest.raises(HTTPException) as exc:
         await tag_suggest.suggest_document_tags(
-            ws, col, "doc_missing", db=db_session, redis=_corpus(col, []),
+            ws, col, "doc_missing", db=db_session, vector_store=_store([]),
             tagging=TaggingConfig(),
         )
     assert exc.value.status_code == 404
