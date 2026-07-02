@@ -16,7 +16,7 @@ from sqlalchemy import Table
 def dialect_insert(bind: Any, table: Table):
     """Return an ``insert()`` construct matching ``bind``'s SQL dialect."""
     if bind.dialect.name == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        from sqlalchemy.dialects.sqlite import insert
-    return insert(table)
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        return pg_insert(table)
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+    return sqlite_insert(table)
