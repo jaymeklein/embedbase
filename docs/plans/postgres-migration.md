@@ -15,7 +15,7 @@ config-driven, so every phase is a flip-and-verify, not a rewrite.
 | 1 | Relational store → Postgres | "storage": metadata off SQLite | `[x]` |
 | 2 | Vectors → pgvector (already coded) | "storage": vectors off Chroma | `[x]` |
 | 3 | Lexical/BM25 → Postgres FTS | "indexing": kill the Redis corpus blob | `[x]` |
-| 4 | Pre-filter pushdown + single round-trip hybrid | "query times" | `[~]` |
+| 4 | Pre-filter pushdown + single round-trip hybrid | "query times" | `[x]` |
 
 Went further than planned on Phase 2: rather than merely *supporting* pgvector
 as one of several backends, Chroma and Qdrant were deleted outright (adapters,
@@ -44,10 +44,9 @@ the user; it's not in scope for this migration.
 
 ## What is NOT on Postgres (the remaining gap)
 
-Nothing on the storage/indexing side — metadata, vectors, and lexical/BM25 all
-live in Postgres. The only remaining work is **query-time** (Phase 4): filtering
-is still applied *after* the vector search, and hybrid is still two calls fused
-in Python rather than one SQL statement.
+Nothing. Metadata, vectors, and lexical/BM25 all live in Postgres, and the
+query-time work (Phase 4) is done: filtering is pushed into the SQL `WHERE`, and
+hybrid is a single SQL round-trip (vector + BM25 fused via RRF-in-SQL).
 
 ---
 
@@ -137,7 +136,7 @@ and the text duplication.
 
 ---
 
-## Phase 4 — Query-time wins `[~]`
+## Phase 4 — Query-time wins `[x]`
 
 **Delivered: pre-filter pushdown (item 1).** `SearchFilters` (language/filename/tags)
 now folds into the vector search's SQL `WHERE` via `_metadata_filter_sql`
@@ -150,13 +149,39 @@ no-op once the WHERE has run; the only filter on the in-memory test fakes). Veri
 against a live ParadeDB instance (tags OR-subset, tags-AND, language, filename, and
 no-match cases). Item 3 (no BM25 cold-start cliff) was already realized in Phase 3.
 
-**Deferred: single round-trip hybrid (item 2).** Fusing the vector + BM25 calls into
-one SQL statement (ParadeDB's CTE + `RANK()` + RRF-in-SQL pattern) is a real rewrite:
-it would replace the tested, alpha-weighted Python RRF (`_reciprocal_rank_fusion` +
-`api/services/bm25.py`) and the SEMANTIC_ONLY/BM25-only fallback logic with SQL the
-SQLite test suite can't exercise — for a latency gain this plan itself calls marginal
-(warm single-node fusion ≈ one round-trip). Left as an explicit call rather than
-torn out speculatively.
+**Delivered: single round-trip hybrid (item 2).** HYBRID search is now one SQL
+statement: `PgvectorAdapter.hybrid_search` fuses vector + BM25 via ParadeDB's CTE +
+`RANK()` + RRF-in-SQL pattern (two candidate CTEs — `semantic` by cosine distance,
+`bm25` by `pdb.score` — `UNION ALL`ed and summed as `alpha·1/(k+rank) +
+(1-alpha)·1/(k+rank)`), replacing the two adapter calls the search service used to
+fuse in Python. The `SearchFilters` `WHERE` pushes into **both** CTEs. `search.py`'s
+HYBRID branch is now a single `hybrid_search` call; SEMANTIC and BM25 modes keep the
+`search`/`bm25_scores` path, and an empty BM25 side reports `SEMANTIC_ONLY` with the
+real cosine scores preserved (`hybrid_search` returns `(results, bm25_matched)`).
+
+**Bonus: full-collection lexical recall.** The old `bm25_scores` only re-ranked the
+vector candidate set (Phase 3's noted ceiling). The single-round-trip `bm25` CTE
+scores the **whole collection**, so a chunk that's a strong keyword match but outside
+the vector top-k can now surface — the true hybrid recall Phase 3 deferred to here.
+
+The now-dead Python RRF (`_reciprocal_rank_fusion`, `api/services/bm25.py` and their
+unit tests) was removed. Two test layers cover the replacement: `tests/unit/
+test_pgvector_adapter.py` asserts the SQL shape + param binding + the matched/vscore
+return contract via a fake asyncpg conn (no DB), and HYBRID routing/SEMANTIC_ONLY
+fallback are covered by a Python fake in `test_search_service.py`. The fused statement
+itself runs only against real ParadeDB (like Phase 3's BM25 SQL), so
+**`tests/integration/test_pgvector_live.py`** drives the real adapter against a live
+instance — hybrid fusion, full-collection lexical recall, SEMANTIC_ONLY fallback,
+and filter pushdown into both CTEs. It's opt-in (`EMBEDBASE_TEST_PARADEDB=1` +
+`EMBEDBASE_TEST_PG_*`), skipped in the default DB-free CI run; verified green against
+`paradedb/paradedb:latest`.
+
+> **Verified nuance:** the `bm25` CTE is a full-collection scan, so a keyword hit
+> outside the vector top-k *is* retrieved — but RRF still ranks it, so at the default
+> `alpha=0.7` a purely-lexical, vector-orthogonal chunk can rank below strong semantic
+> hits and fall outside `top_k` (correct behavior). `matched`/SEMANTIC_ONLY therefore
+> reflects whether a BM25 hit actually survived into the returned rows, and the
+> SEMANTIC_ONLY case surfaces real cosine scores, not rank-only RRF values.
 
 Be honest about what Postgres does and doesn't do for **query latency**:
 
@@ -173,11 +198,11 @@ numpy scoring already in RAM. So "move to PG" is not, by itself, a query-time wi
    Postgres, fold the filter into the `WHERE` of the vector/FTS query — fewer rows
    scanned, no over-fetch, correct top-k. This is the biggest latency+correctness
    lever.
-2. **Single round-trip hybrid.** Today hybrid is still two calls fused in Python
-   (vector `search` + BM25 `bm25_scores`, both on the adapter). In Postgres it can
-   be **one** SQL statement: vector `ORDER BY embedding <=> $1`, `pdb.score`,
-   and the filter `WHERE`, combined. One round-trip, less app-side glue, better
-   tail latency.
+2. **Single round-trip hybrid** — *delivered above.* Hybrid was two calls fused in
+   Python (vector `search` + BM25 `bm25_scores`); it is now **one** SQL statement
+   (vector `ORDER BY embedding <=> $1` + `pdb.score`, fused with RRF, filter `WHERE`
+   in both CTEs). One round-trip, less app-side glue, better tail latency — and BM25
+   now scores the full collection instead of only the vector candidates.
 3. **No BM25 cold-start cliff** — *already realized in Phase 3.* The old
    in-process cache paid a full blob fetch + tokenize + `BM25Okapi` rebuild on
    every restart/reindex (linear in corpus). The pg_search BM25 index is
@@ -186,8 +211,8 @@ numpy scoring already in RAM. So "move to PG" is not, by itself, a query-time wi
 
 **Honest trade-off:** steady-state warm single-node `BM25Okapi` may be marginally
 faster per-query than a pg_search round-trip; Phase 3 traded that small warm-path
-cost for no cold-start cliff and horizontal scalability. Phase 4's remaining win
-is pre-filtering + one round-trip.
+cost for no cold-start cliff and horizontal scalability. Phase 4's wins —
+pre-filtering + one round-trip — are now both shipped.
 
 - Depends on Phase 1–3 (needs metadata + vectors + BM25 index co-located in PG).
 - Overlaps `retrieval-upgrade-plan.md`'s "filtering is post-ranking" note — this

@@ -50,6 +50,12 @@ class _FakeVectorStore:
     ) -> dict[str, float]:
         return {}
 
+    def hybrid_search(
+        self, collection_id: str, vector: list[float], query: str, top_k: int,
+        *, alpha: float = 0.7, k: int = 60, filters: dict | None = None,
+    ) -> tuple[list[SearchResult], bool]:
+        return [], False
+
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
     def delete_collection(self, *args: object) -> None: ...

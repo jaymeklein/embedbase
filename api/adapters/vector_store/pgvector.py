@@ -87,6 +87,46 @@ _BM25_SQL = (
     "AND text ||| $2"
 )
 
+# Phase 4 item 2: single round-trip hybrid. One statement fuses vector + BM25 via
+# Reciprocal Rank Fusion in SQL (ParadeDB's recommended CTE + RANK() + UNION-ALL
+# pattern), replacing the two adapter calls (vector search + bm25_scores) the search
+# service used to fuse in Python. Two independent, rank-limited candidate sets:
+#   semantic — top-$3 by cosine distance ($1 = query vector)
+#   bm25     — top-$3 by pdb.score over the WHOLE collection matching $4 (the raw
+#              query via ||| match-any-term); NOT scoped to the vector candidates, so
+#              this finally delivers full-collection lexical recall (Phase 3's noted
+#              Phase 4 win), unlike bm25_scores which only re-ranked vector hits.
+# Each row contributes 1/($5 + rank); the semantic side is weighted by $6 (alpha) and
+# the bm25 side by (1 - $6). {filter} is the shared metadata pre-filter (pushed into
+# BOTH candidate CTEs so restrictive filters cut rows during each scan). ``from_bm25``
+# lets the caller tell whether BM25 matched anything (else it degrades to SEMANTIC_ONLY);
+# ``vscore`` (real cosine similarity) is surfaced so that degraded case keeps real scores.
+_HYBRID_SQL = (
+    "WITH semantic AS ("
+    "SELECT id, 1 - (embedding <=> $1) AS vscore, "
+    "RANK() OVER (ORDER BY embedding <=> $1) AS rank "
+    "FROM chunks WHERE collection_id = $2{filter} "
+    "ORDER BY embedding <=> $1 LIMIT $3"
+    "), bm25 AS ("
+    "SELECT id, RANK() OVER (ORDER BY score DESC) AS rank FROM ("
+    "SELECT id, pdb.score(id) AS score FROM chunks "
+    "WHERE collection_id = $2 AND text ||| $4{filter} "
+    "ORDER BY pdb.score(id) DESC LIMIT $3"
+    ") m"
+    "), fused AS ("
+    "SELECT id, $6::float8 / ($5 + rank) AS s, 0 AS from_bm25 FROM semantic "
+    "UNION ALL "
+    "SELECT id, (1 - $6::float8) / ($5 + rank) AS s, 1 AS from_bm25 FROM bm25"
+    ") "
+    "SELECT c.id, c.text, c.metadata, "
+    "COALESCE(sem.vscore, 0.0) AS vscore, "
+    "sum(fused.s) AS score, max(fused.from_bm25) AS from_bm25 "
+    "FROM fused JOIN chunks c ON c.id = fused.id "
+    "LEFT JOIN semantic sem ON sem.id = fused.id "
+    "GROUP BY c.id, c.text, c.metadata, sem.vscore "
+    "ORDER BY score DESC, c.id LIMIT $3"
+)
+
 _LIST_SQL = (
     "SELECT metadata->>'document_id' AS document_id, "
     "metadata->>'filename' AS filename, metadata->>'parser' AS parser, "
@@ -310,6 +350,63 @@ class PgvectorAdapter:
             Ranked results with ``score`` = ``1 - cosine_distance``.
         """
         return self._runner.run(self._search(collection_id, vector, top_k, filters))
+
+    async def _hybrid_search(
+        self, collection_id: str, vector: list[float], query: str, top_k: int,
+        alpha: float, k: int, filters: SearchFilters | None,
+    ) -> tuple[list[SearchResult], bool]:
+        # $1 vector, $2 collection_id, $3 limit, $4 query, $5 rrf-k, $6 alpha;
+        # filter params (shared by both CTEs) start at $7.
+        frag, extra = _metadata_filter_sql(filters, 7)
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                _HYBRID_SQL.format(filter=frag),
+                vector, collection_id, top_k, query, k, alpha, *extra,
+            )
+        matched = any(row["from_bm25"] for row in rows)
+        results = [
+            SearchResult(
+                chunk_id=row["id"], text=row["text"],
+                # No lexical match anywhere → this is a pure semantic ranking; surface
+                # the real cosine similarity, not the rank-only RRF value.
+                score=float(row["score"]) if matched else float(row["vscore"]),
+                rank=rank, metadata=self._as_dict(row["metadata"]),
+            )
+            for rank, row in enumerate(rows, start=1)
+        ]
+        return results, matched
+
+    def hybrid_search(
+        self, collection_id: str, vector: list[float], query: str, top_k: int,
+        *, alpha: float = 0.7, k: int = 60, filters: SearchFilters | None = None,
+    ) -> tuple[list[SearchResult], bool]:
+        """Fuse vector similarity and BM25 in one SQL round-trip (Phase 4).
+
+        Runs both retrievals and their Reciprocal Rank Fusion inside a single
+        statement rather than a vector ``search`` + ``bm25_scores`` pair fused in
+        Python: each side takes its top ``top_k`` candidates, contributes
+        ``1 / (k + rank)`` (semantic weighted by ``alpha``, BM25 by ``1 - alpha``),
+        and the summed score orders the result. BM25 runs over the full collection
+        (not just the vector candidates), so lexical-only matches can surface.
+
+        Args:
+            collection_id: Collection to search.
+            vector: Query embedding.
+            query: Raw query text (BM25 match-any-term).
+            top_k: Candidate pool size for each side and the fused output.
+            alpha: Semantic weight in RRF (BM25 gets ``1 - alpha``).
+            k: RRF damping constant.
+            filters: Optional metadata pre-filter folded into both CTEs' ``WHERE``.
+
+        Returns:
+            ``(results, bm25_matched)``. ``bm25_matched`` is False when the query
+            matched no chunk lexically — the caller reports SEMANTIC_ONLY and the
+            results already carry real cosine scores in semantic order.
+        """
+        return self._runner.run(
+            self._hybrid_search(collection_id, vector, query, top_k, alpha, k, filters)
+        )
 
     # -- lexical / BM25 -----------------------------------------------------
 

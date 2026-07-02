@@ -17,7 +17,6 @@ from api.models.search import (
     SearchResult,
     SourceProvenance,
 )
-from api.services.bm25 import score_semantic, score_structured
 
 _DEFAULT_FAN_OUT = 4
 
@@ -64,41 +63,6 @@ def apply_filters(results: list[SearchResult], filters: SearchFilters | None) ->
     return [result for result in results if _matches(result, filters)]
 
 
-def _reciprocal_rank_fusion(
-    vector_results: list[SearchResult],
-    bm25_results: list[SearchResult],
-    alpha: float = 0.7,
-    k: int = 60,
-) -> list[SearchResult]:
-    """Merge two ranked lists using Reciprocal Rank Fusion.
-
-    Args:
-        vector_results: Results ranked by semantic similarity.
-        bm25_results: Results ranked by BM25 keyword score.
-        alpha: Weight for the semantic ranking (1-alpha goes to BM25).
-        k: RRF damping constant (default 60).
-
-    Returns:
-        A merged, re-ranked list of SearchResult objects.
-    """
-    scored_semantic = score_semantic(vector_results, alpha, k)
-    scored_structured = score_structured(bm25_results, alpha, k)
-    sem_dict = {r.chunk_id: r for r in scored_semantic}
-    bm25_dict = {r.chunk_id: r for r in scored_structured}
-    for chunk_id in set(sem_dict) | set(bm25_dict):
-        sem = sem_dict.get(chunk_id)
-        bm = bm25_dict.get(chunk_id)
-        final = (sem.score if sem else 0.0) + (bm.score if bm else 0.0)
-        if chunk_id in sem_dict:
-            sem_dict[chunk_id].score = final
-        else:
-            bm25_dict[chunk_id].score = final
-    ordered = sorted({**bm25_dict, **sem_dict}.values(), key=lambda r: r.score, reverse=True)
-    for rank, result in enumerate(ordered, start=1):
-        result.rank = rank
-    return ordered
-
-
 def _rank_by_bm25(results: list[SearchResult], scores: dict[str, float]) -> list[SearchResult]:
     """Return results sorted by BM25 score (keyed by chunk_id).
 
@@ -120,21 +84,20 @@ def _rank_candidates(
     candidates: list[SearchResult],
     query: str,
     mode: SearchMode,
-    alpha: float,
     collection_id: str,
     vector_store: PgvectorAdapter,
 ) -> tuple[list[SearchResult], SearchMode]:
-    """Re-rank vector candidates per ``mode``; fall back when no candidate matches.
+    """Re-rank vector candidates for the non-fused modes; fall back on no match.
 
-    SEMANTIC keeps the vector order. HYBRID fuses vector + BM25 via RRF. BM25 ranks
-    the candidates purely by BM25 score. Both BM25-using modes degrade to
-    SEMANTIC_ONLY (vector order) when no candidate matches the query's keywords.
+    SEMANTIC keeps the vector order. BM25 re-ranks the candidates purely by BM25
+    score, degrading to SEMANTIC_ONLY (vector order) when no candidate matches the
+    query's keywords. HYBRID does NOT flow through here — it is fused in one SQL
+    round-trip by ``PgvectorAdapter.hybrid_search`` (Phase 4 item 2).
 
     Args:
         candidates: Vector-store hits to re-rank.
         query: Raw query text for FTS parsing.
-        mode: Requested ranking mode.
-        alpha: Semantic weight for HYBRID RRF.
+        mode: Requested ranking mode (SEMANTIC or BM25).
         collection_id: Collection whose chunks to score.
         vector_store: Adapter providing Postgres FTS (``bm25_scores``).
 
@@ -148,16 +111,13 @@ def _rank_candidates(
     )
     if not bm25_scores:
         return candidates, SearchMode.SEMANTIC_ONLY
-    if mode == SearchMode.BM25:
-        # ponytail: BM25-only re-ranks the vector candidate set (same recall ceiling
-        # as HYBRID). For unbounded keyword recall, query FTS without the id filter.
-        ranked = _rank_by_bm25(candidates, bm25_scores)
-        for rank, result in enumerate(ranked, start=1):
-            result.rank = rank
-            result.score = bm25_scores.get(result.chunk_id, 0.0)  # report the real BM25 score
-        return ranked, SearchMode.BM25
-    fused = _reciprocal_rank_fusion(candidates, _rank_by_bm25(candidates, bm25_scores), alpha)
-    return fused, SearchMode.HYBRID
+    # ponytail: BM25-only re-ranks the vector candidate set. For unbounded keyword
+    # recall, query FTS without the id filter (HYBRID already does full-collection).
+    ranked = _rank_by_bm25(candidates, bm25_scores)
+    for rank, result in enumerate(ranked, start=1):
+        result.rank = rank
+        result.score = bm25_scores.get(result.chunk_id, 0.0)  # report the real BM25 score
+    return ranked, SearchMode.BM25
 
 
 def search_collection(
@@ -182,7 +142,7 @@ def search_collection(
         top_k: Maximum number of results to return after filtering.
         fan_out: Multiplier for pre-filter candidate retrieval (clamped to 1–10).
         mode: Ranking mode (HYBRID, SEMANTIC, or BM25).
-        alpha: Semantic weight in RRF (passed through to score_semantic).
+        alpha: Semantic weight in the HYBRID RRF fusion (BM25 gets 1-alpha).
         filters: Optional metadata filters applied after ranking.
         vector_store: Adapter for vector similarity search and FTS scoring.
         reranker: Optional cross-encoder; when set, reorders the over-fetched
@@ -191,12 +151,22 @@ def search_collection(
     Returns:
         Tuple of (results, search_mode, retrieved_before_filter, returned_after_filter).
     """
-    candidates = vector_store.search(
-        collection_id, query_vector, top_k * min(max(fan_out, 1), 10), filters=filters
-    )
-    results, effective_mode = _rank_candidates(
-        candidates, query, mode, alpha, collection_id, vector_store
-    )
+    pool_size = top_k * min(max(fan_out, 1), 10)
+    if mode == SearchMode.HYBRID:
+        # Phase 4 item 2: vector + BM25 fused in one SQL round-trip. Empty BM25 →
+        # SEMANTIC_ONLY (hybrid_search already returns real cosine scores there).
+        fused, bm25_matched = vector_store.hybrid_search(
+            collection_id, query_vector, query, pool_size, alpha=alpha, filters=filters
+        )
+        results = fused
+        effective_mode = SearchMode.HYBRID if bm25_matched else SearchMode.SEMANTIC_ONLY
+    else:
+        candidates = vector_store.search(
+            collection_id, query_vector, pool_size, filters=filters
+        )
+        results, effective_mode = _rank_candidates(
+            candidates, query, mode, collection_id, vector_store
+        )
     retrieved = len(results)
     # Postgres already pre-filtered in SQL (Phase 4); apply_filters stays as a
     # backend-agnostic guard (the only filter on the in-memory test fakes) and is a
