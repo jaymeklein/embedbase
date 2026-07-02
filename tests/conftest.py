@@ -137,6 +137,9 @@ async def client():
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as ac:
+        # Expose the app's session factory so tests can seed DB state the API has
+        # no endpoint for (e.g. a document's chunk_count, set by the worker).
+        ac.session_factory = session_factory
         yield ac
 
     await engine.dispose()

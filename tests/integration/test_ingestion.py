@@ -1,8 +1,9 @@
 """Integration test for the worker ingestion pipeline.
 
-Runs ``_run_ingestion`` directly with injected fakes (no Redis/Chroma/Celery),
-exercising the real parse → chunk → embed → store → BM25 flow against a
-temporary SQLite database.
+Runs ``_run_ingestion`` directly with injected fakes (no Redis/pgvector/Celery),
+exercising the real parse → chunk → embed → store flow against a temporary SQLite
+database. Lexical/BM25 is the STORED tsvector column on ``chunks`` (Phase 3), so
+there is no corpus write to assert here.
 """
 
 import pytest
@@ -117,10 +118,6 @@ def test_ingestion_pipeline_end_to_end(tmp_path):
             select(documents.c.chunk_count).where(documents.c.id == doc_id)
         ).fetchone()
         assert doc.chunk_count == count
-
-    # BM25 corpus + version written.
-    assert rds.store[f"bm25:{col_id}:corpus"]
-    assert rds.store[f"bm25:{col_id}:version"] == "1"
 
 
 def test_ingestion_is_idempotent(tmp_path):

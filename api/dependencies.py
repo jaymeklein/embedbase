@@ -4,7 +4,8 @@ from typing import Any
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.base import EmbeddingAdapter, Reranker, VectorStoreAdapter
+from api.adapters.base import EmbeddingAdapter, Reranker
+from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.db import AsyncSessionLocal
 from api.models.config import AppConfig, TaggingConfig
 
@@ -13,7 +14,7 @@ from api.models.config import AppConfig, TaggingConfig
 # ---------------------------------------------------------------------------
 
 _embedding_adapter: EmbeddingAdapter | None = None
-_vector_store: VectorStoreAdapter | None = None
+_vector_store: PgvectorAdapter | None = None
 _reranker: Reranker | None = None
 _redis_client: Any = None
 _app_config: AppConfig | None = None
@@ -40,7 +41,7 @@ def set_embedding_adapter(adapter: EmbeddingAdapter) -> None:
     _embedding_adapter = adapter
 
 
-def set_vector_store(store: VectorStoreAdapter) -> None:
+def set_vector_store(store: PgvectorAdapter) -> None:
     global _vector_store
     _vector_store = store
 
@@ -49,7 +50,7 @@ def get_embedding_adapter() -> EmbeddingAdapter | None:
     return _embedding_adapter
 
 
-def get_vector_store() -> VectorStoreAdapter | None:
+def get_vector_store() -> PgvectorAdapter | None:
     return _vector_store
 
 
@@ -99,11 +100,11 @@ def require_embedding_adapter() -> EmbeddingAdapter:
     return adapter
 
 
-def require_vector_store() -> VectorStoreAdapter:
+def require_vector_store() -> PgvectorAdapter:
     """FastAPI dependency: return the vector store adapter or raise 503.
 
     Returns:
-        The active VectorStoreAdapter singleton.
+        The active PgvectorAdapter singleton.
 
     Raises:
         HTTPException: 503 if the adapter has not been initialised.

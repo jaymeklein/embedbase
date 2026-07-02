@@ -1,6 +1,8 @@
-"""Unit tests for the BM25 index-status / orchestration service."""
+"""Unit tests for the BM25 index-status / orchestration service.
 
-import json
+A document counts as indexed once it has stored chunks (``chunk_count`` set),
+since its text is FTS-searchable via ``chunks.text_tsv`` (Phase 3).
+"""
 
 import pytest
 from sqlalchemy import insert
@@ -14,34 +16,9 @@ from api.services.indexing import (
     enqueue_collection,
     enqueue_document,
     get_index_overview,
-    indexed_doc_ids,
 )
 
 _TS = "2024-01-01T00:00:00"
-
-
-class FakeRedis:
-    def __init__(self, initial: dict | None = None) -> None:
-        self.store = dict(initial or {})
-
-    def get(self, key: str) -> str | None:
-        return self.store.get(key)
-
-
-def _corpus(doc_ids: list[str]) -> str:
-    return json.dumps([[f"c_{d}", d, "text"] for d in doc_ids])
-
-
-# --- indexed_doc_ids --------------------------------------------------------
-
-
-def test_indexed_doc_ids_reads_corpus():
-    rds = FakeRedis({"bm25:col1:corpus": _corpus(["doc1", "doc1", "doc2"])})
-    assert indexed_doc_ids(rds, "col1") == {"doc1", "doc2"}
-
-
-def test_indexed_doc_ids_empty_when_no_corpus():
-    assert indexed_doc_ids(FakeRedis(), "col1") == set()
 
 
 # --- _collection_status -----------------------------------------------------
@@ -86,10 +63,12 @@ async def _seed(db_session) -> None:
         id="col1", workspace_id="ws1", name="C", description="", color="", icon="",
         created_at=_TS, updated_at=_TS,
     ))
-    for doc_id, status in [("d1", "done"), ("d2", "done"), ("d3", "failed")]:
+    # Only d1 has stored chunks → only d1 is "indexed"; d2 (done, 0 chunks) and
+    # d3 (failed) are not.
+    for doc_id, status, chunks in [("d1", "done", 1), ("d2", "done", 0), ("d3", "failed", 0)]:
         await db_session.execute(insert(doc_t).values(
             id=doc_id, collection_id="col1", filename=f"{doc_id}.md", file_type=".md",
-            file_size=1, chunk_count=1, created_at=_TS, updated_at=_TS, status=None,
+            file_size=1, chunk_count=chunks, created_at=_TS, updated_at=_TS, status=None,
         ))
         await db_session.execute(insert(job_t).values(
             job_id=f"job_{doc_id}", document_id=doc_id, collection_id="col1",
@@ -102,8 +81,7 @@ async def _seed(db_session) -> None:
 @pytest.mark.asyncio
 async def test_get_index_overview_groups_and_counts(db_session):
     await _seed(db_session)
-    rds = FakeRedis({"bm25:col1:corpus": _corpus(["d1"])})  # only d1 indexed
-    resp = await get_index_overview(db_session, rds)
+    resp = await get_index_overview(db_session)
 
     assert len(resp.workspaces) == 1
     ws = resp.workspaces[0]

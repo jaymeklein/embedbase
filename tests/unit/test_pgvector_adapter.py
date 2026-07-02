@@ -8,8 +8,9 @@ mapping and the lazy-index threshold only.
 
 import asyncio
 
-from api.adapters.vector_store.pgvector import PgvectorAdapter
+from api.adapters.vector_store.pgvector import PgvectorAdapter, _metadata_filter_sql
 from api.models.chunk import Chunk, ChunkMetadata
+from api.models.search import SearchFilters
 
 
 def _chunk(doc_id, idx, text):
@@ -168,6 +169,37 @@ def test_search_maps_rows_to_results():
     assert results[0].metadata["document_id"] == "d1"
     _, args = conn.fetch_calls[0]
     assert args == ([0.1, 0.2, 0.3], "col1", 2)
+
+
+# --- metadata pre-filter pushdown (Phase 4) ---------------------------------
+
+
+def test_metadata_filter_sql_empty_when_no_filters():
+    assert _metadata_filter_sql(None, 4) == ("", [])
+    assert _metadata_filter_sql(SearchFilters(), 4) == ("", [])
+
+
+def test_metadata_filter_sql_builds_anded_numbered_conditions():
+    frag, params = _metadata_filter_sql(
+        SearchFilters(language="python", filename="f.py", tags=["ml", "nlp"]), 4
+    )
+    assert frag == (
+        " AND metadata->>'language' = $4"
+        " AND metadata->>'filename' = $5"
+        " AND metadata->'tags' @> $6::jsonb"
+    )
+    assert params == ["python", "f.py", '["ml", "nlp"]']
+
+
+def test_search_folds_filter_into_where_and_appends_params():
+    conn = FakeConn(fetch_rows=[])
+    adapter = _adapter(conn)
+
+    adapter.search("col1", [0.1, 0.2, 0.3], top_k=2, filters=SearchFilters(tags=["ml"]))
+
+    sql, args = conn.fetch_calls[0]
+    assert "metadata->'tags' @> $4::jsonb" in sql
+    assert args == ([0.1, 0.2, 0.3], "col1", 2, '["ml"]')
 
 
 # --- delete -----------------------------------------------------------------
