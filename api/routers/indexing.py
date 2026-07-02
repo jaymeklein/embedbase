@@ -6,12 +6,10 @@ lives in api/services/indexing.py.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import get_db, require_redis_client
+from api.dependencies import get_db
 from api.models.indexing import IndexEnqueueResponse, IndexStatusResponse
 from api.services import documents as doc_svc
 from api.services import indexing as index_svc
@@ -24,10 +22,9 @@ router = APIRouter(tags=["indexing"])
 async def index_status(
     _principal: object = Depends(require_master),
     db: AsyncSession = Depends(get_db),
-    redis_client: Any = Depends(require_redis_client),
 ) -> IndexStatusResponse:
     """Return BM25 index coverage grouped by workspace and collection."""
-    return await index_svc.get_index_overview(db, redis_client)
+    return await index_svc.get_index_overview(db)
 
 
 @router.post(

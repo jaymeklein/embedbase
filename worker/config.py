@@ -15,9 +15,9 @@ from api.services.config_env import overlay_parser_env, overlay_vector_store_env
 def get_config() -> AppConfig:
     """Load ``config.yaml`` once (``/app/config.yaml`` then CWD), else defaults.
 
-    Vector-store environment variables (e.g. from ``docker-compose.postgres.yml``)
-    are overlaid on top of the file so the backend and secrets can be selected
-    without editing ``config.yaml``.
+    Vector-store environment variables (e.g. from ``docker-compose.yml``) are
+    overlaid on top of the file so the Postgres connection + secrets can be
+    selected without editing ``config.yaml``.
     """
     data: dict = {}
     for candidate in (Path("/app/config.yaml"), Path("config.yaml")):

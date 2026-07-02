@@ -8,9 +8,11 @@ fastapi>=0.136.0,<0.138.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
-# SQLAlchemy 2.0 async (aiosqlite is the async driver for SQLite)
+# SQLAlchemy 2.0 async (aiosqlite is the async driver for SQLite; psycopg (v3)
+# drives Postgres in both sync and async mode — same package, one DATABASE_URL).
 sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
+psycopg[binary]>=3.1.0
 alembic>=1.13.0
 python-multipart>=0.0.9
 httpx>=0.27.0
@@ -21,7 +23,6 @@ prometheus-client>=0.20.0
 celery[redis]>=5.4.0
 redis>=5.0.0
 mcp>=1.0.0
-rank-bm25>=0.2.2
 chardet>=5.2.0
 mistune>=3.0.0
 tiktoken>=0.7.0

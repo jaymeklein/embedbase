@@ -57,8 +57,7 @@ _Snapshot = tuple[Any, Any, Any, AppConfig]
 # client echoes the mask sentinel back unchanged.
 SECRET_PATHS: tuple[tuple[str, ...], ...] = (
     ("embedding", "api_key"),
-    ("vector_store", "chroma", "auth_token"),
-    ("vector_store", "pgvector", "password"),
+    ("vector_store", "password"),
     ("tagging", "suggester", "api_key"),
 )
 SECRET_MASK = "__SECRET_SET__"
