@@ -116,6 +116,11 @@ services:
       - POSTGRES_DB=${POSTGRES_DB:-embedbase}
       - POSTGRES_USER=${POSTGRES_USER:-embedbase}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    ports:
+      # Expose the DB to the host so a Postgres GUI (DBeaver/pgAdmin/TablePlus) can
+      # attach. Bound to 127.0.0.1 so it's reachable locally but never on the LAN.
+      # Override POSTGRES_HOST_PORT if 5432 is already taken by a local Postgres.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       # PG18+ images (ParadeDB is PG18) store data in a version-specific subdir and
       # want the mount at /var/lib/postgresql, not /var/lib/postgresql/data.
