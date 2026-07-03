@@ -35,6 +35,21 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
 )
 
+# Periodic sweep purging temporary documents past their retention window (PR 4).
+# Fired by Celery's *embedded* beat (the ``-B`` flag on the worker command in
+# docker-compose.yml); the task itself is a cheap SELECT + fan-out to delete_document.
+# ponytail: one embedded beat is safe with this single ``--concurrency=1`` worker. If
+# the worker is ever scaled to >1 replica, split beat into its own one-replica service
+# so the schedule isn't fired once per replica.
+_PURGE_INTERVAL = float(os.environ.get("PURGE_INTERVAL_SECONDS", "300"))  # every 5 min
+
+celery_app.conf.beat_schedule = {
+    "purge-expired-documents": {
+        "task": "worker.tasks.purge_expired_documents",
+        "schedule": _PURGE_INTERVAL,
+    },
+}
+
 # Side-effect import: registers the worker_process_init signal that starts the
 # per-process config hot-reload listener. F401 is intentional — the module is
 # imported for its decorator registration, not a referenced symbol.

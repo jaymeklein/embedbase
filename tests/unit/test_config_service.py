@@ -93,6 +93,46 @@ def test_merge_secrets_preserves_masked_tagging_api_key():
     assert merged["tagging"]["suggester"]["api_key"] == "real-or-key"
 
 
+def test_get_masked_config_masks_s3_backend_secrets():
+    """S3 creds arrive via env overlay into the live config; GET must not leak them."""
+    from api.models.config import LocalBackendConfig, S3BackendConfig, StorageConfig
+
+    dependencies.set_app_config(
+        AppConfig(
+            storage=StorageConfig(
+                default="minio",
+                backends={
+                    "local": LocalBackendConfig(),
+                    "minio": S3BackendConfig(access_key_id="AKIA", secret_access_key="shh"),
+                },
+            )
+        )
+    )
+    data = cs.get_masked_config()
+    minio = data["storage"]["backends"]["minio"]
+    assert minio["access_key_id"] == cs.SECRET_MASK
+    assert minio["secret_access_key"] == cs.SECRET_MASK
+    assert minio["bucket"] == "embedbase"  # non-secret field intact
+    assert "access_key_id" not in data["storage"]["backends"]["local"]  # local has no creds
+
+
+def test_merge_secrets_preserves_masked_s3_backend_secrets():
+    from api.models.config import S3BackendConfig, StorageConfig
+
+    current = AppConfig(
+        storage=StorageConfig(
+            default="minio",
+            backends={"minio": S3BackendConfig(access_key_id="AKIA-real", secret_access_key="shh-real")},
+        )
+    )
+    incoming = current.model_dump()
+    incoming["storage"]["backends"]["minio"]["access_key_id"] = cs.SECRET_MASK
+    incoming["storage"]["backends"]["minio"]["secret_access_key"] = cs.SECRET_MASK
+    merged = cs._merge_secrets(incoming, current)
+    assert merged["storage"]["backends"]["minio"]["access_key_id"] == "AKIA-real"
+    assert merged["storage"]["backends"]["minio"]["secret_access_key"] == "shh-real"
+
+
 # ── Secret merge (write-only preservation) ────────────────────────────────────
 
 
