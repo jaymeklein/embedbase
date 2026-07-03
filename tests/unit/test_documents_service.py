@@ -1,15 +1,23 @@
-"""Unit tests for document service soft-delete logic."""
+"""Unit tests for document service soft-delete, download, and ingest wiring."""
+
+import io
 
 import pytest
-from fastapi import HTTPException
-from sqlalchemy import insert, select
+from fastapi import HTTPException, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
+from sqlalchemy import insert, select, update
 
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
 from api.services.auth import Principal
-from api.services.documents import delete_document, get_document_file, list_documents
+from api.services.documents import (
+    delete_document,
+    ingest,
+    list_documents,
+    resolve_document_download,
+)
 
 _NOW = "2024-01-01T00:00:00"
 _WS_ID = "ws_del_test"
@@ -137,41 +145,102 @@ async def test_list_documents_excludes_deleting_status(db_session, monkeypatch) 
     assert docs_after == []
 
 
-async def test_get_document_file_returns_path_and_name(db_session, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+class _FakeS3Storage:
+    """Presigns like an S3 backend so resolve_document_download redirects."""
+
+    def presigned_get(self, key: str, filename: str) -> str:
+        return f"https://s3.example.com/{key}?sig=abc"
+
+    def local_path(self, key: str):
+        return None
+
+
+async def test_resolve_download_local_returns_fileresponse(db_session, monkeypatch, tmp_path) -> None:
+    # Default backend is local (storage_backend NULL) → serve the on-disk file inline.
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     await _seed(db_session)
     stored = tmp_path / _COL_ID / f"{_DOC_ID}.txt"
     stored.parent.mkdir(parents=True)
     stored.write_text("hello")
 
-    path, filename = await get_document_file(db_session, _DOC_ID, Principal(is_master=True))
+    resp = await resolve_document_download(db_session, _DOC_ID, Principal(is_master=True))
 
-    assert path == stored
-    assert filename == "f.txt"
+    assert isinstance(resp, FileResponse)
+    assert str(resp.path) == str(stored)
+    assert resp.filename == "f.txt"
 
 
-async def test_get_document_file_missing_doc_raises_404(db_session) -> None:
+async def test_resolve_download_s3_backend_returns_302_redirect(db_session, monkeypatch, tmp_path) -> None:
+    await _seed(db_session)
+    await db_session.execute(
+        update(doc_t).where(doc_t.c.id == _DOC_ID).values(storage_backend="s3x")
+    )
+    await db_session.commit()
+    monkeypatch.setattr(
+        "api.services.documents.get_storage", lambda cfg, name=None: _FakeS3Storage()
+    )
+
+    resp = await resolve_document_download(db_session, _DOC_ID, Principal(is_master=True))
+
+    assert isinstance(resp, RedirectResponse)
+    assert resp.status_code == 302
+    assert resp.headers["location"].startswith("https://s3.example.com/")
+
+
+async def test_resolve_download_missing_doc_raises_404(db_session) -> None:
     await _seed(db_session)
     with pytest.raises(HTTPException) as exc:
-        await get_document_file(db_session, "doc_ghost", Principal(is_master=True))
+        await resolve_document_download(db_session, "doc_ghost", Principal(is_master=True))
     assert exc.value.status_code == 404
 
 
-async def test_get_document_file_missing_on_disk_raises_404(db_session, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+async def test_resolve_download_missing_on_disk_raises_404(db_session, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     await _seed(db_session)  # row exists, but no file was written to disk
     with pytest.raises(HTTPException) as exc:
-        await get_document_file(db_session, _DOC_ID, Principal(is_master=True))
+        await resolve_document_download(db_session, _DOC_ID, Principal(is_master=True))
     assert exc.value.status_code == 404
 
 
-async def test_get_document_file_wrong_collection_raises_403(db_session, monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr("api.services.documents.settings.upload_dir", str(tmp_path))
+async def test_resolve_download_wrong_collection_raises_403(db_session, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     await _seed(db_session)
     principal = Principal(is_master=False, collection_id="col_other")
     with pytest.raises(HTTPException) as exc:
-        await get_document_file(db_session, _DOC_ID, principal)
+        await resolve_document_download(db_session, _DOC_ID, principal)
     assert exc.value.status_code == 403
+
+
+class _SpyStorage:
+    """Records put_upload; returns a fixed byte count (no real backend)."""
+
+    def __init__(self) -> None:
+        self.put_keys: list[str] = []
+
+    async def put_upload(self, file, key, *, max_bytes):
+        self.put_keys.append(key)
+        return 5
+
+
+async def test_ingest_records_default_storage_backend(db_session, monkeypatch) -> None:
+    await _insert_workspace(db_session)
+    await _insert_collection(db_session)
+    await db_session.commit()
+    spy = _SpyStorage()
+    monkeypatch.setattr("api.services.documents.get_storage", lambda cfg, name=None: spy)
+    monkeypatch.setattr("api.services.documents.task_producer.enqueue_ingest", lambda *a: None)
+
+    upload = UploadFile(filename="note.txt", file=io.BytesIO(b"hello"))
+    result = await ingest(db_session, _COL_ID, upload, Principal(is_master=True))
+
+    # Stored under the canonical key and the row records the default backend name.
+    assert spy.put_keys == [f"{_COL_ID}/{result['document_id']}.txt"]
+    row = (
+        await db_session.execute(
+            select(doc_t.c.storage_backend).where(doc_t.c.id == result["document_id"])
+        )
+    ).fetchone()
+    assert row.storage_backend == "local"
 
 
 async def test_delete_enqueue_failure_rolls_back_tombstone(db_session, monkeypatch) -> None:

@@ -276,3 +276,62 @@ async def test_s3_fetch_to_temp_cleans_up_on_download_error(monkeypatch, tmp_pat
         with pytest.raises(ClientError):
             store.fetch_to_temp("missing.txt")  # 404 → must not orphan a temp file
         assert set(tmp_path.iterdir()) == before
+
+
+def _raise(exc):
+    """A ``lambda``-friendly raiser (statements aren't allowed in lambdas)."""
+    def _f(**kw):
+        raise exc
+    return _f
+
+
+def test_ensure_bucket_is_idempotent_once_ready(monkeypatch):
+    store = S3Storage(_s3_cfg())
+    store._bucket_ready = True
+    monkeypatch.setattr(
+        store._s3, "head_bucket",
+        _raise(AssertionError("head_bucket must not run once the bucket is known ready")),
+    )
+    store._ensure_bucket()  # early-returns without touching S3
+
+
+def test_ensure_bucket_reraises_unexpected_head_error(monkeypatch):
+    store = S3Storage(_s3_cfg())
+    monkeypatch.setattr(store._s3, "head_bucket", _raise(_client_error("500", "HeadBucket")))
+    with pytest.raises(ClientError):
+        store._ensure_bucket()  # a 500 isn't "missing" — surface it, don't create
+
+
+def test_ensure_bucket_sends_location_constraint_off_us_east_1(monkeypatch):
+    store = S3Storage(_s3_cfg(region="eu-west-1"))
+    monkeypatch.setattr(store._s3, "head_bucket", _raise(_client_error("404", "HeadBucket")))
+    created: dict = {}
+    monkeypatch.setattr(store._s3, "create_bucket", lambda **kw: created.update(kw))
+    store._ensure_bucket()
+    assert created["CreateBucketConfiguration"] == {"LocationConstraint": "eu-west-1"}
+
+
+def test_ensure_bucket_reraises_non_race_create_error(monkeypatch):
+    store = S3Storage(_s3_cfg())
+    monkeypatch.setattr(store._s3, "head_bucket", _raise(_client_error("404", "HeadBucket")))
+    monkeypatch.setattr(store._s3, "create_bucket", _raise(_client_error("AccessDenied", "CreateBucket")))
+    with pytest.raises(ClientError):
+        store._ensure_bucket()  # AccessDenied is not a lost create race — surface it
+
+
+async def test_s3_put_path_uploads_local_file(tmp_path):
+    src = tmp_path / "on_disk.txt"
+    src.write_bytes(b"on disk")
+    with mock_aws():
+        store = S3Storage(_s3_cfg())
+        store.put_path(src, "c/from_disk.txt")  # creates the bucket, then uploads
+        fetched = store.fetch_to_temp("c/from_disk.txt")
+        try:
+            assert fetched.read_bytes() == b"on disk"
+        finally:
+            store.cleanup_temp(fetched)
+
+
+def test_s3_local_path_is_none():
+    with mock_aws():
+        assert S3Storage(_s3_cfg()).local_path("c/d.txt") is None  # remote → presign, no FileResponse
