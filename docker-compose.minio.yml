@@ -1,0 +1,54 @@
+# Opt-in MinIO object storage — NOT part of the default stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d
+#
+# Brings up a bundled MinIO (S3-compatible) and points new uploads at it
+# (STORAGE_DEFAULT=minio). The `minio` backend itself is declared in config.yaml
+# (see config.example.yaml). Without this override the stack uses local disk and
+# no MinIO container runs. External AWS S3 needs no container — just config + .env.
+#
+# Credentials: MinIO's root user/password ARE the S3 access key/secret the app
+# uses, so the same S3__MINIO__* vars configure both sides. Set
+# S3__MINIO__SECRET_ACCESS_KEY (>=8 chars) in .env before starting.
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${S3__MINIO__ACCESS_KEY_ID:-embedbase}
+      - MINIO_ROOT_PASSWORD=${S3__MINIO__SECRET_ACCESS_KEY}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_PORT:-9000}:9000"           # S3 API — the browser reaches presigned URLs here
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"   # web console
+    healthcheck:
+      # Modern minio images are ubi-micro (no curl/wget) but bundle `mc`; `mc ready`
+      # probes the unauthenticated /minio/health/live via mc's built-in `local` alias.
+      # (`curl -f .../minio/health/live` would fail — there is no curl in the image.)
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [embedbase_net]
+
+  api:
+    environment:
+      - STORAGE_DEFAULT=minio
+      - S3__MINIO__ACCESS_KEY_ID=${S3__MINIO__ACCESS_KEY_ID:-embedbase}
+      - S3__MINIO__SECRET_ACCESS_KEY=${S3__MINIO__SECRET_ACCESS_KEY}
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  worker:
+    environment:
+      - STORAGE_DEFAULT=minio
+      - S3__MINIO__ACCESS_KEY_ID=${S3__MINIO__ACCESS_KEY_ID:-embedbase}
+      - S3__MINIO__SECRET_ACCESS_KEY=${S3__MINIO__SECRET_ACCESS_KEY}
+    depends_on:
+      minio:
+        condition: service_healthy
+
+volumes:
+  minio_data:

@@ -14,6 +14,7 @@ backend imports it lazily), so a plain disk deployment pays nothing for it.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import tempfile
 from abc import ABC, abstractmethod
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from fastapi import UploadFile
 
     from api.models.config import S3BackendConfig, StorageConfig
+
+logger = logging.getLogger(__name__)
 
 _PRESIGN_EXPIRY = 3600  # seconds a presigned download URL stays valid
 
@@ -167,7 +170,36 @@ class S3Storage(Storage):
                     "BucketAlreadyExists",
                 ):
                     raise
+        self._apply_cors()
         self._bucket_ready = True
+
+    def _apply_cors(self) -> None:
+        """Let the browser fetch presigned GET URLs cross-origin (best-effort).
+
+        Downloads redirect the browser to the backend's own origin (S3/MinIO),
+        so a cross-origin read needs a bucket CORS rule — scoped to ``GET`` from
+        the app's configured origins. A locked-down IAM role may forbid
+        ``PutBucketCORS`` on AWS; that must not block uploads (the object still
+        lands, only browser cross-origin fetch is lost), so a failure is logged
+        and swallowed. Bundled MinIO always permits it.
+        """
+        from botocore.exceptions import ClientError
+
+        try:
+            self._s3.put_bucket_cors(
+                Bucket=self._bucket,
+                CORSConfiguration={
+                    "CORSRules": [
+                        {
+                            "AllowedMethods": ["GET"],
+                            "AllowedOrigins": settings.cors_origins_list,
+                            "AllowedHeaders": ["*"],
+                        }
+                    ]
+                },
+            )
+        except ClientError as exc:
+            logger.warning("bucket CORS not applied to %s: %s", self._bucket, exc)
 
     async def put_upload(self, file: UploadFile, key: str, *, max_bytes: int | None) -> int:
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(key).suffix) as tf:
