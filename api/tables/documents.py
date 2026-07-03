@@ -23,5 +23,9 @@ documents = Table(
     # (ingested before this column existed). Compare to the live config to find
     # documents needing re-ingestion after a model change.
     Column("embedding_model", String, nullable=True),
+    # Named storage backend (api.services.storage registry) holding this document's
+    # bytes. NULL = legacy/local — files written to disk before this column existed,
+    # so read paths treat a missing value as "local".
+    Column("storage_backend", String, nullable=True),
     Index("documents_collection_idx", "collection_id"),
 )
