@@ -265,10 +265,96 @@ to `config.yaml`, set its secrets via `S3__<NAME>__*` in `.env`, set
 
 ---
 
+## PR 4 — Ephemeral (temporary) ingestion with configurable retention
+
+**Depends on PR 2** (reuses the per-document backend column + the `storage.delete`
+delete path).
+
+**Outcome:** a document can be ingested as **temporary** — its stored object *and*
+its DB row/chunks/vectors are auto-purged after a retention window set in a new
+**Storage** section of the config page. Default is **off** (retention `0` → nothing
+expires; byte-identical to today). One mechanism covers every backend (local + all
+S3 instances) because the purge routes through the same per-document delete path
+PR 2 wired.
+
+**Decisions:**
+- **App-level, backend-uniform.** A periodic worker sweep deletes expired documents
+  via `get_storage(backend).delete(key)` + the existing row/chunk/vector cleanup —
+  one path for local and every S3 target. S3-native bucket lifecycle stays out of
+  scope: it would expire only the object, leaving the DB row + chunks orphaned, so
+  the sweep is needed regardless.
+- **Per-upload opt-in, global duration.** `temporary=true` on ingest stamps
+  `expires_at`; the *duration* is config, not per-request. `temp_retention_hours = 0`
+  turns the feature off (a `temporary=true` upload then just behaves as permanent).
+- **`expires_at` NULL = permanent.** Every existing row and every non-temporary
+  upload. No backfill/migration of existing data.
+
+**Config** — one field on `StorageConfig` (`api/models/config.py`), editable live
+like the rest of `AppConfig`:
+```python
+class StorageConfig(BaseModel):
+    default: str = "local"
+    backends: dict[str, Backend] = {"local": LocalBackendConfig()}
+    temp_retention_hours: int = 0   # 0 = disabled; >0 = lifetime of a temporary doc
+    # ponytail: whole-hours granularity. If sub-hour temp files are ever needed,
+    # switch the unit — don't add a units system.
+```
+
+**Schema:** migration `api/alembic/versions/0006_add_documents_expires_at.py`
+(`op.add_column("documents", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))`,
+`down_revision="0005"`), and add the column to `api/tables/documents.py`. NULL == never expires.
+
+**TDD — write first:**
+- `tests/unit/test_ephemeral_ingest.py`:
+  - `temporary=true` with `temp_retention_hours=24` records `expires_at ≈ now + 24h`;
+    a normal upload leaves `expires_at` NULL.
+  - `temp_retention_hours=0` → `temporary=true` is a no-op (`expires_at` stays NULL):
+    the feature is off by default.
+  - Purge task selects only `expires_at IS NOT NULL AND expires_at <= now` and routes
+    each through the delete path — patch `get_storage`, assert the expired doc's key is
+    deleted and a fresh (or NULL-expiry) doc is untouched. Infra-free.
+- Migration/model assert: `documents.expires_at` exists, nullable.
+
+**Implement:**
+- `api/services/documents.py`: `ingest()` / `ingest_local_path()` accept
+  `temporary: bool = False`. When true **and** `config.storage.temp_retention_hours > 0`,
+  set `expires_at = _now() + timedelta(hours=...)` on the document row; else NULL. The
+  expiry math lives in the service (router stays routing-only, CLAUDE.md §5).
+- `api/routers/documents.py`: add the `temporary` form field to the upload endpoint;
+  MCP `ingest_local_path` gets the same optional arg.
+- `worker/tasks.py`: new `purge_expired_documents` task —
+  `SELECT id, collection_id, storage_backend, file_type FROM documents
+   WHERE expires_at IS NOT NULL AND expires_at <= now()`, and for each reuse
+  `delete_document`'s logic (already routes through `get_storage(name).delete(key)`
+  per PR 2). Idempotent. `# ponytail: LIMIT 500/run — tighten the interval if a backlog builds.`
+- **Scheduling** — no beat scheduler exists yet (`docker-compose.yml:85` runs a single
+  `--concurrency=1` worker). Add Celery's *embedded* beat: append `-B` to that command
+  and a `beat_schedule` entry in `worker/celery_app.py` firing `purge_expired_documents`
+  every N minutes. `# ponytail: one embedded beat is safe with a single worker; if the
+  worker is ever scaled >1 replica, split beat into its own one-replica service.`
+
+**Frontend — new Storage section** (`ui/src/components/settings/ConfigPanel.tsx`):
+- Add a `<StorageForm>` card next to `EmbeddingForm` / `ParserForm` / `TaggingForm`,
+  plus a `StorageConfig` type in `ui/src/api/types.ts`. The section shows the active
+  backend (read-only — backend *selection* stays config.yaml/env per PR 1–3) and one
+  editable field, **Temporary file retention (hours)** (`0` = keep files forever),
+  saved via the existing `useUpdateConfig` mutation.
+- A **temporary** toggle on the upload UI (`ui/src/pages/Documents.tsx`) passes
+  `temporary=true` to the ingest endpoint.
+
+**Out of scope (this PR):**
+- Per-upload custom durations (only the global `temp_retention_hours` applies).
+- Sliding/"touch on access" expiry — `expires_at` is stamped once at ingest.
+- S3-native object lifecycle rules — the app sweep already covers object + metadata
+  uniformly.
+
+---
+
 ## Out of scope (ponytail)
 - Per-collection / rule-based routing to a specific backend — the registry +
   per-document column make it possible later; for now new uploads use
   `storage.default`.
 - Multipart / direct-to-S3 streaming — temp-file + `upload_file` is fine ≤50 MB.
-- Per-object encryption, lifecycle/retention, MinIO clustering — bucket/external
-  S3 config, not app code.
+- Per-object encryption, S3-native object lifecycle rules, MinIO clustering —
+  bucket/external S3 config, not app code. (App-level *temporary-document* retention
+  is PR 4, and covers object + metadata uniformly across every backend.)
