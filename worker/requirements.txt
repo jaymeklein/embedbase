@@ -18,3 +18,6 @@ psycopg[binary]>=3.1.0
 tiktoken>=0.7.0
 chardet>=5.2.0
 mistune>=3.0.0
+# S3-compatible object storage (AWS S3 / MinIO); only used when a storage
+# backend is configured as type: s3 (worker fetches originals to a temp file).
+boto3>=1.34
