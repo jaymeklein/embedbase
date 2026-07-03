@@ -93,3 +93,20 @@ def test_delete_stored_object_swallows_backend_error(tmp_path, monkeypatch):
 
     # Best-effort: a backend failure must not propagate (row/vector cleanup proceeds).
     wt._delete_stored_object("doc_z", "col_z")
+
+
+def test_delete_stored_object_missing_row_resolves_no_backend(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)  # schema present, no document row for this id
+    resolved = {"called": False}
+
+    def fake_get_storage(cfg, name=None):
+        resolved["called"] = True
+        return _SpyStorage()
+
+    monkeypatch.setattr(wt, "SessionLocal", factory)
+    monkeypatch.setattr(wt, "get_config", lambda: AppConfig())
+    monkeypatch.setattr("api.services.storage.get_storage", fake_get_storage)
+
+    wt._delete_stored_object("ghost", "col_x")  # row absent → returns before storage
+
+    assert resolved["called"] is False  # nothing to key off → no backend built

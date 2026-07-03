@@ -320,3 +320,11 @@ def test_mount_app_mounts_when_enabled():
     app = FastAPI()
     mount_app(app, MCPConfig(enabled=True))
     assert "/mcp" in {getattr(r, "path", "") for r in app.routes}
+
+
+def test_require_returns_value_or_raises_when_backend_missing():
+    from api.services.mcp.server import _require
+
+    assert _require("adapter", "Embedding") == "adapter"
+    with pytest.raises(RuntimeError, match="Embedding backend not ready"):
+        _require(None, "Embedding")
