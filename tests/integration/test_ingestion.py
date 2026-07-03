@@ -6,6 +6,8 @@ database. Lexical/BM25 is the STORED tsvector column on ``chunks`` (Phase 3), so
 there is no corpus write to assert here.
 """
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("tiktoken")
@@ -44,6 +46,24 @@ class FakeStore:
             for c in chunks
             if c.metadata.document_id == document_id
         ]
+
+
+class FakeStorage:
+    """Local passthrough: hands the pipeline the real file; cleanup is a no-op.
+
+    Mirrors LocalStorage for the default backend, so the pipeline exercises the
+    fetch_to_temp → parse → cleanup_temp path without any real storage backend.
+    """
+
+    def __init__(self, path):
+        self._path = Path(path)
+        self.cleaned: list[Path] = []
+
+    def fetch_to_temp(self, key):
+        return self._path
+
+    def cleanup_temp(self, path):
+        self.cleaned.append(path)
 
 
 class FakeRedis:
@@ -95,15 +115,16 @@ def test_ingestion_pipeline_end_to_end(tmp_path):
     src = tmp_path / "a.txt"
     src.write_text("Hello world.\n\nA second paragraph.", encoding="utf-8")
 
-    store, rds = FakeStore(), FakeRedis()
+    store, rds, storage = FakeStore(), FakeRedis(), FakeStorage(src)
     count = _run_ingestion(
         job_id, str(src), col_id, doc_id, ".txt",
         session_factory=factory, embedder=FakeEmbedder(),
-        vector_store=store, redis_client=rds, config=AppConfig(),
+        vector_store=store, redis_client=rds, config=AppConfig(), storage=storage,
     )
 
     assert count >= 1
     assert store.upserts and store.upserts[0][0] == col_id
+    assert storage.cleaned  # the fetched temp file was released after parsing
 
     with factory() as s:
         row = s.execute(
@@ -132,6 +153,7 @@ def test_ingestion_is_idempotent(tmp_path):
     kwargs = dict(
         session_factory=factory, embedder=FakeEmbedder(),
         vector_store=store, redis_client=rds, config=AppConfig(),
+        storage=FakeStorage(src),
     )
     _run_ingestion(job_id, str(src), col_id, doc_id, ".txt", **kwargs)
     # Second run sees status == "done" and short-circuits.

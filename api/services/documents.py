@@ -13,7 +13,8 @@ from typing import Any
 from uuid import uuid4
 
 import structlog
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,12 +23,23 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.dependencies import get_app_config
+from api.models.config import StorageConfig
 from api.services import tasks as task_producer
 from api.services.auth import Principal
-from api.services.upload import stream_upload_with_size_guard
-from api.settings import settings
+from api.services.storage import get_storage
 
 logger = structlog.get_logger()
+
+
+def _storage_config() -> StorageConfig:
+    """The active storage registry, or an all-local default when config is unset."""
+    config = get_app_config()
+    return config.storage if config else StorageConfig()
+
+
+def _document_key(col_id: str, doc_id: str, ext: str) -> str:
+    """The storage key for a document's bytes — the same layout used on disk."""
+    return f"{col_id}/{doc_id}{ext}"
 
 
 def _now() -> str:
@@ -58,17 +70,21 @@ async def _persist_and_enqueue(
     ext: str,
     size: int,
     file_path: str,
+    storage_backend: str,
 ) -> dict:
     """Insert the document + job rows and enqueue the ingest task.
 
     Shared by the HTTP upload path (:func:`ingest`) and the MCP local-path path
-    (:func:`ingest_local_path`). Returns a dict suitable for a 202 response body.
+    (:func:`ingest_local_path`). ``file_path`` is the storage key the worker
+    resolves via the recorded ``storage_backend``. Returns a dict suitable for a
+    202 response body.
     """
     now = _now()
     await db.execute(
         insert(doc_t).values(
             id=doc_id, collection_id=col_id, filename=filename, file_type=ext,
-            file_size=size, chunk_count=None, created_at=now, updated_at=now,
+            file_size=size, chunk_count=None, storage_backend=storage_backend,
+            created_at=now, updated_at=now,
         )
     )
     await db.execute(
@@ -106,13 +122,17 @@ async def ingest(
 
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
-    dest = Path(settings.upload_dir) / col_id / f"{doc_id}{ext}"
     config = get_app_config()
     max_bytes = config.max_file_size_bytes if config else None
-    size = await stream_upload_with_size_guard(file, dest, max_bytes=max_bytes)
+    storage_cfg = _storage_config()
+    key = _document_key(col_id, doc_id, ext)
+    # put_upload streams through the same size guard before any bytes reach the
+    # backend, so an oversize upload never lands remotely.
+    size = await get_storage(storage_cfg).put_upload(file, key, max_bytes=max_bytes)
     return await _persist_and_enqueue(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
-        filename=filename, ext=ext, size=size, file_path=str(dest),
+        filename=filename, ext=ext, size=size, file_path=key,
+        storage_backend=storage_cfg.default,
     )
 
 
@@ -140,9 +160,15 @@ async def ingest_local_path(
 
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
+    storage_cfg = _storage_config()
+    key = _document_key(col_id, doc_id, ext)
+    # Copy the on-disk file into the active backend so the worker reads it the
+    # same way as an HTTP upload (local: copy under upload_dir; s3: upload).
+    get_storage(storage_cfg).put_path(path, key)
     return await _persist_and_enqueue(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
-        filename=path.name, ext=ext, size=path.stat().st_size, file_path=str(path),
+        filename=path.name, ext=ext, size=path.stat().st_size, file_path=key,
+        storage_backend=storage_cfg.default,
     )
 
 
@@ -259,10 +285,16 @@ async def delete_document(db: AsyncSession, col_id: str, doc_id: str) -> None:
         raise HTTPException(503, "Cleanup queue unavailable, please retry") from None
 
 
-async def get_document_file(
+async def resolve_document_download(
     db: AsyncSession, doc_id: str, principal: Principal
-) -> tuple[Path, str]:
-    """Resolve a document's on-disk original file and its display filename.
+) -> Response:
+    """Build the download Response for a document's original bytes.
+
+    Resolves the backend that holds the document (``storage_backend``; NULL =
+    legacy/local) and returns the right Response for it: a 302 redirect to a
+    short-lived presigned URL for S3-backed documents, or an inline
+    ``FileResponse`` for local ones. Building the Response here (rather than in
+    the router) keeps the router routing-only.
 
     Args:
         db: Active async database session.
@@ -270,7 +302,7 @@ async def get_document_file(
         principal: Caller; must be able to access the owning collection.
 
     Returns:
-        ``(path, filename)`` — the stored file path and the original upload name.
+        A ``RedirectResponse`` (S3) or ``FileResponse`` (local) for the bytes.
 
     Raises:
         HTTPException: 404 if the document or its file is gone, 403 if the
@@ -278,19 +310,29 @@ async def get_document_file(
     """
     row = (
         await db.execute(
-            select(doc_t.c.collection_id, doc_t.c.filename, doc_t.c.file_type).where(
-                doc_t.c.id == doc_id
-            )
+            select(
+                doc_t.c.collection_id, doc_t.c.filename,
+                doc_t.c.file_type, doc_t.c.storage_backend,
+            ).where(doc_t.c.id == doc_id)
         )
     ).fetchone()
     if not row:
         raise HTTPException(404, f"Document {doc_id!r} not found")
     if not principal.can_access(row.collection_id):
         raise HTTPException(403, "API key not valid for this collection")
-    path = Path(settings.upload_dir) / row.collection_id / f"{doc_id}{row.file_type}"
-    if not path.is_file():
+
+    # NULL storage_backend = ingested before the column existed → bytes on local disk.
+    storage = get_storage(_storage_config(), row.storage_backend or "local")
+    key = _document_key(row.collection_id, doc_id, row.file_type)
+
+    url = storage.presigned_get(key, row.filename)
+    if url is not None:
+        return RedirectResponse(url, status_code=302)
+
+    path = storage.local_path(key)
+    if path is None or not path.is_file():
         raise HTTPException(404, "Original file is no longer available")
-    return path, row.filename
+    return FileResponse(path, filename=row.filename, content_disposition_type="inline")
 
 
 async def resolve_document_collection(db: AsyncSession, doc_id: str) -> str:
