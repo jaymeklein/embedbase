@@ -53,6 +53,24 @@ flowchart LR
 
 Everything ships as containers via Docker Compose. The **API** serves requests, the **worker** runs the ingestion pipeline, **ParadeDB** (Postgres + pgvector + `pg_search`) holds vectors, metadata, and the lexical index, **Redis** is the task broker and realtime bus, and **Nginx** serves the UI and proxies the API. Embeddings are computed by an external provider — by default **Ollama running on the host**.
 
+### Networked retrieval — LLMs on other machines
+
+This is the whole point of running EmbedBase on a host other machines can reach: **give a model access to a large corpus without loading it into the model's context.** Any LLM app or agent that can see the server queries it and pulls back only the handful of relevant chunks for the question at hand. The corpus stays on the EmbedBase host; only the top-k matches ever cross the network and enter the model's context window.
+
+```mermaid
+flowchart LR
+    subgraph other["Another machine on the LAN"]
+        Agent["LLM app / agent<br/>Claude Desktop · Cursor · custom"]
+        Ctx["Model context<br/>(only the matched chunks)"]
+    end
+    Agent -- "1 · query (MCP/SSE or REST)" --> EB["EmbedBase host<br/>:8000"]
+    EB -- "2 · top-k relevant chunks" --> Agent
+    Agent -- "3 · inject" --> Ctx
+    EB --- Corpus[("Full corpus —<br/>never leaves the host")]
+```
+
+Any [MCP](#mcp-claude-desktop--cursor--zed) client (or the REST search API) works — point it at the host's LAN address, `http://<host-lan-ip>:8000/mcp/sse`, instead of `localhost`. Set `LAN_HOST` in `.env` so the server advertises a reachable address (a bridge-networked container can't detect the host's LAN IP itself). Because it's now reachable beyond your own machine, keep `MASTER_API_KEY` strong and set `EMBEDBASE_SECURE_HEADERS=true`.
+
 ## Prerequisites
 
 | Requirement | Notes |
