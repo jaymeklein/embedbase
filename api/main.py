@@ -34,7 +34,11 @@ from api.routers import (
     workspaces,
     ws,
 )
-from api.services.config_env import overlay_parser_env, overlay_vector_store_env
+from api.services.config_env import (
+    overlay_parser_env,
+    overlay_storage_env,
+    overlay_vector_store_env,
+)
 from api.settings import settings
 
 logger = structlog.get_logger()
@@ -101,7 +105,7 @@ def _load_app_config() -> AppConfig:
     # Env vars (e.g. from docker-compose.yml or .env) override the file so the
     # Postgres connection + secrets and the docling models path can be selected
     # without editing config.yaml.
-    data = overlay_parser_env(overlay_vector_store_env(data))
+    data = overlay_storage_env(overlay_parser_env(overlay_vector_store_env(data)))
     try:
         return AppConfig.model_validate(data)
     except ValidationError as exc:

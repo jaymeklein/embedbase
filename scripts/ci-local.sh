@@ -46,7 +46,7 @@ if [ "$skip_tests" -eq 0 ]; then
     docker run --rm -v "$repo:/app" -w /app \
         -v embedbase-pipcache:/root/.cache/pip \
         python:3.12-slim \
-        sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio && pytest tests/unit/ -q"
+        sh -c "pip install -q -r api/requirements.txt pytest pytest-asyncio 'moto[s3]>=5.0' && pytest tests/unit/ -q"
 fi
 
 # 3. Integration tests (mirrors the integration-tests job) ------------------

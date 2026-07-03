@@ -1,7 +1,7 @@
 import warnings
-from typing import Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.constants import POSTGRES_PORT
 
@@ -139,6 +139,42 @@ class TaggingConfig(BaseModel):
     auto_tag_on_ingest: bool = False
 
 
+class LocalBackendConfig(BaseModel):
+    """Files on the local/shared disk under ``settings.upload_dir`` (the default)."""
+
+    type: Literal["local"] = "local"
+
+
+class S3BackendConfig(BaseModel):
+    """An S3-compatible target — AWS S3 or a self-hosted MinIO (``endpoint_url``).
+
+    Credentials are kept out of ``config.yaml``: ``access_key_id`` /
+    ``secret_access_key`` are overlaid from ``S3__<NAME>__*`` env vars (see
+    :func:`api.services.config_env.overlay_storage_env`). Empty credentials mean
+    "use boto3's default chain" (e.g. an AWS instance role).
+    """
+
+    type: Literal["s3"] = "s3"
+    endpoint_url: str | None = None  # None = real AWS S3; set for MinIO/other
+    public_endpoint_url: str | None = None  # host the browser reaches; signs presigns
+    region: str = "us-east-1"
+    bucket: str = "embedbase"
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    use_path_style: bool = True  # required by MinIO; harmless for AWS
+
+
+# Discriminated on ``type`` so config.yaml entries validate to the right model.
+Backend = Annotated[LocalBackendConfig | S3BackendConfig, Field(discriminator="type")]
+
+
+class StorageConfig(BaseModel):
+    """Named registry of object-storage backends; ``default`` gets new uploads."""
+
+    default: str = "local"
+    backends: dict[str, Backend] = {"local": LocalBackendConfig()}
+
+
 class AppConfig(BaseModel):
     embedding: EmbeddingConfig = EmbeddingConfig()
     reranker: RerankerConfig = RerankerConfig()
@@ -148,6 +184,7 @@ class AppConfig(BaseModel):
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
     tagging: TaggingConfig = TaggingConfig()
+    storage: StorageConfig = StorageConfig()
     # Upload size cap (app-domain, editable via the config page). Distinct from
     # deploy/bootstrap config, which stays in .env.
     max_file_size_mb: int = 50
