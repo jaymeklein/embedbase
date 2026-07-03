@@ -29,7 +29,76 @@ export function ConfigPanel() {
       <EmbeddingForm config={data} />
       <ParserForm config={data} />
       <TaggingForm config={data} />
+      <StorageForm config={data} />
     </div>
+  )
+}
+
+/**
+ * Storage section: the active backend (read-only — selection lives in
+ * config.yaml/.env) plus the one live-editable knob, how long *temporary*
+ * uploads are kept before the worker purges them (0 = kept forever).
+ */
+function StorageForm({ config }: { config: AppConfig }) {
+  const toast = useToast()
+  const update = useUpdateConfig()
+  const storage = config.storage
+  const activeName = storage.default
+  const activeType = storage.backends?.[activeName]?.type
+
+  const [hours, setHours] = useState(String(storage.temp_retention_hours))
+
+  const save = () => {
+    update.mutate(
+      { ...config, storage: { ...storage, temp_retention_hours: Math.max(0, Number(hours) || 0) } },
+      {
+        onSuccess: () => toast.success('Storage config saved. Services are reloading.'),
+        onError: (e) => toast.error(e.message),
+      },
+    )
+  }
+
+  return (
+    <Card className="flex flex-col gap-5 p-5">
+      <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+        <p className="text-[13px] text-ink-muted">
+          Where uploaded files are stored. The active backend is chosen in{' '}
+          <code>config.yaml</code> / <code>.env</code>; here you set how long{' '}
+          <strong>temporary</strong> uploads live before the worker deletes them.
+        </p>
+      </div>
+
+      <Section title="Object storage">
+        <Field label="Active backend" htmlFor="storage-backend">
+          <Input
+            id="storage-backend"
+            value={activeType ? `${activeName} (${activeType})` : activeName}
+            readOnly
+            disabled
+          />
+        </Field>
+        <Field
+          label="Temporary file retention (hours)"
+          htmlFor="storage-retention"
+          hint="0 = keep files forever; >0 auto-deletes temporary uploads after this many hours"
+        >
+          <Input
+            id="storage-retention"
+            type="number"
+            min="0"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+          />
+        </Field>
+      </Section>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save storage config'}
+        </Button>
+      </div>
+    </Card>
   )
 }
 

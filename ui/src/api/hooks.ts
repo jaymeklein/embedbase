@@ -348,11 +348,12 @@ export function useUploadDocument(wsId: string, colId: string) {
   const queryClient = useQueryClient()
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
-    mutationFn: (file: File) => api.uploadDocument(wsId, colId, file),
+    mutationFn: ({ file, temporary }: { file: File; temporary: boolean }) =>
+      api.uploadDocument(wsId, colId, file, temporary),
     // Show an optimistic "uploading" row while the multipart POST is in flight —
     // before the 202 returns a real document_id. onSettled's refetch then swaps it
     // for the server's pending row (or onError removes it).
-    onMutate: async (file: File) => {
+    onMutate: async ({ file }: { file: File; temporary: boolean }) => {
       const key = qk.documents(wsId, colId)
       await queryClient.cancelQueries({ queryKey: key })
       const tempId = `upload-${file.name}-${Date.now()}`

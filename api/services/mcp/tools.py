@@ -90,11 +90,18 @@ async def ingest_document(
     *,
     collection_id: str,
     file_path: str,
+    temporary: bool = False,
     db: AsyncSession,
     principal: Principal = MASTER_PRINCIPAL,
 ) -> dict[str, Any]:
-    """Enqueue a container-local file for ingestion into ``collection_id``."""
-    return await doc_svc.ingest_local_path(db, collection_id, file_path, principal)
+    """Enqueue a container-local file for ingestion into ``collection_id``.
+
+    Set ``temporary`` to auto-purge the document after ``storage.temp_retention_hours``
+    (a no-op when retention is 0).
+    """
+    return await doc_svc.ingest_local_path(
+        db, collection_id, file_path, principal, temporary=temporary
+    )
 
 
 async def list_documents(*, collection_id: str, db: AsyncSession) -> dict[str, Any]:

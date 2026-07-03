@@ -6,6 +6,7 @@ import {
   useAssignDocumentTag,
   useAutoTagAvailability,
   useCollection,
+  useConfig,
   useCreateTag,
   useDeleteDocument,
   useDocumentStatus,
@@ -57,6 +58,11 @@ export default function Documents() {
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
   const [tagFilter, setTagFilter] = useState<string[]>([])
+  // Temporary-upload toggle. Only offered when retention is enabled (>0 hours);
+  // with retention off the server ignores the flag, so a control would be a no-op.
+  const { data: config } = useConfig()
+  const retentionHours = config?.storage?.temp_retention_hours ?? 0
+  const [temporary, setTemporary] = useState(false)
 
   const toggleTag = (name: string) =>
     setTagFilter((prev) =>
@@ -74,7 +80,7 @@ export default function Documents() {
     let ok = 0
     for (const f of valid) {
       try {
-        await uploadMut.mutateAsync(f)
+        await uploadMut.mutateAsync({ file: f, temporary })
         ok += 1
       } catch (e) {
         toast.error(`${f.name}: ${(e as Error).message}`)
@@ -143,6 +149,19 @@ export default function Documents() {
       </header>
 
       <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
+
+      {retentionHours > 0 && (
+        <label className="flex items-center gap-2 text-[13px] text-ink-muted">
+          <input
+            type="checkbox"
+            checked={temporary}
+            onChange={(e) => setTemporary(e.target.checked)}
+            className="h-4 w-4 accent-accent"
+          />
+          Temporary — automatically deleted after{' '}
+          {retentionHours === 1 ? '1 hour' : `${retentionHours} hours`}
+        </label>
+      )}
 
       <TagFilterBar tags={filterTags} selected={tagFilter} onToggle={toggleTag} />
 

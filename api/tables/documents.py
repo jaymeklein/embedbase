@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Index, Integer, String, Table
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, String, Table
 
 from api.tables.metadata import metadata
 
@@ -27,5 +27,9 @@ documents = Table(
     # bytes. NULL = legacy/local — files written to disk before this column existed,
     # so read paths treat a missing value as "local".
     Column("storage_backend", String, nullable=True),
+    # When a *temporary* document expires and is purged by the worker sweep. NULL =
+    # permanent (every existing row + every non-temporary upload). Naive UTC to match
+    # processing_started_at, so ``expires_at <= now`` compares uniformly on any dialect.
+    Column("expires_at", DateTime, nullable=True),
     Index("documents_collection_idx", "collection_id"),
 )

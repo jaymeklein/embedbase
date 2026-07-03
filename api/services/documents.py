@@ -7,7 +7,7 @@ api/routers/documents.py remains routing-only.
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -46,6 +46,20 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _expiry(storage_cfg: StorageConfig, temporary: bool) -> datetime | None:
+    """Absolute purge time for a temporary upload, or None (permanent).
+
+    A temporary upload lives ``temp_retention_hours`` from now; the feature is off
+    (returns None) when the upload isn't flagged temporary or retention is 0 — so a
+    ``temporary=true`` upload with retention 0 is byte-identical to a normal one.
+    Naive UTC to match the stored column (see api/tables/documents.py).
+    """
+    hours = storage_cfg.temp_retention_hours
+    if not temporary or hours <= 0:
+        return None
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=hours)
+
+
 async def resolve_collection(
     db: AsyncSession, col_id: str, ws_id: str | None = None
 ) -> str:
@@ -71,20 +85,22 @@ async def _persist_and_enqueue(
     size: int,
     file_path: str,
     storage_backend: str,
+    expires_at: datetime | None = None,
 ) -> dict:
     """Insert the document + job rows and enqueue the ingest task.
 
     Shared by the HTTP upload path (:func:`ingest`) and the MCP local-path path
     (:func:`ingest_local_path`). ``file_path`` is the storage key the worker
-    resolves via the recorded ``storage_backend``. Returns a dict suitable for a
-    202 response body.
+    resolves via the recorded ``storage_backend``. ``expires_at`` (NULL = permanent)
+    stamps a temporary document for the worker purge sweep. Returns a dict suitable
+    for a 202 response body.
     """
     now = _now()
     await db.execute(
         insert(doc_t).values(
             id=doc_id, collection_id=col_id, filename=filename, file_type=ext,
             file_size=size, chunk_count=None, storage_backend=storage_backend,
-            created_at=now, updated_at=now,
+            expires_at=expires_at, created_at=now, updated_at=now,
         )
     )
     await db.execute(
@@ -109,9 +125,14 @@ async def _persist_and_enqueue(
 
 
 async def ingest(
-    db: AsyncSession, col_id: str, file: UploadFile, principal: Principal
+    db: AsyncSession, col_id: str, file: UploadFile, principal: Principal,
+    *, temporary: bool = False,
 ) -> dict:
-    """Validate, stream, record, and enqueue an uploaded document for ingestion."""
+    """Validate, stream, record, and enqueue an uploaded document for ingestion.
+
+    When ``temporary`` is set and ``storage.temp_retention_hours > 0`` the document
+    is stamped with an ``expires_at`` and later auto-purged by the worker sweep.
+    """
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
 
@@ -133,16 +154,19 @@ async def ingest(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
         filename=filename, ext=ext, size=size, file_path=key,
         storage_backend=storage_cfg.default,
+        expires_at=_expiry(storage_cfg, temporary),
     )
 
 
 async def ingest_local_path(
-    db: AsyncSession, col_id: str, file_path: str, principal: Principal
+    db: AsyncSession, col_id: str, file_path: str, principal: Principal,
+    *, temporary: bool = False,
 ) -> dict:
     """Record + enqueue a container-local file for ingestion (MCP ingest tool).
 
     Unlike :func:`ingest`, the bytes are already on disk at ``file_path`` (a path
-    the MCP client can see inside the container), so nothing is streamed.
+    the MCP client can see inside the container), so nothing is streamed. ``temporary``
+    behaves as in :func:`ingest` (stamps ``expires_at`` when retention is enabled).
 
     Raises:
         HTTPException: 403 if the principal cannot access the collection, 415 for
@@ -169,6 +193,7 @@ async def ingest_local_path(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
         filename=path.name, ext=ext, size=path.stat().st_size, file_path=key,
         storage_backend=storage_cfg.default,
+        expires_at=_expiry(storage_cfg, temporary),
     )
 
 
