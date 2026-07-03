@@ -2,6 +2,7 @@
 
 from api.models.config import AppConfig, S3BackendConfig
 from api.services.config_env import (
+    _set_nested,
     overlay_parser_env,
     overlay_storage_env,
     overlay_vector_store_env,
@@ -121,3 +122,28 @@ def test_overlaid_storage_dict_validates_and_routes_secret(monkeypatch):
     minio = cfg.storage.backends["minio"]
     assert isinstance(minio, S3BackendConfig)
     assert minio.secret_access_key == "sk"
+
+
+# ── Malformed sections are returned untouched (not coerced) ───────────────────
+
+
+def test_overlay_vector_store_ignores_non_dict_section():
+    data = {"vector_store": "not-a-dict"}
+    assert overlay_vector_store_env(data) is data  # left as-is; validation reports it later
+
+
+def test_overlay_parser_ignores_non_dict_section():
+    data = {"parsers": ["oops"]}
+    assert overlay_parser_env(data) is data
+
+
+def test_overlay_storage_ignores_non_dict_section():
+    data = {"storage": 42}
+    assert overlay_storage_env(data) is data
+
+
+def test_set_nested_descends_and_resets_non_dict_intermediate():
+    # 'a' is a scalar but the path needs it to be a dict → it's replaced, not merged.
+    target = {"a": "scalar"}
+    _set_nested(target, ("a", "b"), "v")
+    assert target == {"a": {"b": "v"}}
