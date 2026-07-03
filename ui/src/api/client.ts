@@ -203,9 +203,10 @@ export const api = {
   // ── Documents ─────────────────────────────────────────────────────────────
   listDocuments: (wsId: string, colId: string) =>
     request<DocumentSummary[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`),
-  uploadDocument: (wsId: string, colId: string, file: File) => {
+  uploadDocument: (wsId: string, colId: string, file: File, temporary = false) => {
     const form = new FormData()
     form.append('file', file)
+    if (temporary) form.append('temporary', 'true')
     return request<UploadAccepted>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`,
       { method: 'POST', body: form },
