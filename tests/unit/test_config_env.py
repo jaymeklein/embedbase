@@ -1,7 +1,11 @@
 """Unit tests for the vector-store env→config overlay."""
 
-from api.models.config import AppConfig
-from api.services.config_env import overlay_parser_env, overlay_vector_store_env
+from api.models.config import AppConfig, S3BackendConfig
+from api.services.config_env import (
+    overlay_parser_env,
+    overlay_storage_env,
+    overlay_vector_store_env,
+)
 
 
 def test_overlay_maps_postgres_env(monkeypatch):
@@ -64,3 +68,56 @@ def test_overlaid_parser_dict_validates_to_parser_config(monkeypatch):
     monkeypatch.setenv("DOCLING_ARTIFACTS_PATH", "/opt/models")
     cfg = AppConfig.model_validate(overlay_parser_env({}))
     assert cfg.parsers.docling_artifacts_path == "/opt/models"
+
+
+# ── Storage env overlay (per-instance S3 secrets + default) ───────────────────
+
+
+def test_overlay_storage_maps_per_instance_secrets(monkeypatch):
+    monkeypatch.setenv("S3__MINIO__ACCESS_KEY_ID", "ak")
+    monkeypatch.setenv("S3__MINIO__SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("S3__MINIO__ENDPOINT_URL", "http://minio:9000")
+
+    data = overlay_storage_env(
+        {"storage": {"backends": {"minio": {"type": "s3", "bucket": "b"}}}}
+    )
+
+    minio = data["storage"]["backends"]["minio"]
+    assert minio["access_key_id"] == "ak"
+    assert minio["secret_access_key"] == "sk"
+    assert minio["endpoint_url"] == "http://minio:9000"
+    assert minio["bucket"] == "b"  # untouched — no env var for it
+
+
+def test_overlay_storage_sets_default(monkeypatch):
+    monkeypatch.setenv("STORAGE_DEFAULT", "minio")
+    assert overlay_storage_env({})["storage"]["default"] == "minio"
+
+
+def test_overlay_storage_ignores_non_s3_and_unset(monkeypatch):
+    monkeypatch.delenv("S3__LOCAL__ACCESS_KEY_ID", raising=False)
+    data = overlay_storage_env({"storage": {"backends": {"local": {"type": "local"}}}})
+    assert data["storage"]["backends"]["local"] == {"type": "local"}
+
+
+def test_overlaid_storage_dict_validates_and_routes_secret(monkeypatch):
+    monkeypatch.setenv("S3__MINIO__SECRET_ACCESS_KEY", "sk")
+    monkeypatch.setenv("STORAGE_DEFAULT", "minio")
+
+    cfg = AppConfig.model_validate(
+        overlay_storage_env(
+            {
+                "storage": {
+                    "backends": {
+                        "local": {"type": "local"},
+                        "minio": {"type": "s3", "bucket": "embedbase"},
+                    }
+                }
+            }
+        )
+    )
+
+    assert cfg.storage.default == "minio"
+    minio = cfg.storage.backends["minio"]
+    assert isinstance(minio, S3BackendConfig)
+    assert minio.secret_access_key == "sk"
