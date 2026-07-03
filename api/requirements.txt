@@ -26,3 +26,6 @@ mcp>=1.0.0
 chardet>=5.2.0
 mistune>=3.0.0
 tiktoken>=0.7.0
+# S3-compatible object storage (AWS S3 / MinIO) for uploaded files; only used
+# when a storage backend is configured as type: s3.
+boto3>=1.34

@@ -28,6 +28,16 @@ _PARSER_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("DOCLING_ARTIFACTS_PATH", ("docling_artifacts_path",)),
 )
 
+# (env var suffix after ``S3__<NAME>__``, backend config key). Secrets live here
+# so they stay out of config.yaml; the rest let a single .env override an entry.
+_S3_BACKEND_KEYS: tuple[tuple[str, str], ...] = (
+    ("ACCESS_KEY_ID", "access_key_id"),
+    ("SECRET_ACCESS_KEY", "secret_access_key"),
+    ("ENDPOINT_URL", "endpoint_url"),
+    ("PUBLIC_ENDPOINT_URL", "public_endpoint_url"),
+    ("BUCKET", "bucket"),
+)
+
 
 def overlay_vector_store_env(data: dict[str, Any]) -> dict[str, Any]:
     """Overlay vector-store env vars onto the ``vector_store`` section of ``data``.
@@ -72,6 +82,46 @@ def overlay_parser_env(data: dict[str, Any]) -> dict[str, Any]:
         value = os.environ.get(env_name)
         if value:
             _set_nested(parsers, path, value)
+    return data
+
+
+def overlay_storage_env(data: dict[str, Any]) -> dict[str, Any]:
+    """Overlay storage env vars onto the ``storage`` section of ``data``.
+
+    ``STORAGE_DEFAULT`` selects the active backend. For each ``type: s3`` entry
+    already declared under ``storage.backends`` (named ``<NAME>``), the
+    per-instance vars ``S3__<UPPERNAME>__{ACCESS_KEY_ID,SECRET_ACCESS_KEY,
+    ENDPOINT_URL,PUBLIC_ENDPOINT_URL,BUCKET}`` overlay that entry — keeping S3
+    secrets out of config.yaml. Only env vars that are set (and non-empty) win.
+
+    Name a backend with env-safe characters (``[A-Za-z0-9_]``): a ``-``/``.`` in
+    the name yields an override var like ``S3__MY-S3__…`` that POSIX shells and
+    docker-compose can't set, so the overlay silently wouldn't apply.
+
+    Args:
+        data: Raw config mapping (e.g. parsed from config.yaml), possibly empty.
+
+    Returns:
+        The same mapping, mutated in place with the overrides applied.
+    """
+    storage = data.setdefault("storage", {})
+    if not isinstance(storage, dict):
+        return data
+
+    default = os.environ.get("STORAGE_DEFAULT")
+    if default:
+        storage["default"] = default
+
+    backends = storage.get("backends")
+    if isinstance(backends, dict):
+        for name, backend in backends.items():
+            if not (isinstance(backend, dict) and backend.get("type") == "s3"):
+                continue
+            prefix = f"S3__{name.upper()}__"
+            for suffix, key in _S3_BACKEND_KEYS:
+                value = os.environ.get(prefix + suffix)
+                if value:
+                    backend[key] = value
     return data
 
 

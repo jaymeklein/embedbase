@@ -30,7 +30,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r api/requirements.txt pytest pytest-asyncio
+        # moto[s3] mocks S3 in-process for the storage backend tests (no network).
+        run: pip install -r api/requirements.txt pytest pytest-asyncio 'moto[s3]>=5.0'
       - name: Run unit tests
         run: pytest tests/unit/ -v
 
