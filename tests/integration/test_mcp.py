@@ -188,6 +188,9 @@ async def test_search_documents_clamps_top_k_to_max_results(seeded):
 
 async def test_ingest_list_delete_roundtrip(seeded, tmp_path, monkeypatch):
     factory, _ = seeded
+    # ingest_local_path now copies the file into the (local) storage backend, which
+    # writes under settings.upload_dir — point it at a writable temp dir.
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     monkeypatch.setattr(
         "api.services.documents.task_producer.enqueue_ingest", lambda *a, **k: "task-ingest"
     )
@@ -317,3 +320,11 @@ def test_mount_app_mounts_when_enabled():
     app = FastAPI()
     mount_app(app, MCPConfig(enabled=True))
     assert "/mcp" in {getattr(r, "path", "") for r in app.routes}
+
+
+def test_require_returns_value_or_raises_when_backend_missing():
+    from api.services.mcp.server import _require
+
+    assert _require("adapter", "Embedding") == "adapter"
+    with pytest.raises(RuntimeError, match="Embedding backend not ready"):
+        _require(None, "Embedding")
