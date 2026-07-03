@@ -151,6 +151,39 @@ def _set_job_status(session: Any, job_id: str, status: str, **fields: Any) -> No
     )
 
 
+def _claim_job(session_factory: Any, redis_client: Any, job_id: str) -> bool:
+    """Atomically claim a job for processing; return False if it should be skipped.
+
+    Skips an unknown job, one already ``done``, or one still ``processing`` with a
+    fresh heartbeat (another worker is actively progressing it). A ``processing``
+    job with no heartbeat has stopped (crashed/lost), so it is reclaimed regardless
+    of how long it ran — long-but-advancing jobs keep their heartbeat alive.
+    """
+    with session_factory() as session:
+        row = session.execute(
+            select(job_records.c.status).where(job_records.c.job_id == job_id)
+        ).fetchone()
+        if row is None:
+            logger.warning("ingest: unknown job", job_id=job_id)
+            return False
+        if row.status == "done":
+            logger.info("ingest: already done", job_id=job_id)
+            return False
+        if row.status == "processing":
+            if _job_alive(redis_client, job_id):
+                logger.info("ingest: already handling", job_id=job_id)
+                return False
+            logger.warning("ingest: reclaiming job with no heartbeat", job_id=job_id)
+        _set_job_status(
+            session,
+            job_id,
+            "processing",
+            processing_started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+        session.commit()
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Effective tags (D6 search bridge)
 # ---------------------------------------------------------------------------
@@ -323,6 +356,62 @@ def _chunk_label(chunk: Chunk) -> str:
     return " ".join(chunk.text.split())[:80]
 
 
+def _embed_and_store(
+    chunks: list[Chunk],
+    collection_id: str,
+    document_id: str,
+    *,
+    session_factory: Any,
+    embedder: Any,
+    vector_store: Any,
+    config: Any,
+    emit: Any,
+) -> None:
+    """Resume-aware embed + upsert of a document's chunks, emitting progress.
+
+    Skips chunks already stored for this document (deterministic ids make a
+    re-parse yield the same ids, so anything present was embedded by a prior,
+    interrupted run) — unless the embedding model changed, in which case the
+    stored vectors are stale and all chunks are re-embedded (the per-batch upsert
+    overwrites them by id). Auto-tagging runs once, on a fresh (non-resumed) run.
+    """
+    with session_factory() as _s:
+        doc_model = _s.execute(
+            select(documents.c.embedding_model).where(documents.c.id == document_id)
+        ).scalar()
+    model_changed = doc_model is not None and doc_model != config.embedding.model
+    existing_ids: set[str] = (
+        set()
+        if model_changed
+        else {cid for cid, _, _ in vector_store.iter_document_chunks(collection_id, document_id)}
+    )
+
+    _apply_effective_tags(session_factory, collection_id, document_id, chunks)
+    if not existing_ids:  # fresh run only — auto-tagging is doc-level/expensive
+        _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
+
+    pending = [c for c in chunks if c.id not in existing_ids]
+    total = len(chunks)
+    done = total - len(pending)  # already persisted by a prior run
+    if done:
+        logger.info("ingest: resuming", document_id=document_id, done=done, total=total)
+    batch_size = config.embedding.batch_size
+    emit("embedding", current=done, total=total)  # show the resume point at once
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start : start + batch_size]
+        vectors = embedder.embed_batch([c.text for c in batch])
+        vector_store.upsert(collection_id, batch, vectors)  # persist now → resumable
+        done += len(batch)
+        # Reveal the chunks this batch just embedded, as they occur.
+        emit(
+            "embedding",
+            current=done,
+            total=total,
+            chunks=[{"index": c.metadata.chunk_index, "label": _chunk_label(c)} for c in batch],
+        )
+    emit("storing", current=total, total=total)
+
+
 def _run_ingestion(
     job_id: str,
     file_path: str,
@@ -335,8 +424,15 @@ def _run_ingestion(
     vector_store: Any = None,
     redis_client: Any = None,
     config: Any = None,
+    storage: Any = None,
 ) -> int:
-    """Run the full ingestion pipeline. Returns the number of chunks stored."""
+    """Run the full ingestion pipeline. Returns the number of chunks stored.
+
+    ``file_path`` is a storage key (see api.services.storage); the document's
+    bytes are fetched to a local temp file for parsing and released afterwards.
+    For the default ``local`` backend that temp file IS the on-disk original and
+    cleanup is a no-op, so behavior is unchanged.
+    """
     from api.adapters.parsers import get_parser
 
     session_factory = session_factory or SessionLocal
@@ -345,7 +441,8 @@ def _run_ingestion(
     redis_client = redis_client or _redis()
     config = config or get_config()
 
-    # Identity for the queue view (filename + collection name), resolved once.
+    # Identity for the queue view (filename + collection name) + the backend that
+    # holds this document's bytes, resolved once. NULL storage_backend = legacy/local.
     with session_factory() as _s:
         filename = _s.execute(
             select(job_records.c.filename).where(job_records.c.job_id == job_id)
@@ -353,6 +450,13 @@ def _run_ingestion(
         collection_name = _s.execute(
             select(collections.c.name).where(collections.c.id == collection_id)
         ).scalar() or collection_id
+        backend_name = _s.execute(
+            select(documents.c.storage_backend).where(documents.c.id == document_id)
+        ).scalar() or "local"
+    if storage is None:
+        from api.services.storage import get_storage
+
+        storage = get_storage(config.storage, backend_name)
 
     def emit(
         phase: str,
@@ -395,88 +499,33 @@ def _run_ingestion(
             logger.debug("progress emit failed", document_id=document_id, phase=phase)
 
     # --- Idempotency guard ---------------------------------------------------
-    with session_factory() as session:
-        row = session.execute(
-            select(job_records.c.status).where(job_records.c.job_id == job_id)
-        ).fetchone()
-        if row is None:
-            logger.warning("ingest: unknown job", job_id=job_id)
-            return 0
-        if row.status == "done":
-            logger.info("ingest: already done", job_id=job_id)
-            return 0
-        if row.status == "processing":
-            # Still beating → another worker is actively progressing it; back off.
-            # No heartbeat → it stopped (crashed/lost), so reclaim it regardless of
-            # how long it ran — long-but-progressing jobs keep their heartbeat alive.
-            if _job_alive(redis_client, job_id):
-                logger.info("ingest: already handling", job_id=job_id)
-                return 0
-            logger.warning("ingest: reclaiming job with no heartbeat", job_id=job_id)
-        _set_job_status(
-            session,
-            job_id,
-            "processing",
-            processing_started_at=datetime.now(UTC).replace(tzinfo=None),
-        )
-        session.commit()
+    if not _claim_job(session_factory, redis_client, job_id):
+        return 0
     _beat(redis_client, job_id)  # first heartbeat, before any slow work begins
 
     # The finally drops this execution's heartbeat on ANY exit (done, failed, or a
     # worker restart killing the task) so the next delivery reclaims it cleanly
-    # instead of seeing a stale "alive" beat and backing off.
+    # instead of seeing a stale "alive" beat and backing off. It also releases the
+    # fetched temp file (a no-op for the local backend, which hands back the real one).
+    local_file = None
     try:
         # --- Parse → chunk ---------------------------------------------------
         try:
+            # Pull the document's bytes from its backend to a local path to parse.
+            local_file = storage.fetch_to_temp(file_path)
             emit("parsing")
             parser = get_parser(file_type, config.chunking, parsers=config.parsers)
-            chunks = _parse_with_progress(parser, file_path, document_id, emit)
+            chunks = _parse_with_progress(parser, str(local_file), document_id, emit)
 
             # --- Embed (batched) → upsert, resumable -------------------------
+            # BM25/lexical is the STORED tsvector column on `chunks` (Phase 3),
+            # populated automatically by the upsert inside — no corpus write.
             if chunks:
-                # Resume: skip chunks already stored for this document. Chunk ids are
-                # deterministic (document_id + index), so re-parsing yields the same ids
-                # and anything already in the store was embedded by a prior (interrupted)
-                # run. If the embedding model changed since, the stored vectors are stale
-                # → re-embed all (the per-batch upsert overwrites them by id).
-                with session_factory() as _s:
-                    doc_model = _s.execute(
-                        select(documents.c.embedding_model).where(documents.c.id == document_id)
-                    ).scalar()
-                model_changed = doc_model is not None and doc_model != config.embedding.model
-                existing_ids: set[str] = (
-                    set()
-                    if model_changed
-                    else {cid for cid, _, _ in vector_store.iter_document_chunks(collection_id, document_id)}
+                _embed_and_store(
+                    chunks, collection_id, document_id,
+                    session_factory=session_factory, embedder=embedder,
+                    vector_store=vector_store, config=config, emit=emit,
                 )
-
-                _apply_effective_tags(session_factory, collection_id, document_id, chunks)
-                if not existing_ids:  # fresh run only — auto-tagging is doc-level/expensive
-                    _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
-
-                pending = [c for c in chunks if c.id not in existing_ids]
-                total = len(chunks)
-                done = total - len(pending)  # already persisted by a prior run
-                if done:
-                    logger.info("ingest: resuming", job_id=job_id, done=done, total=total)
-                batch_size = config.embedding.batch_size
-                emit("embedding", current=done, total=total)  # show the resume point at once
-                for start in range(0, len(pending), batch_size):
-                    batch = pending[start : start + batch_size]
-                    vectors = embedder.embed_batch([c.text for c in batch])
-                    vector_store.upsert(collection_id, batch, vectors)  # persist now → resumable
-                    done += len(batch)
-                    # Reveal the chunks this batch just embedded, as they occur.
-                    emit(
-                        "embedding",
-                        current=done,
-                        total=total,
-                        chunks=[{"index": c.metadata.chunk_index, "label": _chunk_label(c)} for c in batch],
-                    )
-                emit("storing", current=total, total=total)
-                # BM25/lexical is now the STORED tsvector column on `chunks`
-                # (Phase 3) — populated automatically by the upsert above. No
-                # separate corpus write.
         except Exception as exc:
             emit("failed", status="failed", error=str(exc)[:300])
             raise
@@ -501,6 +550,8 @@ def _run_ingestion(
         return chunk_count
     finally:
         _clear_beat(redis_client, job_id)
+        if local_file is not None:
+            storage.cleanup_temp(local_file)
 
 
 def _mark_failed(job_id: str, error: str) -> None:
@@ -510,6 +561,30 @@ def _mark_failed(job_id: str, error: str) -> None:
             session.commit()
     except Exception:  # pragma: no cover - failure-path best effort
         logger.error("could not record job failure", job_id=job_id)
+
+
+def _delete_stored_object(document_id: str, collection_id: str) -> None:
+    """Delete a document's stored original from its backend (best-effort).
+
+    Reads the backend + file type from the still-present row to rebuild the storage
+    key, then deletes. Fully best-effort: any failure (row read or backend delete) is
+    logged, not raised, so the vector/row cleanup still proceeds — a leaked object is
+    strictly better than a stuck delete.
+    """
+    try:
+        with SessionLocal() as db:
+            meta = db.execute(
+                select(documents.c.storage_backend, documents.c.file_type)
+                .where(documents.c.id == document_id)
+            ).fetchone()
+        if meta is None:
+            return
+        from api.services.storage import get_storage
+
+        key = f"{collection_id}/{document_id}{meta.file_type}"
+        get_storage(get_config().storage, meta.storage_backend or "local").delete(key)
+    except Exception as exc:  # best-effort: never block row/vector cleanup
+        logger.warning("stored object delete skipped", document_id=document_id, error=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -590,9 +665,11 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
     """Remove vectors and the document row for a deleted document.
 
     Deleting the chunks drops their FTS ``text_tsv`` too (same rows), so there is
-    no separate lexical index to prune.
+    no separate lexical index to prune. The stored original is removed first, while
+    its backend + key are still recoverable from the row.
     """
     try:
+        _delete_stored_object(document_id, collection_id)
         _vector_store().delete_document(collection_id, document_id)
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
