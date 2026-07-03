@@ -77,6 +77,22 @@ def test_migration_schema_matches_metadata(tmp_path):
         )
 
 
+def test_documents_has_storage_backend_column(tmp_path):
+    """PR 2: documents gains a nullable storage_backend column.
+
+    Records which named storage backend holds each document's bytes. NULL =
+    legacy/local (files physically on disk before this column existed), so read
+    paths treat a missing value as ``local``.
+    """
+    db_path = str(tmp_path / "sb.db")
+    _apply_migrations(db_path)
+    insp = inspect(create_engine(f"sqlite:///{db_path}", poolclass=NullPool))
+
+    cols = {c["name"]: c for c in insp.get_columns("documents")}
+    assert "storage_backend" in cols
+    assert cols["storage_backend"]["nullable"] is True
+
+
 def test_migration_indexes_exist(tmp_path):
     """Expected indexes must be present after all migrations run."""
     db_path = str(tmp_path / "idx.db")
