@@ -67,6 +67,28 @@ mcp:
 # Upload size cap (MB). Editable in the config page.
 max_file_size_mb: 50
 
+# Object storage for uploaded files. Default is local disk (the upload volume);
+# nothing below is needed to run. To use S3-compatible storage, uncomment a
+# backend and point `default:` at it — each document records the backend that
+# holds it, so several can coexist and switching never orphans old files.
+# Secrets come from .env as S3__<NAME>__ACCESS_KEY_ID / __SECRET_ACCESS_KEY.
+# storage:
+#   default: local           # backend new uploads go to (default = local disk)
+#   backends:
+#     local:
+#       type: local          # files under the upload volume; always available
+#     minio:                 # bundled MinIO — see docker-compose.minio.yml
+#       type: s3
+#       endpoint_url: http://minio:9000            # in-cluster address (api/worker → minio)
+#       public_endpoint_url: http://localhost:9000 # address the browser reaches (signs presigned URLs)
+#       bucket: embedbase
+#       region: us-east-1
+#       use_path_style: true
+#     aws:                   # external AWS S3 — no container, pure config
+#       type: s3
+#       bucket: my-prod-bucket
+#       region: eu-west-1
+
 # NOTE: logging (LOG_LEVEL / LOG_FORMAT), the Celery broker (REDIS_URL), the
 # SQLite path (DATABASE_PATH), CORS, ports and the master key are deploy/bootstrap
 # settings and live in .env, not here.
