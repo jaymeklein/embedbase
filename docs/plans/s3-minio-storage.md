@@ -168,9 +168,10 @@ multiple s3 instances resolve correctly per document.
   (assert `put_path` on the right backend + key).
 
 **Implement:**
-- **Schema:** new Alembic migration `api/alembic/versions/0005_add_documents_storage_backend.py`
+- **Schema:** new Alembic migration `api/alembic/versions/0006_add_documents_storage_backend.py`
   (`op.add_column("documents", sa.Column("storage_backend", sa.String(), nullable=True))`;
-  `down_revision="0004"`), and add the column to `api/tables/documents.py`.
+  `down_revision="0005"` — 0005 is the pre-existing embedding_model migration), and add
+  the column to `api/tables/documents.py`.
   NULL == legacy/local (files physically on disk), so read logic uses
   `row.storage_backend or "local"`.
 - `api/services/documents.py`:

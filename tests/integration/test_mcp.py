@@ -188,6 +188,9 @@ async def test_search_documents_clamps_top_k_to_max_results(seeded):
 
 async def test_ingest_list_delete_roundtrip(seeded, tmp_path, monkeypatch):
     factory, _ = seeded
+    # ingest_local_path now copies the file into the (local) storage backend, which
+    # writes under settings.upload_dir — point it at a writable temp dir.
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     monkeypatch.setattr(
         "api.services.documents.task_producer.enqueue_ingest", lambda *a, **k: "task-ingest"
     )

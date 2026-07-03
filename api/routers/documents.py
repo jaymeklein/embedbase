@@ -6,8 +6,7 @@ This file is routing-only: path registration, dependency resolution, delegation.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
@@ -102,10 +101,10 @@ async def get_document_raw(
     doc_id: str,
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
-) -> FileResponse:
-    """Serve a document's original bytes for inline viewing / opening."""
-    path, filename = await doc_svc.get_document_file(db, doc_id, principal)
-    return FileResponse(path, filename=filename, content_disposition_type="inline")
+) -> Response:
+    """Serve a document's original bytes: inline FileResponse (local) or 302 to a
+    presigned URL (S3), resolved from the document's storage backend."""
+    return await doc_svc.resolve_document_download(db, doc_id, principal)
 
 
 @router.delete("/documents/{doc_id}", status_code=204)
