@@ -82,7 +82,9 @@ services:
       - OPENAI_COMPAT_BASE_URL=${OPENAI_COMPAT_BASE_URL:-http://host.docker.internal:1234}
       - OPENAI_COMPAT_API_KEY=${OPENAI_COMPAT_API_KEY:-}
       - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-}
-    command: watchfiles "celery -A worker.celery_app worker --loglevel=info --concurrency=1" /app/worker
+    # -B runs Celery's embedded beat in-process (fires the temporary-document purge
+    # sweep). Safe with this single --concurrency=1 worker; see worker/celery_app.py.
+    command: watchfiles "celery -A worker.celery_app worker -B --loglevel=info --concurrency=1" /app/worker
     volumes:
       - embedbase_data:/data
       - ./data/store:/store
