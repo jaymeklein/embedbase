@@ -20,6 +20,7 @@
 - [📦 Object storage (local / S3 / MinIO)](#-object-storage-local--s3--minio)
 - [Document parsers (OCR, DOCX/PPTX, GPU)](#document-parsers-ocr-docxpptx-optional-gpu)
 - [MCP (Claude Desktop / Cursor / Zed)](#mcp-claude-desktop--cursor--zed)
+  - [Claude Code](docs/mcp-claude-code.md)
 - [Ports](#ports)
 - [WSL2 notes](#wsl2-notes)
 - [License](#license)
@@ -69,7 +70,7 @@ flowchart LR
     EB --- Corpus[("Full corpus —<br/>never leaves the host")]
 ```
 
-Any [MCP](#mcp-claude-desktop--cursor--zed) client (or the REST search API) works — point it at the host's LAN address, `http://<host-lan-ip>:8000/mcp/sse`, instead of `localhost`. Set `LAN_HOST` in `.env` so the server advertises a reachable address (a bridge-networked container can't detect the host's LAN IP itself). Because it's now reachable beyond your own machine, keep `MASTER_API_KEY` strong and set `EMBEDBASE_SECURE_HEADERS=true`.
+Any [MCP](#mcp-claude-desktop--cursor--zed) client (or the REST search API) works — point it at the host's LAN address, `http://<host-lan-ip>:8000/api/mcp/sse`, instead of `localhost`. Set `LAN_HOST` in `.env` so the server advertises a reachable address (a bridge-networked container can't detect the host's LAN IP itself). Because it's now reachable beyond your own machine, keep `MASTER_API_KEY` strong and set `EMBEDBASE_SECURE_HEADERS=true`.
 
 ## Prerequisites
 
@@ -282,8 +283,9 @@ is installed (built via `--build-arg INSTALL_FLASH_ATTN=true`). Turing cards (RT
 
 ## MCP (Claude Desktop / Cursor / Zed)
 
-EmbedBase exposes an MCP server over SSE at `http://localhost:8000/mcp/sse`
-(proxied by Nginx at `/mcp/`). Claude Desktop talks to a *remote* SSE server via
+EmbedBase exposes an MCP server over SSE at `http://localhost:8000/api/mcp/sse`
+(the API runs with `root_path="/api"`, so the endpoint carries the `/api`
+prefix). Claude Desktop talks to a *remote* SSE server via
 [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). Add to
 `~/.config/claude/claude_desktop_config.json` (or `%APPDATA%\Claude\claude_desktop_config.json`
 on Windows):
@@ -295,7 +297,7 @@ on Windows):
       "command": "npx",
       "args": [
         "-y", "mcp-remote",
-        "http://localhost:8000/mcp/sse",
+        "http://localhost:8000/api/mcp/sse",
         "--header", "Authorization: Bearer ${EMBEDBASE_MASTER_KEY}"
       ],
       "env": {
@@ -312,6 +314,20 @@ Authenticate with your `MASTER_API_KEY`. Each key is limited to 60 requests/min
 **Tools:** `list_workspaces`, `search_documents` (`query`, `collection_ids[]`,
 `top_k`, `hybrid`, `filters`), `ingest_document` (container-local path),
 `list_documents`, `delete_document`.
+
+### Claude Code
+
+To register the server with [Claude Code](https://claude.com/claude-code) via
+`claude mcp add`, see **[docs/mcp-claude-code.md](docs/mcp-claude-code.md)**.
+When connecting straight to the API port (not through a proxy), use the
+`/api`-prefixed path — `http://localhost:8000/api/mcp/sse`:
+
+```bash
+KEY=$(grep '^MASTER_API_KEY=' .env | cut -d= -f2)
+claude mcp add --transport sse embedbase \
+  http://localhost:8000/api/mcp/sse \
+  --header "Authorization: Bearer $KEY"
+```
 
 ## Ports
 
