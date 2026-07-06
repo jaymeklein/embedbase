@@ -173,6 +173,12 @@ class StorageConfig(BaseModel):
 
     default: str = "local"
     backends: dict[str, Backend] = {"local": LocalBackendConfig()}
+    # Lifetime of a *temporary* upload (ingested with ``temporary=true``): after
+    # this many hours the worker sweep purges its object, row, chunks, and vectors.
+    # 0 = feature off (a ``temporary`` upload then just behaves as permanent).
+    # ponytail: whole-hours granularity. If sub-hour temp files are ever needed,
+    # switch the unit — don't add a units system.
+    temp_retention_hours: int = 0
 
 
 class AppConfig(BaseModel):
