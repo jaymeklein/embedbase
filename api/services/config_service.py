@@ -102,6 +102,26 @@ def _set_nested(data: dict[str, Any], path: tuple[str, ...], value: Any) -> None
     cursor[path[-1]] = value
 
 
+def _storage_secret_paths(data: dict[str, Any]) -> tuple[tuple[str, ...], ...]:
+    """Secret field paths for every ``type: s3`` storage backend in ``data``.
+
+    Backend names are user-defined, so these paths are computed per-config rather
+    than listed statically in :data:`SECRET_PATHS`. The credentials arrive via the
+    ``S3__<NAME>__*`` env overlay (api.services.config_env), so — exactly like
+    ``vector_store.password`` — they must be masked on GET and restored on PUT;
+    otherwise a whole-config save from the settings UI round-trips them in the clear.
+    """
+    backends = _get_nested(data, ("storage", "backends"))
+    if not isinstance(backends, dict):
+        return ()
+    return tuple(
+        ("storage", "backends", name, field)
+        for name, backend in backends.items()
+        if isinstance(backend, dict) and backend.get("type") == "s3"
+        for field in ("access_key_id", "secret_access_key")
+    )
+
+
 def _require_config() -> AppConfig:
     """Return the live config or raise 503 if startup has not completed."""
     config = get_app_config()
@@ -113,7 +133,7 @@ def _require_config() -> AppConfig:
 def get_masked_config() -> dict[str, Any]:
     """Return the live config with every secret masked (``SECRET_MASK`` / "")."""
     data = _require_config().model_dump()
-    for path in SECRET_PATHS:
+    for path in (*SECRET_PATHS, *_storage_secret_paths(data)):
         _set_nested(data, path, SECRET_MASK if _get_nested(data, path) else "")
     return data
 
@@ -122,7 +142,7 @@ def _merge_secrets(incoming: dict[str, Any], current: AppConfig) -> dict[str, An
     """Restore each secret the client left masked from the current live config."""
     current_data = current.model_dump()
     merged = deepcopy(incoming)
-    for path in SECRET_PATHS:
+    for path in (*SECRET_PATHS, *_storage_secret_paths(merged)):
         if _get_nested(merged, path) == SECRET_MASK:
             _set_nested(merged, path, _get_nested(current_data, path))
     return merged

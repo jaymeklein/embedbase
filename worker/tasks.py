@@ -722,3 +722,40 @@ def index_collection(self, collection_id: str) -> None:
     See :func:`index_document` — the generated column makes a rebuild unnecessary.
     """
     logger.info("bm25 collection index no-op (FTS auto-maintained)", collection_id=collection_id)
+
+
+# Cap the rows swept per run so a large backlog drains over several sweeps instead of
+# flooding the queue at once. ponytail: LIMIT 500/run — tighten the beat interval
+# (PURGE_INTERVAL_SECONDS) if a backlog ever builds up.
+_PURGE_BATCH = 500
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def purge_expired_documents(self) -> int:
+    """Enqueue deletes for temporary documents whose retention window has elapsed.
+
+    Selects rows with a due ``expires_at`` and fans each out to :func:`delete_document`,
+    which already routes through ``get_storage(backend).delete(key)`` plus vector/row
+    cleanup — one uniform purge path for local and every S3 backend (PR 4). Fanning out
+    (rather than deleting inline) keeps this single worker free to interleave the deletes
+    with ingestion. Idempotent: a document re-selected before its delete lands is simply
+    enqueued again — delete is a no-op on an already-gone row — so no status tombstone is
+    needed. Returns the number of deletes enqueued.
+    """
+    now = datetime.now(UTC).replace(tzinfo=None)  # naive UTC — matches the stored column
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(documents.c.id, documents.c.collection_id)
+            .where(documents.c.expires_at.is_not(None), documents.c.expires_at <= now)
+            .limit(_PURGE_BATCH)
+        ).fetchall()
+    for row in rows:
+        delete_document.delay(row.id, row.collection_id)
+    if rows:
+        logger.info("purge: enqueued expired document deletes", count=len(rows))
+    return len(rows)
