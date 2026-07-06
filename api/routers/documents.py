@@ -23,16 +23,18 @@ async def upload_document(
     ws_id: str,
     col_id: str,
     file: UploadFile = File(...),
+    temporary: bool = Form(False),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and enqueue a document for ingestion.
 
     Accepted formats: PDF, TXT, Markdown, source code (py/js/ts/go/rs/java etc.),
-    CSV, JSON, and -- via the docling parser -- DOCX and PPTX.
+    CSV, JSON, and -- via the docling parser -- DOCX and PPTX. Set ``temporary`` to
+    auto-purge the document after ``storage.temp_retention_hours`` (no-op when 0).
     """
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    return await doc_svc.ingest(db, col_id, file, principal)
+    return await doc_svc.ingest(db, col_id, file, principal, temporary=temporary)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents")
@@ -88,12 +90,13 @@ async def delete_document(
 async def upload_document_flat(
     collection_id: str = Form(...),
     file: UploadFile = File(...),
+    temporary: bool = Form(False),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload a document by collection ID without the nested workspace path."""
     await doc_svc.resolve_collection(db, collection_id)
-    return await doc_svc.ingest(db, collection_id, file, principal)
+    return await doc_svc.ingest(db, collection_id, file, principal, temporary=temporary)
 
 
 @router.get("/documents/{doc_id}/raw")

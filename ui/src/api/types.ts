@@ -344,6 +344,26 @@ export interface ParserConfig {
   [key: string]: unknown
 }
 
+/** One configured storage backend. S3 credentials are masked on GET (write-only). */
+export interface StorageBackend {
+  type: 'local' | 's3'
+  bucket?: string
+  endpoint_url?: string | null
+  public_endpoint_url?: string | null
+  region?: string
+  [key: string]: unknown
+}
+
+/**
+ * Storage registry config. Backend *selection* stays in config.yaml/env; the UI
+ * only shows the active backend read-only and edits `temp_retention_hours`.
+ */
+export interface StorageConfig {
+  default: string
+  backends: Record<string, StorageBackend>
+  temp_retention_hours: number // 0 = temporary uploads never expire (feature off)
+}
+
 /** `GET /config/accelerator` — GPU suitability for the docling PDF backend. */
 export interface Accelerator {
   device: string // "cuda" | "cpu"
@@ -360,6 +380,7 @@ export interface AppConfig {
   embedding: EmbeddingConfig
   parsers: ParserConfig
   tagging: TaggingConfig
+  storage: StorageConfig
   [section: string]: unknown
 }
 
