@@ -15,6 +15,7 @@ backend imports it lazily), so a plain disk deployment pays nothing for it.
 from __future__ import annotations
 
 import logging
+import mimetypes
 import shutil
 import tempfile
 from abc import ABC, abstractmethod
@@ -32,6 +33,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _PRESIGN_EXPIRY = 3600  # seconds a presigned download URL stays valid
+
+
+def _guess_content_type(name: str) -> str:
+    """Best-effort MIME type from a filename/key extension.
+
+    Falls back to a generic binary type so the object still stores and serves —
+    just without an inline-render hint, so the browser downloads it instead of
+    previewing.
+    """
+    return mimetypes.guess_type(name)[0] or "application/octet-stream"
 
 
 class Storage(ABC):
@@ -209,14 +220,21 @@ class S3Storage(Storage):
             # The guard runs first, so an oversize upload never touches the bucket.
             written = await stream_upload_with_size_guard(file, tmp, max_bytes=max_bytes)
             self._ensure_bucket()
-            self._s3.upload_file(str(tmp), self._bucket, key)
+            # Record the real MIME type so the object serves as (e.g.) application/pdf
+            # rather than binary/octet-stream, which the browser downloads instead of
+            # previewing.
+            self._s3.upload_file(
+                str(tmp), self._bucket, key, ExtraArgs={"ContentType": _guess_content_type(key)}
+            )
             return written
         finally:
             tmp.unlink(missing_ok=True)
 
     def put_path(self, src: Path, key: str) -> None:
         self._ensure_bucket()
-        self._s3.upload_file(str(src), self._bucket, key)
+        self._s3.upload_file(
+            str(src), self._bucket, key, ExtraArgs={"ContentType": _guess_content_type(key)}
+        )
 
     def fetch_to_temp(self, key: str) -> Path:
         with tempfile.NamedTemporaryFile(delete=False, suffix=Path(key).suffix) as tf:
@@ -238,7 +256,7 @@ class S3Storage(Storage):
 
     def presigned_get(self, key: str, filename: str) -> str | None:
         # Strip characters that would break the Content-Disposition header value
-        # (quotes / CR / LF). A download hint, not a path — keep it simple.
+        # (quotes / CR / LF). A display hint, not a path — keep it simple.
         # ponytail: ASCII-safe strip; add RFC 5987 filename* if non-ASCII names matter.
         safe = filename.replace('"', "").replace("\r", "").replace("\n", "")
         return self._presign_s3.generate_presigned_url(
@@ -246,7 +264,13 @@ class S3Storage(Storage):
             Params={
                 "Bucket": self._bucket,
                 "Key": key,
-                "ResponseContentDisposition": f'attachment; filename="{safe}"',
+                # Override the response type/disposition so the browser previews known
+                # formats (PDF, images) inline — matching the local FileResponse path.
+                # This also repairs legacy objects stored as binary/octet-stream
+                # (which the browser downloads as an extensionless blob) at serve time,
+                # with no re-upload. The UI's download button forces its own filename.
+                "ResponseContentType": _guess_content_type(filename),
+                "ResponseContentDisposition": f'inline; filename="{safe}"',
             },
             ExpiresIn=_PRESIGN_EXPIRY,
         )
