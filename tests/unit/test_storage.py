@@ -262,7 +262,20 @@ def test_s3_presigned_get_sanitizes_filename():
         url = S3Storage(_s3_cfg()).presigned_get("c/d.txt", 'a"b\r\nc.txt')
         assert url is not None
         disp = parse_qs(urlparse(url).query)["response-content-disposition"][0]
-        assert disp == 'attachment; filename="abc.txt"'  # quote/CR/LF stripped
+        assert disp == 'inline; filename="abc.txt"'  # quote/CR/LF stripped, inline for preview
+
+
+def test_s3_presigned_get_overrides_content_type_for_preview():
+    # Objects may be stored as binary/octet-stream; the presigned URL overrides the
+    # response type by extension so the browser previews (e.g.) a PDF inline instead
+    # of downloading an extensionless blob.
+    from urllib.parse import parse_qs, urlparse
+
+    with mock_aws():
+        url = S3Storage(_s3_cfg()).presigned_get("c/doc.pdf", "report.pdf")
+        assert url is not None
+        ctype = parse_qs(urlparse(url).query)["response-content-type"][0]
+        assert ctype == "application/pdf"
 
 
 async def test_s3_fetch_to_temp_cleans_up_on_download_error(monkeypatch, tmp_path):
@@ -330,6 +343,9 @@ async def test_s3_put_path_uploads_local_file(tmp_path):
             assert fetched.read_bytes() == b"on disk"
         finally:
             store.cleanup_temp(fetched)
+        # Stored with the real MIME type, not the octet-stream default.
+        head = store._s3.head_object(Bucket="embedbase", Key="c/from_disk.txt")
+        assert head["ContentType"] == "text/plain"
 
 
 def test_s3_local_path_is_none():
