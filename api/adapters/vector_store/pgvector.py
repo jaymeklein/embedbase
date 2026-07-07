@@ -59,10 +59,12 @@ class _AsyncRunner:
 
 
 _UPSERT_SQL = (
-    "INSERT INTO chunks (id, collection_id, text, metadata, embedding) "
-    "VALUES ($1, $2, $3, $4::jsonb, $5) "
+    "INSERT INTO chunks (id, collection_id, document_id, text, metadata, embedding, embedding_model) "
+    "VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) "
     "ON CONFLICT (id) DO UPDATE SET "
-    "text = EXCLUDED.text, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding"
+    "document_id = EXCLUDED.document_id, text = EXCLUDED.text, "
+    "metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding, "
+    "embedding_model = EXCLUDED.embedding_model"
 )
 
 # {filter} is an optional AND-chain of metadata predicates (see _metadata_filter_sql),
@@ -196,12 +198,48 @@ class PgvectorAdapter:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_search")
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS chunks ("
-                "id text PRIMARY KEY, collection_id text NOT NULL, text text NOT NULL, "
+                "id text PRIMARY KEY, collection_id text NOT NULL, document_id text, "
+                "embedding_model text, "
+                "text text NOT NULL, "
                 "metadata jsonb NOT NULL DEFAULT '{}'::jsonb, "
                 f"embedding vector({self._dimensions}) NOT NULL)"
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS chunks_collection_id_idx ON chunks (collection_id)"
+            )
+            # document_id was promoted out of metadata->>'document_id' into a first-class
+            # column so chunks correlate to the documents table via a plain JOIN, with no
+            # JSONB unpacking. Add-if-missing + a one-time backfill migrates tables that
+            # predate the column in place; the upsert writes it on every subsequent write.
+            await conn.execute("ALTER TABLE chunks ADD COLUMN IF NOT EXISTS document_id text")
+            await conn.execute(
+                "UPDATE chunks SET document_id = metadata->>'document_id' "
+                "WHERE document_id IS NULL AND metadata ? 'document_id'"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_document_id_idx ON chunks (document_id)"
+            )
+            # embedding_model per chunk (mirrors documents.embedding_model). A resumed
+            # ingest skips chunks that already carry the CURRENT model's vectors and
+            # re-embeds only the rest — the key to resuming across a model change
+            # (old-model chunks differ from the configured model, so they are re-embedded;
+            # already-current chunks are skipped). Backfill existing rows from their
+            # document's recorded model, guarded so a fresh DB where the API-owned
+            # ``documents`` table does not exist yet does not fail the bootstrap.
+            await conn.execute(
+                "ALTER TABLE chunks ADD COLUMN IF NOT EXISTS embedding_model text"
+            )
+            await conn.execute(
+                "DO $$ BEGIN "
+                "IF to_regclass('public.documents') IS NOT NULL THEN "
+                "UPDATE chunks c SET embedding_model = d.embedding_model FROM documents d "
+                "WHERE c.embedding_model IS NULL AND c.document_id = d.id "
+                "AND d.embedding_model IS NOT NULL; "
+                "END IF; END $$"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS chunks_doc_model_idx "
+                "ON chunks (document_id, embedding_model)"
             )
             # Drop the native-FTS stand-in if a prior build created it (idempotent).
             await conn.execute("DROP INDEX IF EXISTS chunks_text_tsv_idx")
@@ -260,10 +298,11 @@ class PgvectorAdapter:
     # -- upsert -------------------------------------------------------------
 
     async def _upsert(self, collection_id: str, chunks: list[Chunk],
-                      vectors: list[list[float]]) -> None:
+                      vectors: list[list[float]], model: str | None = None) -> None:
         pool = await self._get_pool()
         rows = [
-            (c.id, collection_id, c.text, json.dumps(c.metadata.model_dump()), v)
+            (c.id, collection_id, c.metadata.document_id, c.text,
+             json.dumps(c.metadata.model_dump()), v, model)
             for c, v in zip(chunks, vectors, strict=True)
         ]
         async with pool.acquire() as conn:
@@ -271,17 +310,20 @@ class PgvectorAdapter:
         await self._ensure_hnsw_index(collection_id)
 
     def upsert(self, collection_id: str, chunks: list[Chunk],
-               vectors: list[list[float]]) -> None:
+               vectors: list[list[float]], model: str | None = None) -> None:
         """Insert or update chunk embeddings for a collection.
 
         Args:
             collection_id: Target collection namespace.
             chunks: Chunks to store; ``chunk.id`` is the conflict key.
             vectors: Embedding per chunk, aligned by index with ``chunks``.
+            model: Embedding model that produced ``vectors``, recorded per chunk so a
+                resumed ingest can tell which chunks already carry the current model's
+                vectors and skip them (see worker ``_embed_and_store``).
         """
         if not chunks:
             return
-        self._runner.run(self._upsert(collection_id, chunks, vectors))
+        self._runner.run(self._upsert(collection_id, chunks, vectors, model))
 
     async def _ensure_hnsw_index(self, collection_id: str) -> None:
         """Build the per-collection partial HNSW index once it has enough rows.
@@ -457,6 +499,31 @@ class PgvectorAdapter:
     ) -> list[tuple[str, str, str]]:
         """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
         return self._runner.run(self._iter_document_chunks(collection_id, document_id))
+
+    async def _document_chunk_ids_at_model(
+        self, collection_id: str, document_id: str, model: str
+    ) -> set[str]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id FROM chunks "
+                "WHERE collection_id = $1 AND document_id = $2 AND embedding_model = $3",
+                collection_id, document_id, model,
+            )
+        return {row["id"] for row in rows}
+
+    def document_chunk_ids_at_model(
+        self, collection_id: str, document_id: str, model: str
+    ) -> set[str]:
+        """Chunk ids for a document already embedded with ``model`` (the resume set).
+
+        A resumed ingest embeds only the chunks NOT in this set, so a run interrupted
+        by a rate limit or crash continues where it left off, and a model change
+        re-embeds just the chunks still carrying the previous model's vectors.
+        """
+        return self._runner.run(
+            self._document_chunk_ids_at_model(collection_id, document_id, model)
+        )
 
     async def _collection_texts(self, collection_id: str) -> list[str]:
         pool = await self._get_pool()

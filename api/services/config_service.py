@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import structlog
 import yaml
 from fastapi import HTTPException
 
@@ -48,6 +49,8 @@ from api.services.config_reload import (
     publish_reload,
     read_status,
 )
+
+logger = structlog.get_logger()
 
 # A point-in-time snapshot of the API's live adapters + config, captured before a
 # PUT so a worker rejection can be rolled back: (embed, store, reranker, config).
@@ -151,34 +154,57 @@ def _merge_secrets(incoming: dict[str, Any], current: AppConfig) -> dict[str, An
 def _build_adapters(config: AppConfig) -> tuple[Any, Any, Any]:
     """Build the embedding + vector-store + reranker adapters (the PUT dry run).
 
-    Eager construction means a bad model name or unreachable backend raises here,
-    before ``config.yaml`` is touched. The reranker is ``None`` when disabled, so
-    flipping it on is what loads (and validates) the cross-encoder model.
+    Eager construction means a bad embedding model or unreachable vector store
+    raises here, before ``config.yaml`` is touched. The reranker is the exception:
+    its model can be unavailable at runtime (an uncached cross-encoder with no
+    HuggingFace access) even when the config itself is valid, so — exactly like
+    startup (:func:`api.main`) — a reranker build failure degrades it to ``None``
+    rather than failing the whole save. Otherwise enabling the reranker in an
+    environment that can't fetch its model would 422 every config change, including
+    unrelated ones (e.g. rotating the embedding API key).
     """
     embed = resolve_embedding(config.embedding)
     store = resolve_store(config.vector_store, embed.dimensions)
-    reranker = resolve_reranker(config.reranker)
+    reranker = _build_reranker_optional(config.reranker)
     return embed, store, reranker
 
 
-def _atomic_write(data: dict[str, Any], path: Path) -> None:
-    """Persist ``data`` as YAML atomically (.bak backup -> .tmp write -> rename).
+def _build_reranker_optional(reranker_config: Any) -> Any:
+    """Resolve the reranker, or ``None`` if its model can't be built (matches boot).
 
-    Falls back to an in-place write when the rename fails — a bind-mounted single
-    file (Docker on Windows) is a mount point that cannot be renamed over (EBUSY),
-    but can still be written through. The ``.bak`` backup is taken first either way.
+    Mirrors the fail-safe in :func:`api.main` startup: the reranker is an optional
+    second stage, so an unbuildable model degrades to RRF-only ranking instead of
+    turning a config save (or app boot) into a hard failure. A genuinely bad
+    *provider* name still raises (``ValueError`` from the registry) and is surfaced.
+    """
+    try:
+        return resolve_reranker(reranker_config)
+    except ValueError:
+        raise  # unknown provider — a real config error, surface it as 422
+    except Exception as exc:  # model download/load failure — environmental, not config
+        logger.warning(
+            "reranker unavailable; saving config with reranker inactive",
+            error=str(exc),
+        )
+        return None
+
+
+def _atomic_write(data: dict[str, Any], path: Path) -> None:
+    """Persist ``data`` as YAML in place (.bak backup, then overwrite the file).
+
+    Writes through the *existing* inode instead of the classic tmp-file +
+    ``os.replace`` swap. A rename swaps the inode, and on Docker Desktop / WSL
+    single-file bind mounts that splits the API's and workers' views of the mounted
+    ``config.yaml``: the container keeps the old inode while the host path gets a new
+    one, so one process sees the update and the other keeps the stale file (and a
+    rollback can even restore an unrelated ``.bak``). Overwriting in place keeps every
+    bind mount pointing at the same file. A ``.bak`` copy is written first so a crash
+    mid-write is recoverable.
     """
     content = yaml.safe_dump(data, sort_keys=False)
     if path.exists():
         path.with_suffix(path.suffix + ".bak").write_text(path.read_text(encoding="utf-8"))
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    try:
-        tmp.replace(path)
-    except OSError:
-        # ponytail: bind-mounted file can't be renamed over; write in place instead.
-        path.write_text(content, encoding="utf-8")
-        tmp.unlink(missing_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def _record_applied(version_id: str) -> dict[str, Any]:

@@ -25,7 +25,13 @@ RUN if [ "$INSTALL_ML" = "true" ]; then \
 RUN if [ "$INSTALL_ML" = "true" ]; then \
         python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"; \
     fi
-# Prevent any HuggingFace Hub network calls at runtime; rely solely on the cache above.
+# Vendor the default cross-encoder reranker into the image (reranking runs in the
+# API). Fetched via plain GET rather than huggingface_hub because some networks
+# block the HEAD requests the Hub uses for cache metadata; the reranker adapter
+# loads this baked copy from /opt/models, so no Hub access is needed at runtime.
+COPY scripts/fetch_reranker_model.py /tmp/fetch_reranker_model.py
+RUN if [ "$INSTALL_ML" = "true" ]; then python /tmp/fetch_reranker_model.py; fi
+# Prevent any HuggingFace Hub network calls at runtime; rely solely on the caches above.
 ENV HF_HUB_OFFLINE=1
 
 COPY . ./api/

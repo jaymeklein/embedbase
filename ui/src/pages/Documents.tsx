@@ -53,14 +53,16 @@ export default function Documents() {
   const toast = useToast()
   const uploadMut = useUploadDocument(wsId, colId)
   const deleteMut = useDeleteDocument(wsId, colId)
-  const { available: autoTagAvailable } = useAutoTagAvailability()
+  // Config is fetched lazily (only on the Settings/config tab), so these read it
+  // opportunistically from cache without firing the whole-config request here.
+  const { available: autoTagAvailable } = useAutoTagAvailability(false)
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
   const [tagFilter, setTagFilter] = useState<string[]>([])
   // Temporary-upload toggle. Only offered when retention is enabled (>0 hours);
   // with retention off the server ignores the flag, so a control would be a no-op.
-  const { data: config } = useConfig()
+  const { data: config } = useConfig(false)
   const retentionHours = config?.storage?.temp_retention_hours ?? 0
   const [temporary, setTemporary] = useState(false)
 

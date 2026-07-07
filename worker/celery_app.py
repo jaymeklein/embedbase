@@ -42,11 +42,19 @@ celery_app.conf.update(
 # the worker is ever scaled to >1 replica, split beat into its own one-replica service
 # so the schedule isn't fired once per replica.
 _PURGE_INTERVAL = float(os.environ.get("PURGE_INTERVAL_SECONDS", "300"))  # every 5 min
+# Re-enqueue ingests that paused on an embedding-provider rate limit / quota, so a
+# document partly embedded when the tier limit was hit keeps making progress within
+# quota until every chunk is done (worker/tasks.py::retry_rate_limited_ingests).
+_RETRY_INTERVAL = float(os.environ.get("RATE_LIMIT_RETRY_SECONDS", "300"))  # every 5 min
 
 celery_app.conf.beat_schedule = {
     "purge-expired-documents": {
         "task": "worker.tasks.purge_expired_documents",
         "schedule": _PURGE_INTERVAL,
+    },
+    "retry-rate-limited-ingests": {
+        "task": "worker.tasks.retry_rate_limited_ingests",
+        "schedule": _RETRY_INTERVAL,
     },
 }
 

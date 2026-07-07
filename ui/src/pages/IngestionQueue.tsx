@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { AlertTriangle, CheckCircle2, FileText, ListChecks, Loader2, XCircle } from 'lucide-react'
 import { Badge, Card, EmptyState } from '../components/ui'
 import { cn } from '../lib/cn'
@@ -7,10 +8,11 @@ import { useIngestionQueue, type QueueItem } from '../realtime/useIngestionQueue
 export default function IngestionQueue() {
   const { items, status } = useIngestionQueue()
   const active = items.filter((i) => i.status === 'processing').length
+  const waiting = items.filter((i) => i.status === 'rate_limited').length
 
   return (
     <div className="animate-fade-in space-y-6">
-      <Header connected={status === 'open'} active={active} />
+      <Header connected={status === 'open'} active={active} waiting={waiting} />
       {items.length === 0 ? (
         <EmptyState
           icon={<ListChecks className="h-7 w-7" />}
@@ -28,7 +30,18 @@ export default function IngestionQueue() {
   )
 }
 
-function Header({ connected, active }: { connected: boolean; active: number }) {
+function Header({
+  connected,
+  active,
+  waiting,
+}: {
+  connected: boolean
+  active: number
+  waiting: number
+}) {
+  const parts: string[] = []
+  if (active > 0) parts.push(`${active} document${active === 1 ? '' : 's'} ingesting`)
+  if (waiting > 0) parts.push(`${waiting} waiting on rate limit`)
   return (
     <div className="flex items-center justify-between">
       <div>
@@ -37,7 +50,7 @@ function Header({ connected, active }: { connected: boolean; active: number }) {
           Ingestion Queue
         </h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          {active > 0 ? `${active} document${active === 1 ? '' : 's'} ingesting` : 'No active ingestions'}{' '}
+          {parts.length ? parts.join(' · ') : 'No active ingestions'}{' '}
           · chunks stream in live as they're embedded.
         </p>
       </div>
@@ -55,6 +68,7 @@ const PHASE_STYLE: Record<string, string> = {
   parsing: 'text-warn',
   embedding: 'text-accent',
   storing: 'text-accent',
+  rate_limited: 'text-warn',
   done: 'text-ok',
   failed: 'text-err',
 }
@@ -90,7 +104,11 @@ function QueueCard({ item }: { item: QueueItem }) {
       {!terminal && (
         <div className="space-y-1">
           <div className="flex items-center justify-between text-xs text-ink-muted">
-            <span className="capitalize">{item.stalled ? 'stalled' : item.phase}</span>
+            {item.status === 'rate_limited' && item.retry_at ? (
+              <RetryCountdown retryAt={item.retry_at} />
+            ) : (
+              <span className="capitalize">{item.stalled ? 'stalled' : item.phase}</span>
+            )}
             {item.total != null && (
               <span className="tabular-nums">
                 {item.current ?? 0} / {item.total} chunks
@@ -100,7 +118,7 @@ function QueueCard({ item }: { item: QueueItem }) {
           <div className="relative h-1.5 overflow-hidden rounded-full bg-canvas">
             {determinate ? (
               <div
-                className={`h-full rounded-full transition-[width] duration-300 ${item.stalled ? 'bg-warn' : 'bg-accent'}`}
+                className={`h-full rounded-full transition-[width] duration-300 ${item.stalled || item.status === 'rate_limited' ? 'bg-warn' : 'bg-accent'}`}
                 style={{ width: `${item.pct}%` }}
               />
             ) : (
@@ -141,6 +159,14 @@ function PhaseBadge({ item }: { item: QueueItem }) {
       </Badge>
     )
   }
+  if (item.status === 'rate_limited') {
+    return (
+      <Badge className="shrink-0 text-warn">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        Rate limited
+      </Badge>
+    )
+  }
   const cls = PHASE_STYLE[item.phase] ?? 'text-ink-muted'
   const icon =
     item.status === 'done' ? (
@@ -156,4 +182,19 @@ function PhaseBadge({ item }: { item: QueueItem }) {
       {item.status === 'processing' ? item.phase : item.status}
     </Badge>
   )
+}
+
+/** Live "retry in M:SS" countdown to a paused item's scheduled resume time. */
+function RetryCountdown({ retryAt }: { retryAt: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const remaining = Math.max(0, Math.round((new Date(retryAt).getTime() - now) / 1000))
+  const label =
+    remaining > 0
+      ? `retry in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`
+      : 'retrying…'
+  return <span className="tabular-nums text-warn">{label}</span>
 }
