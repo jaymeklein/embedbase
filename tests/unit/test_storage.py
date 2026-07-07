@@ -5,7 +5,6 @@ run with no container, network, or credentials — same idea as the in-memory
 SQLite/fakeredis fixtures elsewhere.
 """
 
-import io
 from urllib.parse import urlparse
 
 import boto3
@@ -17,17 +16,7 @@ from moto import mock_aws
 
 from api.models.config import LocalBackendConfig, S3BackendConfig, StorageConfig
 from api.services.storage import LocalStorage, S3Storage, get_storage
-
-
-class FakeUpload:
-    """Minimal stand-in for starlette's UploadFile (``.size`` + async ``.read``)."""
-
-    def __init__(self, data: bytes, size: int | None = None):
-        self._buf = io.BytesIO(data)
-        self.size = size
-
-    async def read(self, n: int = -1) -> bytes:
-        return self._buf.read(n)
+from tests.unit.fakes import FakeUpload
 
 
 def _s3_cfg(**overrides) -> S3BackendConfig:

@@ -7,7 +7,6 @@ is wired, core endpoints answer, middleware runs, and the deployment artifacts
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from api.main import create_app

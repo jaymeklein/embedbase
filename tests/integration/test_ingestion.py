@@ -19,45 +19,8 @@ from sqlalchemy.pool import NullPool  # noqa: E402
 
 from api.models.config import AppConfig  # noqa: E402
 from api.tables import documents, job_records, metadata  # noqa: E402
+from tests.unit.fakes import FakeEmbedder, FakeRedis, FakeStore  # noqa: E402
 from worker.tasks import _run_ingestion  # noqa: E402
-
-
-class FakeEmbedder:
-    @property
-    def dimensions(self) -> int:
-        return 3
-
-    def embed_batch(self, texts):
-        return [[0.1, 0.2, 0.3] for _ in texts]
-
-
-class FakeStore:
-    def __init__(self):
-        self.upserts = []
-        self._models = {}  # chunk_id -> embedding_model it was stored at
-
-    def upsert(self, collection_id, chunks, vectors, model=None):
-        self.upserts.append((collection_id, chunks, vectors))
-        for c in chunks:
-            self._models[c.id] = model
-
-    def document_chunk_ids_at_model(self, collection_id, document_id, model):
-        # chunk ids already stored for this document at the given model (resume set).
-        return {
-            c.id
-            for _cid, chunks, _vec in self.upserts
-            for c in chunks
-            if c.metadata.document_id == document_id and self._models.get(c.id) == model
-        }
-
-    def iter_document_chunks(self, collection_id, document_id):
-        # (chunk_id, document_id, text) triples for the resume/skip check.
-        return [
-            (c.id, c.metadata.document_id, c.text)
-            for _cid, chunks, _vec in self.upserts
-            for c in chunks
-            if c.metadata.document_id == document_id
-        ]
 
 
 class FakeStorage:
@@ -76,21 +39,6 @@ class FakeStorage:
 
     def cleanup_temp(self, path):
         self.cleaned.append(path)
-
-
-class FakeRedis:
-    def __init__(self):
-        self.store = {}
-
-    def get(self, key):
-        return self.store.get(key)
-
-    def set(self, key, value, ex=None):
-        self.store[key] = value
-
-    def incr(self, key):
-        self.store[key] = str(int(self.store.get(key, 0)) + 1)
-        return int(self.store[key])
 
 
 def _factory(tmp_path):
