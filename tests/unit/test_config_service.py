@@ -152,31 +152,84 @@ def test_merge_secrets_accepts_new_value():
     assert merged["embedding"]["api_key"] == "rotated-key"
 
 
-# ── Atomic write ──────────────────────────────────────────────────────────────
+# ── Config write + boot recovery ──────────────────────────────────────────────
 
 
-def test_atomic_write_persists_yaml_and_keeps_backup(tmp_path):
+def test_write_config_persists_yaml_and_keeps_backup(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text("old: 1", encoding="utf-8")
-    cs._atomic_write({"max_file_size_mb": 99}, path)
+    cs._write_config({"max_file_size_mb": 99}, path)
     assert yaml.safe_load(path.read_text(encoding="utf-8"))["max_file_size_mb"] == 99
     assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == "old: 1"
-    assert not (tmp_path / "config.yaml.tmp").exists()  # renamed away
+    # In-place write (bind-mount safe) never leaves a stray .tmp behind.
+    assert not (tmp_path / "config.yaml.tmp").exists()
 
 
-def test_atomic_write_falls_back_to_in_place_when_rename_fails(tmp_path, monkeypatch):
-    """A bind-mounted file (EBUSY on rename) is written in place, keeping the .bak."""
+def test_load_recovers_from_backup_when_config_is_corrupt(tmp_path):
+    """A crash mid-write can truncate config.yaml into invalid YAML; the loader recovers .bak."""
+    from api.services import config_env
+
     path = tmp_path / "config.yaml"
-    path.write_text("old: 1", encoding="utf-8")
+    (tmp_path / "config.yaml.bak").write_text("max_file_size_mb: 42\n", encoding="utf-8")
+    path.write_text("max_file_size_mb: {unterminated", encoding="utf-8")  # invalid YAML
+    assert config_env.load_config_data(path)["max_file_size_mb"] == 42
 
-    def _busy(_self: object, _target: object) -> None:  # Path.replace; EBUSY on bind mount
-        raise OSError(16, "Device or resource busy")
 
-    monkeypatch.setattr("pathlib.Path.replace", _busy)
-    cs._atomic_write({"max_file_size_mb": 99}, path)
-    assert yaml.safe_load(path.read_text(encoding="utf-8"))["max_file_size_mb"] == 99
-    assert (tmp_path / "config.yaml.bak").read_text(encoding="utf-8") == "old: 1"
-    assert not (tmp_path / "config.yaml.tmp").exists()  # cleaned up after fallback
+def test_empty_config_recovers_from_backup(tmp_path):
+    """An in-place write truncates config.yaml before rewriting, so a crash can leave it 0-byte
+    — indistinguishable from a torn write. An empty primary therefore recovers a non-empty .bak
+    rather than booting on lost config (an empty file parses as None, NOT a YAMLError, so it
+    must be handled explicitly)."""
+    from api.services import config_env
+
+    path = tmp_path / "config.yaml"
+    (tmp_path / "config.yaml.bak").write_text("max_file_size_mb: 7\n", encoding="utf-8")
+    path.write_text("", encoding="utf-8")
+    assert config_env.load_config_data(path)["max_file_size_mb"] == 7
+
+
+def test_empty_config_without_backup_returns_empty(tmp_path):
+    """An empty config with no .bak (a fresh install / intentional empty) degrades to defaults
+    ({}) rather than raising."""
+    from api.services import config_env
+
+    path = tmp_path / "config.yaml"
+    path.write_text("", encoding="utf-8")
+    assert config_env.load_config_data(path) == {}
+
+
+def test_corrupt_config_without_backup_returns_empty(tmp_path):
+    """A corrupt config with no .bak degrades to defaults ({}) rather than raising at boot."""
+    from api.services import config_env
+
+    path = tmp_path / "config.yaml"
+    path.write_text("{unterminated", encoding="utf-8")
+    assert config_env.load_config_data(path) == {}
+
+
+def test_non_ascii_config_roundtrips_utf8(tmp_path):
+    """The writer encodes UTF-8; the reader must decode UTF-8 too, or a non-ASCII value (e.g. an
+    accented storage path) raises UnicodeDecodeError on a non-UTF-8 default locale and crashes
+    boot instead of loading."""
+    from api.services import config_env
+
+    path = tmp_path / "config.yaml"
+    cs._write_config({"storage": {"default": "arquivo-ção"}}, path)
+    assert config_env.load_config_data(path)["storage"]["default"] == "arquivo-ção"
+
+
+def test_write_config_skips_backup_when_current_is_empty(tmp_path):
+    """A crash-truncated (empty) config.yaml must NOT overwrite the last-good .bak: an empty file
+    parses as None without error, so guarding the backup on parse alone would let it clobber the
+    only recovery source."""
+    path = tmp_path / "config.yaml"
+    (tmp_path / "config.yaml.bak").write_text("max_file_size_mb: 5\n", encoding="utf-8")
+    path.write_text("", encoding="utf-8")  # torn write left it empty
+    cs._write_config({"max_file_size_mb": 99}, path)
+    # the good backup is preserved, not replaced with the empty content
+    assert yaml.safe_load((tmp_path / "config.yaml.bak").read_text(encoding="utf-8"))[
+        "max_file_size_mb"
+    ] == 5
 
 
 # ── apply_config (build-then-commit) ──────────────────────────────────────────
