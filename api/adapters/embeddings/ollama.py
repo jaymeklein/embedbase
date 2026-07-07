@@ -2,6 +2,8 @@ import asyncio
 
 import httpx
 
+from api.adapters.embeddings.errors import raise_for_status
+
 
 class OllamaAdapter:
     def __init__(self, base_url: str, model: str, concurrency: int = 8) -> None:
@@ -19,7 +21,7 @@ class OllamaAdapter:
                 json={"model": self.model, "prompt": text},
                 timeout=30.0,
             )
-            response.raise_for_status()
+            raise_for_status(response)
             return response.json()["embedding"]
 
     async def _embed_batch_async(self, texts: list[str]) -> list[list[float]]:

@@ -61,7 +61,9 @@ def _resume_rate_limited() -> None:
     try:
         from worker import tasks
 
-        count = tasks.requeue_rate_limited()
+        # respect_pending=False: a new key / higher RPM reset the quota, so resume every
+        # paused job now rather than waiting out its (now-stale) countdown marker.
+        count = tasks.requeue_rate_limited(respect_pending=False)
         logger.info("embedding config changed; resumed rate-limited ingests", count=count)
     except Exception as exc:  # pragma: no cover - best-effort
         logger.error("could not resume rate-limited ingests", error=str(exc))
