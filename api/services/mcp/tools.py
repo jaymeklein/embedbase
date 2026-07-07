@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
-from api.models.search import SearchRequest
+from api.models.search import SearchRequest, SearchResponse
 from api.services import documents as doc_svc
 from api.services import workspaces as ws_svc
 from api.services.auth import Principal
@@ -29,6 +29,26 @@ from api.services.search import multi_collection_search
 MASTER_PRINCIPAL = Principal(is_master=True)
 
 _TOP_K_FLOOR = 1
+
+
+def _saturation_notice(response: SearchResponse, max_results: int) -> str | None:
+    """A natural-language "there's more" hint for the model when relevant chunks fell below the
+    ``top_k`` cut (plan A3 — the MCP must tell the caller it returned only part of what matched).
+
+    Returns ``None`` when results look complete (``more_available`` is false), so the warning
+    stays meaningful and the model doesn't learn to ignore it. The LLM reads this text, not the
+    structured ``more_available`` field, so it is phrased as an actionable instruction.
+    """
+    if not response.more_available:
+        return None
+    matched = sum(s.returned_after_filter for s in response.collection_stats.values())
+    shown = len(response.results)
+    return (
+        f"{matched} chunks matched and were ranked; showing the top {shown}. About "
+        f"{matched - shown} more, of comparable relevance, fell below the top_k cut. If the "
+        f"answer seems incomplete, re-run search_documents with a higher top_k "
+        f"(up to {max_results})."
+    )
 
 
 async def list_workspaces(*, db: AsyncSession) -> dict[str, Any]:
@@ -83,7 +103,11 @@ async def search_documents(
         vector_store=vector_store,
         reranker=reranker,
     )
-    return response.model_dump(mode="json")
+    result = response.model_dump(mode="json")
+    notice = _saturation_notice(response, max_results)
+    if notice:
+        result["notice"] = notice  # only when there is genuinely more below the cut
+    return result
 
 
 async def ingest_document(

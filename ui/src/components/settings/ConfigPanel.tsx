@@ -8,7 +8,7 @@ import {
   useTestOllama,
   useUpdateConfig,
 } from '../../api/hooks'
-import type { AppConfig, EmbeddingConfig, TaggingConfig } from '../../api/types'
+import type { AppConfig, EmbeddingConfig, RerankerConfig, TaggingConfig } from '../../api/types'
 import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
 
 /** Runtime config: embedding model + AI tag-suggester. Both apply live (API + workers reload). */
@@ -27,6 +27,7 @@ export function ConfigPanel() {
   return (
     <div className="flex flex-col gap-5">
       <EmbeddingForm config={data} />
+      <RerankerForm config={data} />
       <ParserForm config={data} />
       <TaggingForm config={data} />
       <StorageForm config={data} />
@@ -276,7 +277,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
           </Select>
         </Field>
         {provider === 'ollama' ? (
-          <OllamaModelField model={model} setModel={setModel} baseUrl={baseUrl} />
+          <OllamaModelField id="emb-model" model={model} setModel={setModel} baseUrl={baseUrl} />
         ) : (
           <Field
             label="Model"
@@ -375,6 +376,201 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
   )
 }
 
+/**
+ * Reranker (second-stage) config: reorders retrieved candidates by true query relevance before
+ * the top_k cut. Provider-pluggable, mirroring the embedding form — a local cross-encoder, a
+ * hosted /rerank API (Cohere/Jina/Voyage), or an LLM-as-reranker (incl. Gemini / AI Studio).
+ * Optional + graceful: a load or remote failure degrades to RRF-only ranking, never a 500.
+ */
+function RerankerForm({ config }: { config: AppConfig }) {
+  const toast = useToast()
+  const update = useUpdateConfig()
+  const rr = config.reranker
+
+  const [enabled, setEnabled] = useState(rr.enabled)
+  const [provider, setProvider] = useState(rr.provider)
+  const [model, setModel] = useState(rr.model)
+  const [llmProvider, setLlmProvider] = useState(rr.llm_provider)
+  const [baseUrl, setBaseUrl] = useState(rr.base_url ?? '')
+  const [apiKey, setApiKey] = useState('') // blank = keep existing key (when set)
+  const [topN, setTopN] = useState(String(rr.top_n))
+
+  const keyIsSet = rr.api_key === SECRET_MASK
+  const isRerankApi = provider === 'rerank_api'
+  const isLlm = provider === 'llm'
+  const isLlmOllama = isLlm && llmProvider === 'ollama'
+  const isLlmGemini = isLlm && llmProvider === 'gemini'
+
+  // rerank_api always needs a key; the LLM reranker needs one unless it's local Ollama.
+  const needsKey = isRerankApi || (isLlm && llmProvider !== 'ollama')
+  // Base URL: rerank_api's full endpoint, or the LLM base for Ollama / OpenAI-compatible.
+  // Gemini's endpoint is fixed (override lives in config.yaml), so no field there.
+  const needsBaseUrl =
+    isRerankApi || (isLlm && (llmProvider === 'ollama' || llmProvider === 'openai_compat'))
+
+  // Switching provider invalidates the current model (a cross-encoder id ≠ an LLM/rerank id).
+  const changeProvider = (next: string) => {
+    setProvider(next)
+    setModel('')
+  }
+
+  const save = () => {
+    const nextKey = apiKey.trim() || (keyIsSet ? SECRET_MASK : '')
+    const reranker: RerankerConfig = {
+      enabled,
+      provider,
+      model,
+      llm_provider: llmProvider,
+      base_url: needsBaseUrl ? baseUrl.trim() || null : null,
+      api_key: needsKey ? nextKey : '',
+      top_n: Math.max(1, Number(topN) || 50),
+      timeout_seconds: rr.timeout_seconds,
+    }
+    update.mutate(
+      { ...config, reranker },
+      {
+        onSuccess: () => toast.success('Reranker config saved. Services are reloading.'),
+        onError: (e) => toast.error(e.message),
+      },
+    )
+  }
+
+  return (
+    <Card className="flex flex-col gap-5 p-5">
+      <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+        <p className="text-[13px] text-ink-muted">
+          The reranker reorders retrieved chunks by true query relevance before the final cut — the
+          biggest precision win. It's <strong>optional and safe</strong>: if the model or a remote
+          provider is unavailable, search falls back to its normal ranking.
+        </p>
+      </div>
+
+      <Section title="Reranker">
+        <label className="flex items-center gap-2 text-[13px] text-ink sm:col-span-2">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            className="h-5 w-5 accent-accent"
+          />
+          Enable reranking
+        </label>
+        <Field label="Provider" htmlFor="rr-provider">
+          <Select id="rr-provider" value={provider} onChange={(e) => changeProvider(e.target.value)}>
+            <option value="cross_encoder">Cross-encoder (local, no key)</option>
+            <option value="rerank_api">Hosted rerank API (Cohere / Jina / Voyage)</option>
+            <option value="llm">LLM-as-reranker</option>
+          </Select>
+        </Field>
+        {isLlm && (
+          <Field label="LLM provider" htmlFor="rr-llm-provider">
+            <Select
+              id="rr-llm-provider"
+              value={llmProvider}
+              onChange={(e) => setLlmProvider(e.target.value)}
+            >
+              <option value="gemini">Google Gemini (AI Studio)</option>
+              <option value="openai_compat">OpenAI-compatible</option>
+              <option value="ollama">Ollama (local)</option>
+            </Select>
+          </Field>
+        )}
+        {isLlmOllama ? (
+          <OllamaModelField id="rr-model" model={model} setModel={setModel} baseUrl={baseUrl} />
+        ) : (
+          <Field
+            label="Model"
+            htmlFor="rr-model"
+            hint={
+              isRerankApi
+                ? 'e.g. rerank-v3.5 (Cohere), jina-reranker-v2 (Jina)'
+                : isLlm
+                  ? isLlmGemini
+                    ? 'e.g. gemini-2.5-flash'
+                    : 'the exact chat model id'
+                  : 'a HuggingFace cross-encoder id; the baked default is offline-safe'
+            }
+          >
+            <Input
+              id="rr-model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder={
+                isRerankApi
+                  ? 'rerank-v3.5'
+                  : isLlm
+                    ? isLlmGemini
+                      ? 'gemini-2.5-flash'
+                      : 'model id'
+                    : 'cross-encoder/ms-marco-MiniLM-L6-v2'
+              }
+            />
+          </Field>
+        )}
+        {needsBaseUrl && (
+          <Field
+            label="Base URL"
+            htmlFor="rr-base-url"
+            hint={
+              isRerankApi
+                ? 'required — the full /rerank endpoint'
+                : llmProvider === 'openai_compat'
+                  ? 'required — e.g. https://openrouter.ai/api'
+                  : 'blank uses the Ollama default'
+            }
+          >
+            <Input
+              id="rr-base-url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder={
+                isRerankApi
+                  ? 'https://api.cohere.com/v2/rerank'
+                  : llmProvider === 'openai_compat'
+                    ? 'https://openrouter.ai/api'
+                    : 'http://host.docker.internal:11434'
+              }
+            />
+          </Field>
+        )}
+        {needsKey && (
+          <Field label="API key" htmlFor="rr-api-key" hint="Write-only; never shown after saving.">
+            <Input
+              id="rr-api-key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={
+                keyIsSet ? 'key set — leave blank to keep' : isLlmGemini ? 'AI Studio key' : 'API key'
+              }
+            />
+          </Field>
+        )}
+        <Field
+          label="Candidates scored (top_n)"
+          htmlFor="rr-top-n"
+          hint="max candidates the reranker scores per collection"
+        >
+          <Input
+            id="rr-top-n"
+            type="number"
+            min="1"
+            value={topN}
+            onChange={(e) => setTopN(e.target.value)}
+          />
+        </Field>
+      </Section>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save reranker config'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
 /** Editable form for the tagging section; every other config section round-trips. */
 function TaggingForm({ config }: { config: AppConfig }) {
   const toast = useToast()
@@ -451,7 +647,7 @@ function TaggingForm({ config }: { config: AppConfig }) {
           </Field>
         )}
         {!isOpenAI && (
-          <OllamaModelField model={model} setModel={setModel} baseUrl={baseUrl} />
+          <OllamaModelField id="cfg-model" model={model} setModel={setModel} baseUrl={baseUrl} />
         )}
         <Field
           label="Base URL"
@@ -555,10 +751,12 @@ function TaggingForm({ config }: { config: AppConfig }) {
  * the first model when the current value isn't among those installed.
  */
 function OllamaModelField({
+  id,
   model,
   setModel,
   baseUrl,
 }: {
+  id: string
   model: string
   setModel: (m: string) => void
   baseUrl: string
@@ -570,7 +768,7 @@ function OllamaModelField({
   }, [models, model, setModel])
 
   return (
-    <Field label="Model" htmlFor="cfg-model" hint="Installed Ollama models">
+    <Field label="Model" htmlFor={id} hint="Installed Ollama models">
       {isError ? (
         <div className="flex items-center gap-2">
           <p className="text-[13px] text-danger">{error?.message ?? 'Could not reach Ollama'}</p>
@@ -580,7 +778,7 @@ function OllamaModelField({
         </div>
       ) : (
         <Select
-          id="cfg-model"
+          id={id}
           value={model}
           onChange={(e) => setModel(e.target.value)}
           disabled={isLoading || !models?.length}
