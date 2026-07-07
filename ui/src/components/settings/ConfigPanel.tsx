@@ -214,6 +214,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
   const [outputDim, setOutputDim] = useState(
     emb.output_dimensionality != null ? String(emb.output_dimensionality) : '',
   )
+  const [maxRpm, setMaxRpm] = useState(emb.max_rpm ? String(emb.max_rpm) : '')
 
   // Switching provider invalidates the current model: clear it (the user types the
   // new one; Ollama's picker auto-selects the first installed model).
@@ -243,6 +244,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
       api_key: needsKey ? nextKey : '',
       concurrency: emb.concurrency,
       output_dimensionality: isGemini ? Number(outputDim) || null : null,
+      max_rpm: Math.max(0, Number(maxRpm) || 0),
     }
     update.mutate(
       { ...config, embedding },
@@ -337,6 +339,22 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
               value={outputDim}
               onChange={(e) => setOutputDim(e.target.value)}
               placeholder="768"
+            />
+          </Field>
+        )}
+        {provider !== 'sentence_transformers' && (
+          <Field
+            label="Max requests / min"
+            htmlFor="emb-max-rpm"
+            hint="throttle embeds so bulk ingestion stays under the provider's quota (each text = one request); blank or 0 = unlimited"
+          >
+            <Input
+              id="emb-max-rpm"
+              type="number"
+              min="0"
+              value={maxRpm}
+              onChange={(e) => setMaxRpm(e.target.value)}
+              placeholder="0 (unlimited)"
             />
           </Field>
         )}

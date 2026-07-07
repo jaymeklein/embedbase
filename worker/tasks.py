@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import inspect
 import os
-from datetime import UTC, datetime
+import re
+import time
+from collections import deque
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -334,14 +337,26 @@ def _parse_with_progress(parser: Any, file_path: str, document_id: str, emit: An
     parser) receive page callbacks; every other parser is called exactly as before.
     Docling is opaque (a single ``convert()``), so it reports only the ``parsing``
     start the caller already emitted.
+
+    The page callback is *coalesced* before it reaches ``emit``: a large PDF fires
+    ``on_progress`` once per page, so a 1400-page doc would otherwise push ~1400
+    frames onto the queue socket during parsing alone. We forward at most one update
+    per whole percent (plus always the final page), so the progress bar still
+    advances smoothly with ~100 frames instead of one-per-page.
     """
-    if "on_progress" in inspect.signature(parser.parse).parameters:
-        return parser.parse(
-            file_path,
-            document_id,
-            on_progress=lambda current, total: emit("parsing", current, total),
-        )
-    return parser.parse(file_path, document_id)
+    if "on_progress" not in inspect.signature(parser.parse).parameters:
+        return parser.parse(file_path, document_id)
+
+    last = 0
+
+    def on_progress(current: int, total: int) -> None:
+        nonlocal last
+        step = max(1, total // 100)
+        if current >= total or current - last >= step:
+            last = current
+            emit("parsing", current, total)
+
+    return parser.parse(file_path, document_id, on_progress=on_progress)
 
 
 def _chunk_label(chunk: Chunk) -> str:
@@ -354,6 +369,43 @@ def _chunk_label(chunk: Chunk) -> str:
     if md.symbol_name:
         return md.symbol_name[:80]
     return " ".join(chunk.text.split())[:80]
+
+
+class _RpmLimiter:
+    """Sliding-window limiter keeping embedded texts-per-minute under a cap.
+
+    Single-process and monotonic-clock: the worker runs ``--concurrency=1`` so one
+    instance paces all its embedding. ``throttle(n, rpm)`` blocks until adding ``n``
+    texts keeps the trailing-60s total at or under ``rpm`` (``rpm <= 0`` disables it).
+    This lets a bulk re-embed run continuously just under the provider's quota instead
+    of bursting into a 429 and stalling until the next retry sweep.
+    """
+
+    def __init__(self) -> None:
+        self._events: deque[tuple[float, int]] = deque()  # (monotonic_ts, count)
+
+    def _used(self, now: float) -> int:
+        while self._events and now - self._events[0][0] >= 60.0:
+            self._events.popleft()
+        return sum(count for _, count in self._events)
+
+    def throttle(self, n: int, rpm: int) -> None:
+        if rpm <= 0 or n <= 0:
+            return
+        while True:
+            now = time.monotonic()
+            used = self._used(now)
+            # Let the batch through once the window has room, or when it is empty (a
+            # batch larger than the whole per-minute budget must not deadlock).
+            if used + n <= rpm or not self._events:
+                break
+            wait = 60.0 - (now - self._events[0][0])
+            time.sleep(max(0.05, min(wait, 5.0)))
+        self._events.append((time.monotonic(), n))
+
+
+# Module-level so the cap is honoured across successive ingest tasks in this worker.
+_rpm_limiter = _RpmLimiter()
 
 
 def _embed_and_store(
@@ -375,15 +427,13 @@ def _embed_and_store(
     stored vectors are stale and all chunks are re-embedded (the per-batch upsert
     overwrites them by id). Auto-tagging runs once, on a fresh (non-resumed) run.
     """
-    with session_factory() as _s:
-        doc_model = _s.execute(
-            select(documents.c.embedding_model).where(documents.c.id == document_id)
-        ).scalar()
-    model_changed = doc_model is not None and doc_model != config.embedding.model
-    existing_ids: set[str] = (
-        set()
-        if model_changed
-        else {cid for cid, _, _ in vector_store.iter_document_chunks(collection_id, document_id)}
+    # Resume set: chunks already embedded with the CURRENT model. Only the rest are
+    # (re-)embedded, so an interrupted run continues where it left off and a model
+    # change re-embeds just the chunks still on the old model — each retry makes real
+    # progress instead of restarting from chunk 0.
+    model = config.embedding.model
+    existing_ids: set[str] = vector_store.document_chunk_ids_at_model(
+        collection_id, document_id, model
     )
 
     _apply_effective_tags(session_factory, collection_id, document_id, chunks)
@@ -392,15 +442,16 @@ def _embed_and_store(
 
     pending = [c for c in chunks if c.id not in existing_ids]
     total = len(chunks)
-    done = total - len(pending)  # already persisted by a prior run
+    done = total - len(pending)  # already embedded with the current model by a prior run
     if done:
         logger.info("ingest: resuming", document_id=document_id, done=done, total=total)
     batch_size = config.embedding.batch_size
     emit("embedding", current=done, total=total)  # show the resume point at once
     for start in range(0, len(pending), batch_size):
         batch = pending[start : start + batch_size]
+        _rpm_limiter.throttle(len(batch), config.embedding.max_rpm)  # stay under provider quota
         vectors = embedder.embed_batch([c.text for c in batch])
-        vector_store.upsert(collection_id, batch, vectors)  # persist now → resumable
+        vector_store.upsert(collection_id, batch, vectors, model=model)  # persist now → resumable
         done += len(batch)
         # Reveal the chunks this batch just embedded, as they occur.
         emit(
@@ -465,6 +516,7 @@ def _run_ingestion(
         status: str = "processing",
         chunks: list[dict[str, Any]] | None = None,
         error: str | None = None,
+        retry_at: str | None = None,
     ) -> None:
         """Best-effort publish of a progress event; never breaks ingestion.
 
@@ -491,6 +543,8 @@ def _run_ingestion(
                 payload["chunks"] = chunks
             if error:
                 payload["error"] = error
+            if retry_at:
+                payload["retry_at"] = retry_at
             realtime.publish(
                 redis_client, f"ingestion:{collection_id}", payload, snapshot_key=document_id
             )
@@ -527,7 +581,28 @@ def _run_ingestion(
                     vector_store=vector_store, config=config, emit=emit,
                 )
         except Exception as exc:
-            emit("failed", status="failed", error=str(exc)[:300])
+            if _is_rate_limit(exc):
+                # Report where it paused (chunks already at the current model) so the
+                # queue shows real progress (e.g. 128/1436), not 0. retry_at is when this
+                # task is scheduled to resume (matches the countdown ingest_document below
+                # passes to self.retry), so the queue can render a live countdown.
+                done = len(
+                    vector_store.document_chunk_ids_at_model(
+                        collection_id, document_id, config.embedding.model
+                    )
+                )
+                retry_at = (
+                    datetime.now(UTC) + timedelta(seconds=_retry_delay_seconds(exc))
+                ).isoformat()
+                emit(
+                    "rate_limited",
+                    current=done,
+                    total=len(chunks),
+                    status="rate_limited",
+                    retry_at=retry_at,
+                )
+            else:
+                emit("failed", status="failed", error=str(exc)[:300])
             raise
 
         # --- Mark done -------------------------------------------------------
@@ -561,6 +636,47 @@ def _mark_failed(job_id: str, error: str) -> None:
             session.commit()
     except Exception:  # pragma: no cover - failure-path best effort
         logger.error("could not record job failure", job_id=job_id)
+
+
+def _is_rate_limit(exc: BaseException) -> bool:
+    """True if ``exc`` is an embedding-provider rate-limit / quota error (HTTP 429).
+
+    Providers surface it differently — Gemini wraps a 429 with a RESOURCE_EXHAUSTED
+    body in ``httpx.HTTPStatusError``; OpenAI-compatible backends also return 429 — so
+    match the status code when present and fall back to the well-known error phrases.
+    """
+    import httpx
+
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429
+    text = str(exc).lower()
+    return any(s in text for s in ("429", "resource_exhausted", "rate limit", "quota"))
+
+
+# Gemini/Google put the wait in a RetryInfo detail (``"retryDelay": "37.9s"``); other
+# providers use an HTTP Retry-After. Match the seconds value from either.
+_RETRY_DELAY_RE = re.compile(r'retry[_-]?(?:delay|after)"?\s*:?\s*"?(\d+)(?:\.\d+)?\s*s?', re.IGNORECASE)
+
+
+def _retry_delay_seconds(exc: BaseException, default: int = 60, cap: int = 3600) -> int:
+    """Seconds to wait before retrying, from the provider's suggested delay.
+
+    Falls back to ``default`` when the error carries no hint, and is capped so a
+    provider reporting a very long (e.g. daily-quota) delay still yields a sane timer.
+    """
+    match = _RETRY_DELAY_RE.search(str(exc))
+    seconds = int(match.group(1)) + 2 if match else default  # +2s past the window edge
+    return max(1, min(seconds, cap))
+
+
+def _set_job_rate_limited(job_id: str, error: str) -> None:
+    """Record that a job paused on a provider rate limit (retried by the beat sweep)."""
+    try:
+        with SessionLocal() as session:
+            _set_job_status(session, job_id, "rate_limited", error=error[:2000])
+            session.commit()
+    except Exception:  # pragma: no cover - status write is best-effort
+        logger.error("could not record rate-limit status", job_id=job_id)
 
 
 def _delete_stored_object(document_id: str, collection_id: str) -> None:
@@ -615,6 +731,17 @@ def ingest_document(
         _mark_failed(job_id, "Ingestion exceeded time limit")
         raise  # plain raise — never self.retry()
     except Exception as exc:
+        if _is_rate_limit(exc):
+            # Provider quota reached — not a failure. Its partial progress is already
+            # persisted (chunks embedded so far are upserted); reschedule this task to
+            # resume after the provider's suggested delay. countdown gives a precise,
+            # item-aligned retry time (surfaced to the queue as retry_at); max_retries
+            # None keeps retrying until every chunk is embedded. The 5-min beat sweep
+            # remains only as a backstop for a job orphaned by a worker crash.
+            delay = _retry_delay_seconds(exc)
+            logger.warning("ingest rate-limited; retrying", job_id=job_id, countdown=delay)
+            _set_job_rate_limited(job_id, str(exc))
+            raise self.retry(exc=exc, countdown=delay, max_retries=None) from exc
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
         _mark_failed(job_id, str(exc))
         raise self.retry(exc=exc) from exc
@@ -759,3 +886,55 @@ def purge_expired_documents(self) -> int:
     if rows:
         logger.info("purge: enqueued expired document deletes", count=len(rows))
     return len(rows)
+
+
+_RETRY_BATCH = int(os.environ.get("RATE_LIMIT_RETRY_BATCH", "50"))
+
+
+def requeue_rate_limited(limit: int = _RETRY_BATCH) -> int:
+    """Re-enqueue up to ``limit`` ingests paused at status ``rate_limited``.
+
+    An ingest that hits the embedding provider's per-minute (or daily) limit stops with
+    status ``rate_limited`` — not ``failed`` — leaving the document partly embedded. Each
+    such job is re-enqueued under its existing ``job_id`` (so ``_claim_job`` re-claims it);
+    the resume-aware pipeline embeds only the chunks not yet at the current model, so the
+    document continues where it paused instead of restarting from chunk 0.
+
+    Shared by the periodic beat sweep (:func:`retry_rate_limited_ingests`) and the
+    immediate on-config-change resume (:mod:`worker.config_reload`, fired when a new key
+    or higher RPM resets the quota). Idempotent: a job already re-claimed and processing
+    is skipped by ``_claim_job``, so overlapping triggers (beat + hook + countdown) are a
+    no-op. Returns the number of ingests re-enqueued.
+    """
+    with SessionLocal() as db:
+        rows = db.execute(
+            select(
+                job_records.c.job_id,
+                job_records.c.document_id,
+                job_records.c.collection_id,
+                job_records.c.file_type,
+            )
+            .where(job_records.c.status == "rate_limited")
+            .limit(limit)
+        ).fetchall()
+    for row in rows:
+        # Storage key layout mirrors api.services.documents._document_key.
+        key = f"{row.collection_id}/{row.document_id}{row.file_type}"
+        ingest_document.delay(row.job_id, key, row.collection_id, row.document_id, row.file_type)
+    if rows:
+        logger.info("re-enqueued rate-limited ingests", count=len(rows))
+    return len(rows)
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=60,
+)
+def retry_rate_limited_ingests(self) -> int:
+    """Beat sweep (every few minutes): re-enqueue ingests paused on a provider rate
+    limit / quota — a backstop to each job's own retry countdown and to the immediate
+    resume triggered the moment the embedding config changes. Returns the count swept.
+    """
+    return requeue_rate_limited()

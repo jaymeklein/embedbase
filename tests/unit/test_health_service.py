@@ -72,6 +72,7 @@ def test_lan_ip_falls_back_to_loopback_when_offline(monkeypatch):
     from api.services import health
 
     monkeypatch.setattr(health.settings, "lan_host", "")
+    monkeypatch.setattr(health, "_in_container", lambda: False)  # exercise the socket path
     health.lan_ip.cache_clear()
 
     class _DeadSocket:
@@ -85,6 +86,18 @@ def test_lan_ip_falls_back_to_loopback_when_offline(monkeypatch):
             pass
 
     monkeypatch.setattr(socket_mod, "socket", lambda *a, **k: _DeadSocket())
+    health.lan_ip.cache_clear()
+    assert health.lan_ip() == "127.0.0.1"
+    health.lan_ip.cache_clear()
+
+
+def test_lan_ip_loopback_in_container_without_lan_host(monkeypatch):
+    from api.services import health
+
+    # A container can't see the host LAN IP; without LAN_HOST it must not advertise
+    # its own bridge address — it falls back to loopback (the socket probe is skipped).
+    monkeypatch.setattr(health.settings, "lan_host", "")
+    monkeypatch.setattr(health, "_in_container", lambda: True)
     health.lan_ip.cache_clear()
     assert health.lan_ip() == "127.0.0.1"
     health.lan_ip.cache_clear()
