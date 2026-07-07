@@ -53,7 +53,7 @@ def test_all_routers_are_wired():
         "/documents",
         "/search",
         "/config",
-        "/mcp",  # MCP SSE app mounted here (SSE served at /mcp/sse)
+        "/mcp",  # MCP streamable-HTTP app mounted here (reached at /api/mcp/ via root_path)
     }
     missing = expected - paths
     assert not missing, f"router paths missing: {missing}"

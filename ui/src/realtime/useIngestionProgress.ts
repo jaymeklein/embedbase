@@ -12,7 +12,13 @@ import { useCallback, useState } from 'react'
 import { qk } from '../api/hooks'
 import { useChannel } from './useChannel'
 
-export type IngestPhase = 'parsing' | 'embedding' | 'storing' | 'done' | 'failed'
+export type IngestPhase =
+  | 'parsing'
+  | 'embedding'
+  | 'storing'
+  | 'rate_limited'
+  | 'done'
+  | 'failed'
 
 export interface IngestionProgress {
   document_id: string
@@ -21,7 +27,7 @@ export interface IngestionProgress {
   current: number | null
   total: number | null
   pct: number | null
-  status: 'processing' | 'done' | 'failed'
+  status: 'processing' | 'rate_limited' | 'done' | 'failed'
 }
 
 export function useIngestionProgress(
@@ -33,7 +39,20 @@ export function useIngestionProgress(
 
   const onMessage = useCallback(
     (msg: IngestionProgress) => {
-      setProgress((prev) => ({ ...prev, [msg.document_id]: msg }))
+      // A paused event (e.g. rate_limited) may omit progress counts; keep the last
+      // known ones so the row still shows where it stopped.
+      setProgress((prev) => {
+        const existing = prev[msg.document_id]
+        return {
+          ...prev,
+          [msg.document_id]: {
+            ...msg,
+            current: msg.current ?? existing?.current ?? null,
+            total: msg.total ?? existing?.total ?? null,
+            pct: msg.pct ?? existing?.pct ?? null,
+          },
+        }
+      })
       if (msg.status === 'done' || msg.status === 'failed') {
         void queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) })
       }

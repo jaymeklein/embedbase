@@ -34,19 +34,43 @@ def _redis_client() -> Any:
     return redis.Redis.from_url(url, decode_responses=True)
 
 
-def _reload_adapters() -> None:
-    """Clear the cached config and rebuild this worker's adapters from the file."""
+def _reload_adapters() -> bool:
+    """Clear the cached config and rebuild this worker's adapters from the file.
+
+    Returns True if the *embedding* config changed (e.g. a rotated API key or a
+    raised ``max_rpm``). Such a change resets the provider quota, so the caller can
+    immediately resume any ingest paused on a rate limit instead of leaving it to
+    wait for its retry countdown or the periodic beat sweep.
+    """
     from worker import tasks
     from worker.config import get_config
 
+    before = get_config().embedding  # snapshot before the cache is cleared
     get_config.cache_clear()
     tasks.reload_adapters()
+    return get_config().embedding != before
+
+
+def _resume_rate_limited() -> None:
+    """Re-enqueue rate-limited ingests now that a new key / limit reset the quota.
+
+    Runs after the reload ack so it never delays the API's apply, and is best-effort:
+    the beat sweep still backstops it. ``_claim_job`` keeps it idempotent against a
+    job whose own retry countdown fires around the same time.
+    """
+    try:
+        from worker import tasks
+
+        count = tasks.requeue_rate_limited()
+        logger.info("embedding config changed; resumed rate-limited ingests", count=count)
+    except Exception as exc:  # pragma: no cover - best-effort
+        logger.error("could not resume rate-limited ingests", error=str(exc))
 
 
 def _safe_reload() -> None:
     """Best-effort reload used on rollback republish (no ack, never raises)."""
     try:
-        _reload_adapters()
+        _reload_adapters()  # revert only; a rollback must not trigger a resume
     except Exception as exc:  # pragma: no cover - best-effort revert
         logger.error("config rollback reload failed", error=str(exc))
 
@@ -59,11 +83,14 @@ def _handle_message(redis_client: Any, data: str) -> None:
         _safe_reload()  # revert to the restored file; the failed version is not re-acked
         return
     try:
-        _reload_adapters()
+        embedding_changed = _reload_adapters()
         record_worker_ack(redis_client, version_id, "ok")
     except Exception as exc:
         logger.error("config reload failed", version_id=version_id, error=str(exc))
         record_worker_ack(redis_client, version_id, f"error: {exc}"[:200])
+        return
+    if embedding_changed:
+        _resume_rate_limited()  # new key / higher RPM → continue paused ingests at once
 
 
 def _listen(redis_client: Any) -> None:

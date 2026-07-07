@@ -17,8 +17,11 @@ export default defineConfig({
     // so native `npm run dev` uses efficient native fs events.
     watch: process.env.VITE_USE_POLLING === 'true' ? { usePolling: true, interval: 300 } : undefined,
     proxy: {
+      // MCP streamable-HTTP endpoint. The API mounts it under its root_path, so it
+      // lives at /api/mcp (NOT root) and must be forwarded verbatim — unlike the
+      // /api rule below, which strips the prefix. Listed first so it wins the match.
+      '/api/mcp': { target: apiTarget },
       '/api': { target: apiTarget, rewrite: (path) => path.replace(/^\/api/, '') },
-      '/mcp': { target: apiTarget },
       // Realtime WebSocket bridge (ingestion progress). ws:true performs the HTTP
       // 101 upgrade; no rewrite — the API serves the socket at /ws.
       '/ws': { target: apiTarget, ws: true },
