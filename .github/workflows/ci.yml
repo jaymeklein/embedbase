@@ -17,7 +17,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r api/requirements.txt ruff mypy types-PyYAML types-redis
       - name: Ruff lint
-        run: ruff check api/ worker/
+        run: ruff check api/ worker/ tests/
       - name: Mypy
         run: mypy api/ worker/ --ignore-missing-imports --explicit-package-bases
 

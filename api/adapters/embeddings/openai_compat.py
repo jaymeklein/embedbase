@@ -1,5 +1,7 @@
 import httpx
 
+from api.adapters.embeddings.errors import raise_for_status
+
 
 class OpenAICompatAdapter:
     def __init__(self, base_url: str, model: str, api_key: str = "") -> None:
@@ -18,7 +20,7 @@ class OpenAICompatAdapter:
             headers={"Authorization": f"Bearer {self._api_key or 'no-key'}"},
             timeout=60.0,
         )
-        response.raise_for_status()
+        raise_for_status(response)
         return [item["embedding"] for item in response.json()["data"]]
 
     @property
