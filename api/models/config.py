@@ -36,6 +36,13 @@ class EmbeddingConfig(BaseModel):
     concurrency: int = 8
     # Gemini only: truncate the (default 3072-dim) vector; the model re-normalises.
     output_dimensionality: int | None = None
+    # Client-side rate limit for an external embedding provider: the max number of
+    # texts embedded per minute. During ingestion the worker throttles to stay under
+    # this so bulk work runs continuously just below the provider's quota instead of
+    # bursting into 429s and stalling. 0 = unlimited (default); set e.g. 90 for a
+    # provider capped at 100/min. Each text counts as one request — the unit providers
+    # like the Gemini free tier rate-limit on.
+    max_rpm: int = 0
 
 
 class VectorStoreConfig(BaseModel):
@@ -81,12 +88,13 @@ class RerankerConfig(BaseModel):
     # Cross-encoder second-stage reranker. Reorders the over-fetched candidate
     # pool by true query-document relevance before the top_k cut — the biggest
     # precision win over RRF-only fusion. LLM-free: a local sentence-transformers
-    # CrossEncoder, like the embedding model. Off by default so existing
-    # deployments don't silently take on a model download + extra latency; flip
-    # ``enabled`` to turn it on.
-    enabled: bool = False
+    # CrossEncoder, like the embedding model. On by default; the default model
+    # (~80MB) is baked into the api image at build time and loaded from disk, so
+    # it needs no HuggingFace access at runtime (see api/adapters/reranker). A
+    # non-vendored model still loads from the Hub. Set ``enabled: false`` to disable.
+    enabled: bool = True
     provider: str = "cross_encoder"  # "cross_encoder"
-    model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
     top_n: int = 50  # max candidates scored per collection (caps cross-encoder cost)
 
 
