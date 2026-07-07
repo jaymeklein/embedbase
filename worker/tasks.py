@@ -741,7 +741,7 @@ def ingest_document(
             delay = _retry_delay_seconds(exc)
             logger.warning("ingest rate-limited; retrying", job_id=job_id, countdown=delay)
             _set_job_rate_limited(job_id, str(exc))
-            raise self.retry(exc=exc, countdown=delay, max_retries=None)
+            raise self.retry(exc=exc, countdown=delay, max_retries=None) from exc
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
         _mark_failed(job_id, str(exc))
         raise self.retry(exc=exc) from exc
