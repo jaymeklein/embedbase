@@ -72,52 +72,8 @@ def test_llm_suggest_name_only_reply_falls_back_to_rank(monkeypatch):
     assert out[0].confidence > out[1].confidence
 
 
-def test_llm_complete_ollama_endpoint(monkeypatch):
-    captured = {}
-
-    def fake_post(url, payload, headers):
-        captured["url"] = url
-        return {"message": {"content": "ok"}}
-
-    monkeypatch.setattr(LLMTagSuggester, "_post", staticmethod(fake_post))
-    sug = LLMTagSuggester("ollama", "llama3", "http://h:11434", None)
-    assert sug._complete("p") == "ok"
-    assert captured["url"].endswith("/api/chat")
-
-
-def test_llm_complete_openai_endpoint(monkeypatch):
-    captured = {}
-
-    def fake_post(url, payload, headers):
-        captured["url"] = url
-        captured["headers"] = headers
-        return {"choices": [{"message": {"content": "ok"}}]}
-
-    monkeypatch.setattr(LLMTagSuggester, "_post", staticmethod(fake_post))
-    sug = LLMTagSuggester("openai_compat", "gpt", "http://h:1234", "secret")
-    assert sug._complete("p") == "ok"
-    assert captured["url"].endswith("/v1/chat/completions")
-    assert captured["headers"]["Authorization"] == "Bearer secret"
-
-
-def test_post_invokes_httpx(monkeypatch):
-    class _Resp:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"ok": 1}
-
-    captured = {}
-
-    def _post(*_a, **kwargs):
-        captured.update(kwargs)
-        return _Resp()
-
-    monkeypatch.setattr("httpx.post", _post)
-    assert LLMTagSuggester._post("http://x", {}, {}) == {"ok": 1}
-    # Local CPU inference is slow, so the timeout must be generous (not the old 60s).
-    assert captured["timeout"] >= 120.0
+# The chat transport (_complete → chat_complete) and post_json moved to the shared
+# api.adapters.llm_chat module; its routing/timeout is covered by tests/unit/test_llm_chat.py.
 
 
 # ── list_ollama_models ──────────────────────────────────────────────────────────

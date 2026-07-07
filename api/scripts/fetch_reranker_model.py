@@ -14,6 +14,11 @@ import sys
 
 import requests
 
+# NOTE: this script runs standalone at Docker build time, BEFORE the api/ package is copied
+# into the image (see api/Dockerfile), so it cannot import api.constants. REPO, the env var,
+# and the "/opt/models" default therefore MIRROR api.constants.{RERANKER_MODEL, MODELS_DIR_ENV,
+# MODELS_DIR_DEFAULT} — which the runtime reader api/adapters/reranker/cross_encoder.py uses to
+# find this baked copy. Keep the two sides in sync: a divergence silently breaks that lookup.
 REPO = "cross-encoder/ms-marco-MiniLM-L6-v2"
 DEST = os.path.join(os.environ.get("EMBEDBASE_MODELS_DIR", "/opt/models"), REPO.split("/")[-1])
 BASE = f"https://huggingface.co/{REPO}/resolve/main/"

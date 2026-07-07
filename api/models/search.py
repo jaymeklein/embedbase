@@ -70,3 +70,7 @@ class SearchResponse(BaseModel):
     total_ms: int = 0
     search_mode: SearchMode = SearchMode.HYBRID
     under_delivered: bool = False
+    # Saturation signal (plan A3): the ranked candidate pool held more relevant chunks than
+    # were returned in top_k, so the caller is seeing only part of what matched. The MCP tool
+    # turns this into a natural-language ``notice`` telling the model it can raise ``top_k``.
+    more_available: bool = False
