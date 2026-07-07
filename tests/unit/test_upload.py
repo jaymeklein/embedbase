@@ -1,22 +1,10 @@
 """Unit tests for the streaming upload size guard."""
 
-import io
-
 import pytest
 from fastapi import HTTPException
 
 from api.services.upload import stream_upload_with_size_guard
-
-
-class FakeUpload:
-    """Minimal stand-in for starlette's UploadFile (``.size`` + async ``.read``)."""
-
-    def __init__(self, data: bytes, size: int | None = None):
-        self._buf = io.BytesIO(data)
-        self.size = size
-
-    async def read(self, n: int = -1) -> bytes:
-        return self._buf.read(n)
+from tests.unit.fakes import FakeUpload
 
 
 async def test_writes_file_and_returns_byte_count(tmp_path):
