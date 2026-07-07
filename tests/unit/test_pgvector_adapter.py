@@ -116,7 +116,8 @@ def test_upsert_issues_insert_on_conflict():
     assert "ON CONFLICT (id) DO UPDATE" in sql
     assert rows[0][0] == chunks[0].id
     assert rows[0][1] == "col_abcd1234"
-    assert rows[0][4] == [0.1, 0.2, 0.3]
+    assert rows[0][5] == [0.1, 0.2, 0.3]  # embedding — metadata now precedes it at index 4
+    assert rows[0][6] is None  # embedding_model defaults to None when unspecified
 
 
 def test_upsert_empty_is_noop():

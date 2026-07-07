@@ -33,9 +33,12 @@ before the `top_k` cut.
 for embeddings, mirrors how the embedding model loads. New `Reranker` adapter
 (Protocol + registry), wired as an optional singleton like the embedder.
 
-**Off by default** (`reranker.enabled: false`) so existing deployments don't
-silently take on a model download + latency. Flip `enabled: true` in
-`config.yaml` (or the config page) to turn it on.
+**On by default** (`reranker.enabled: true`). The cross-encoder (~80 MB) loads at
+startup via the `api/main.py` warm-up (failure ⇒ RRF-only, never a 500), so it's
+the first *boot* that fetches it — bake it into the image for fast/offline boot.
+Set `enabled: false` in `config.yaml` (or the config page) to turn it off.
+See [`plans/context-aware-retrieval.md`](../plans/context-aware-retrieval.md) for
+the completeness track that builds on this.
 
 - [x] `Reranker` Protocol in `api/adapters/base.py`
 - [x] `RerankerConfig` in `api/models/config.py` + `AppConfig.reranker`

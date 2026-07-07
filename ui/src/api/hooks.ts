@@ -54,9 +54,14 @@ export function useHealth() {
 /** Sentinel the API returns for a set secret; echo it back unchanged to keep it. */
 export const SECRET_MASK = '__SECRET_SET__'
 
-/** Live runtime config (secrets masked). */
-export function useConfig() {
-  return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false })
+/**
+ * Live runtime config (secrets masked). Fetched lazily: pass `enabled: false` on
+ * pages that only opportunistically use config so the (whole-config) request isn't
+ * fired app-wide — it's only issued where config is actually shown (the Settings
+ * config tab). A disabled caller still reads the cache if another view populated it.
+ */
+export function useConfig(enabled = true) {
+  return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false, enabled })
 }
 
 /** GPU suitability for the docling PDF backend (drives the backend picker's default + warning). */
@@ -104,8 +109,8 @@ export function useUpdateConfig() {
  * ponytail: only Ollama is probed for reachability (the one probe that exists);
  * other providers are treated as on when configured — add a probe if one exists.
  */
-export function useAutoTagAvailability(): { available: boolean | undefined } {
-  const config = useConfig()
+export function useAutoTagAvailability(enabled = true): { available: boolean | undefined } {
+  const config = useConfig(enabled)
   const tagging = config.data?.tagging
   const autoTag = tagging?.auto_tag_on_ingest === true
   const provider = tagging?.suggester.provider

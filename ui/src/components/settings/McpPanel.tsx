@@ -12,13 +12,14 @@ const TOOLS: { name: string; sig: string; desc: string }[] = [
   { name: 'delete_document', sig: '(document_id)', desc: 'Delete a document and enqueue vector + keyword cleanup.' },
 ]
 
-/** Generic MCP-client config snippet pointing at this deployment's SSE endpoint. */
+/** Generic MCP-client config snippet pointing at this deployment's streamable-HTTP endpoint. */
 function clientConfig(origin: string): string {
   return JSON.stringify(
     {
       mcpServers: {
         embedbase: {
-          url: `${origin}/mcp/sse`,
+          type: 'http',
+          url: `${origin}/api/mcp/`,
           headers: { Authorization: 'Bearer <YOUR_MASTER_API_KEY>' },
         },
       },
@@ -42,8 +43,8 @@ connects to its MCP server to work with the user's document collections.
 
 ## Connection
 
-- Transport: SSE (Server-Sent Events)
-- URL: ${origin}/mcp/sse
+- Transport: HTTP (streamable)
+- URL: ${origin}/api/mcp/
 - Auth: send the master API key on every request, either
   - Authorization: Bearer <MASTER_API_KEY>, or
   - X-API-Key: <MASTER_API_KEY>
@@ -165,11 +166,11 @@ export function McpPanel() {
               spellCheck={false}
             />
           </Field>
-          <ValueRow label="Endpoint (SSE)" value={`${address}/mcp/sse`} />
+          <ValueRow label="Endpoint" value={`${address}/api/mcp/`} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
               <span className="text-xs text-ink-faint">Transport</span>
-              <span className="font-mono text-[13px] text-ink">SSE</span>
+              <span className="font-mono text-[13px] text-ink">HTTP (streamable)</span>
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-xs text-ink-faint">Auth header</span>
