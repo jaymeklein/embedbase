@@ -81,6 +81,34 @@ async def test_temporary_is_noop_when_retention_disabled(db_session, monkeypatch
     assert await _ingest(db_session, monkeypatch, hours=0, temporary=True) is None
 
 
+async def test_temporary_local_path_stamps_expiry(db_session, monkeypatch, tmp_path):
+    """The MCP ingest path (ingest_local_path) honours `temporary` too → stamps expires_at."""
+    await _seed_ws_col(db_session)
+
+    class _PathStorage:
+        def put_path(self, src, key):  # ingest_local_path copies the on-disk file in
+            return None
+
+    monkeypatch.setattr(doc_svc, "get_storage", lambda cfg, name=None: _PathStorage())
+    monkeypatch.setattr(
+        doc_svc, "get_app_config",
+        lambda: AppConfig(storage=StorageConfig(temp_retention_hours=24)),
+    )
+    monkeypatch.setattr(doc_svc.task_producer, "enqueue_ingest", lambda *a: None)
+
+    src = tmp_path / "note.txt"
+    src.write_text("hello")
+    result = await doc_svc.ingest_local_path(
+        db_session, "col1", str(src), Principal(is_master=True), temporary=True
+    )
+    expires_at = (
+        await db_session.execute(
+            select(doc_t.c.expires_at).where(doc_t.c.id == result["document_id"])
+        )
+    ).scalar()
+    assert expires_at is not None
+
+
 def test_documents_expires_at_column_is_nullable():
     # Migration/model guard: the column exists and permits NULL (= permanent).
     assert doc_t.c.expires_at.nullable is True

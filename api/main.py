@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import structlog
-import yaml
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
@@ -35,6 +34,7 @@ from api.routers import (
     ws,
 )
 from api.services.config_env import (
+    load_config_data,
     overlay_parser_env,
     overlay_storage_env,
     overlay_vector_store_env,
@@ -97,10 +97,9 @@ def _load_app_config() -> AppConfig:
     if not config_path.exists():
         config_path = Path("config.yaml")
 
-    data: dict = {}
-    if config_path.exists():
-        with open(config_path) as f:
-            data = yaml.safe_load(f) or {}
+    # Shared loader recovers from config.yaml.bak if the file was corrupted by a crash
+    # mid-write; the worker uses the same path so both processes recover identically.
+    data: dict = load_config_data(config_path) if config_path.exists() else {}
 
     # Env vars (e.g. from docker-compose.yml or .env) override the file so the
     # Postgres connection + secrets and the docling models path can be selected

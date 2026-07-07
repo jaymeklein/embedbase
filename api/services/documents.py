@@ -37,8 +37,11 @@ def _storage_config() -> StorageConfig:
     return config.storage if config else StorageConfig()
 
 
-def _document_key(col_id: str, doc_id: str, ext: str) -> str:
-    """The storage key for a document's bytes — the same layout used on disk."""
+def document_key(col_id: str, doc_id: str, ext: str) -> str:
+    """The storage key for a document's bytes — the single source of truth for the key
+    layout, shared by the API upload/delete paths and the worker's resume/purge sweeps.
+    Import it rather than re-encoding ``{col}/{doc}{ext}`` so the scheme lives in one place.
+    """
     return f"{col_id}/{doc_id}{ext}"
 
 
@@ -146,7 +149,7 @@ async def ingest(
     config = get_app_config()
     max_bytes = config.max_file_size_bytes if config else None
     storage_cfg = _storage_config()
-    key = _document_key(col_id, doc_id, ext)
+    key = document_key(col_id, doc_id, ext)
     # put_upload streams through the same size guard before any bytes reach the
     # backend, so an oversize upload never lands remotely.
     size = await get_storage(storage_cfg).put_upload(file, key, max_bytes=max_bytes)
@@ -185,7 +188,7 @@ async def ingest_local_path(
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
     storage_cfg = _storage_config()
-    key = _document_key(col_id, doc_id, ext)
+    key = document_key(col_id, doc_id, ext)
     # Copy the on-disk file into the active backend so the worker reads it the
     # same way as an HTTP upload (local: copy under upload_dir; s3: upload).
     get_storage(storage_cfg).put_path(path, key)
@@ -348,7 +351,7 @@ async def resolve_document_download(
 
     # NULL storage_backend = ingested before the column existed → bytes on local disk.
     storage = get_storage(_storage_config(), row.storage_backend or "local")
-    key = _document_key(row.collection_id, doc_id, row.file_type)
+    key = document_key(row.collection_id, doc_id, row.file_type)
 
     url = storage.presigned_get(key, row.filename)
     if url is not None:
