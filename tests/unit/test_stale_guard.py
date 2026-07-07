@@ -27,9 +27,24 @@ class FakeEmbedder:
 class FakeStore:
     def __init__(self) -> None:
         self.upserts: list = []
+        self._models: dict = {}  # chunk_id -> embedding_model it was stored at
 
-    def upsert(self, collection_id: str, chunks: list, vectors: list) -> None:
+    def upsert(
+        self, collection_id: str, chunks: list, vectors: list, model: str | None = None
+    ) -> None:
         self.upserts.append((collection_id, chunks, vectors))
+        for c in chunks:
+            self._models[c.id] = model
+
+    def document_chunk_ids_at_model(
+        self, collection_id: str, document_id: str, model: str | None
+    ) -> set:
+        ids: set = set()
+        for _cid, chunks, _vec in self.upserts:
+            for c in chunks:
+                if c.metadata.document_id == document_id and self._models.get(c.id) == model:
+                    ids.add(c.id)
+        return ids
 
     def iter_document_chunks(self, collection_id: str, document_id: str) -> list:
         out: list = []
