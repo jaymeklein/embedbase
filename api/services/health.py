@@ -5,6 +5,7 @@ process-uptime clock and performs a real vector-store liveness probe.
 """
 
 import asyncio
+import os
 import socket
 import time
 from functools import lru_cache
@@ -19,21 +20,36 @@ _VERSION = "1.0.0"
 _START_TIME = time.time()
 
 
+def _in_container() -> bool:
+    """True when running inside a Docker/OCI container (marker file present)."""
+    return os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
+
+
 @lru_cache(maxsize=1)
 def lan_ip() -> str:
     """Return the host's LAN address, so the console can offer a reachable
     address instead of telling the user to find one.
 
-    Prefers ``LAN_HOST`` (injected by the start script, which detects it on the
-    host — a bridge-networked container only ever sees its own bridge IP, so it
-    can't discover the host's LAN IP itself). When unset (bare-metal / host
-    networking), falls back to a socket probe: a UDP socket "connected" to a
-    public address sends no packets; the OS just resolves which local interface
-    would route there, and we read its address. Loopback when offline. Cached:
-    the address is stable for the process lifetime.
+    Resolution order:
+
+    1. ``LAN_HOST`` — the host's LAN IP, passed in via ``.env``. A bridge-networked
+       container only ever sees its own bridge IP, so it can't discover the host's
+       LAN IP itself; set this to advertise a specific address to other devices.
+    2. Inside a container with no ``LAN_HOST`` — loopback. The socket probe below
+       would only resolve the container's *bridge* interface (e.g. ``172.19.0.x``),
+       which no LAN client can reach; advertising it just hands out a dead address.
+       Loopback makes the console fall back to ``localhost`` and show its
+       "set LAN_HOST" hint instead of a bogus IP.
+    3. Bare-metal / host networking — a socket probe: a UDP socket "connected" to a
+       public address sends no packets; the OS resolves which local interface would
+       route there and we read its address. Loopback when offline.
+
+    Cached: the address is stable for the process lifetime.
     """
     if settings.lan_host:
         return settings.lan_host
+    if _in_container():
+        return "127.0.0.1"
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         s.connect(("8.8.8.8", 80))

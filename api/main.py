@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import structlog
@@ -187,8 +187,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("redis client unavailable", error=str(exc))
 
-    logger.info("EmbedBase API ready")
-    yield
+    # 5. Run the MCP streamable-HTTP session manager for the app's lifetime (it is
+    #    stored on app.state by mcp.mount_mcp during create_app). nullcontext keeps
+    #    startup working when MCP is disabled or not mounted.
+    mcp_server = getattr(app.state, "mcp_server", None)
+    mcp_ctx = mcp_server.session_manager.run() if mcp_server is not None else nullcontext()
+
+    async with mcp_ctx:
+        logger.info("EmbedBase API ready")
+        yield
 
     warm_up.cancel()
     logger.info("EmbedBase API shutting down")

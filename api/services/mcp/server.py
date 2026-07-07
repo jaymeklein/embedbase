@@ -1,14 +1,16 @@
-"""Build the EmbedBase ``FastMCP`` server and its SSE ASGI app.
+"""Build the EmbedBase ``FastMCP`` server and its streamable-HTTP ASGI app.
 
 The tool wrappers here resolve runtime dependencies (DB session + adapter
 singletons) and delegate to :mod:`api.services.mcp.tools`, which holds the
-testable logic. The SSE app is mounted at ``/mcp`` (so SSE lives at ``/mcp/sse``
-and the message channel at ``/mcp/messages/``) and wrapped with the auth +
-rate-limit middleware.
+testable logic. The streamable-HTTP app is mounted at ``/mcp`` and — because the
+API carries ``root_path="/api"`` — is reached externally at ``/api/mcp/``. It is
+wrapped with the auth + rate-limit middleware, and its session manager is run for
+the app's lifetime by the lifespan (see :mod:`api.main`).
 
-API surface verified against ``mcp==1.27.1`` via runtime introspection of
-``FastMCP.sse_app`` / ``FastMCP.tool`` (Context7 lookup not required — the
-installed package is authoritative for the pinned version).
+The transport is stateless streamable HTTP (``stateless_http`` + ``json_response``):
+each tool call is a self-contained request/response with no long-lived stream to
+drop across an ``uvicorn --reload`` — the failure mode of the previous SSE
+transport. API surface verified against ``mcp==1.28.1`` via runtime introspection.
 """
 
 from __future__ import annotations
@@ -95,36 +97,50 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
 def build_mcp_server(*, max_results: int = 20) -> FastMCP:
     """Construct the ``FastMCP`` server with all EmbedBase tools registered.
 
+    Uses the **streamable-HTTP** transport in ``stateless_http`` + ``json_response``
+    mode: each tool call is a self-contained HTTP request/response, with no
+    long-lived SSE stream and no server-side session to expire. That survives
+    ``uvicorn --reload`` and Docker Desktop's port-forwarding, unlike the deprecated
+    SSE transport (whose single persistent stream silently died on any reload and
+    could not be re-established without a full client reconnect).
+
     Args:
         max_results: Upper bound applied to ``search_documents`` ``top_k``.
 
     Returns:
         A ready-to-serve :class:`FastMCP` instance.
     """
-    server = FastMCP("embedbase")
+    server = FastMCP("embedbase", stateless_http=True, json_response=True)
+    # Serve at the mount root so the external endpoint is a clean ``/api/mcp``
+    # (this app is mounted at ``/mcp`` and the app carries root_path ``/api``).
+    server.settings.streamable_http_path = "/"
     _register_tools(server, max_results=max_results)
     return server
 
 
-def build_mcp_asgi_app(config: MCPConfig) -> ASGIApp:
-    """Build the SSE ASGI app for mounting at ``/mcp``, guarded by auth + limits.
+def build_mcp_asgi_app(config: MCPConfig) -> tuple[ASGIApp, FastMCP]:
+    """Build the streamable-HTTP ASGI app for ``/mcp``, guarded by auth + limits.
 
     Args:
         config: The resolved ``mcp`` config section (rate limit + result cap).
 
     Returns:
-        An ASGI app: SSE at ``/sse`` and messages at ``/messages/`` (relative to
-        the ``/mcp`` mount point), wrapped in the auth + rate-limit middleware.
+        ``(asgi_app, server)`` — the auth/rate-limit-wrapped streamable-HTTP app,
+        and the :class:`FastMCP` server whose session manager the caller must run
+        for the app's lifetime (see :func:`mount_app` + the app lifespan).
     """
     server = build_mcp_server(max_results=config.max_results)
-    sse_app = server.sse_app()
-    return build_mcp_middleware(sse_app, rate_limit_rpm=config.rate_limit_rpm)
+    http_app = server.streamable_http_app()
+    guarded = build_mcp_middleware(http_app, rate_limit_rpm=config.rate_limit_rpm)
+    return guarded, server
 
 
 def mount_app(app: FastAPI, config: MCPConfig) -> None:
-    """Mount the MCP SSE app at ``/mcp`` (SSE at ``/mcp/sse``) when enabled.
+    """Mount the MCP streamable-HTTP app at ``/mcp`` (→ ``/api/mcp``) when enabled.
 
-    Owns the enablement decision so the router stays a pure delegation.
+    Owns the enablement decision so the router stays a pure delegation. Stashes the
+    server on ``app.state.mcp_server`` so the app lifespan can run its streamable
+    session manager — required before the endpoint can serve requests.
 
     Args:
         app: The FastAPI application to mount onto.
@@ -132,4 +148,6 @@ def mount_app(app: FastAPI, config: MCPConfig) -> None:
     """
     if not config.enabled:
         return
-    app.mount("/mcp", build_mcp_asgi_app(config))
+    asgi_app, server = build_mcp_asgi_app(config)
+    app.mount("/mcp", asgi_app)
+    app.state.mcp_server = server

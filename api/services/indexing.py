@@ -27,7 +27,10 @@ from api.models.indexing import (
 )
 from api.services import tasks as task_producer
 
-_IN_FLIGHT = {"pending", "processing"}
+# Statuses that keep a document "in flight" (still working toward all-chunks-done, so
+# it stays in the queue rather than counting as finished or failed). ``rate_limited``
+# is a document paused on a provider quota that the beat sweep keeps retrying.
+_IN_FLIGHT = {"pending", "processing", "rate_limited"}
 
 
 async def _active_documents(db: AsyncSession) -> list[Any]:

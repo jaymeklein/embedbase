@@ -50,6 +50,15 @@ RUN if [ "$INSTALL_ML" = "true" ] && [ "$EMBEDBASE_DOCLING_MODELS" = "true" ]; t
 # Prevent any HuggingFace Hub network calls at runtime; rely solely on the cache above.
 ENV HF_HUB_OFFLINE=1
 
+# The worker imports the shared `api` package during ingestion (status updates via
+# api.services.documents, object storage, MCP), which pulls in api's web/service
+# dependencies. Install them so a freshly built worker can finish an ingest —
+# previously only worker/*.txt were installed here, so the ingest status-update step
+# failed on missing fastapi/bcrypt/boto3/etc. Placed after the ML layer so that
+# expensive cache is preserved.
+COPY api/requirements.txt ./api-requirements.txt
+RUN pip install --no-cache-dir -r ./api-requirements.txt
+
 COPY api ./api
 COPY worker ./worker
 

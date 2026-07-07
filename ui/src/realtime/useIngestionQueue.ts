@@ -36,9 +36,10 @@ interface QueueEvent {
   current: number | null
   total: number | null
   pct: number | null
-  status: 'processing' | 'done' | 'failed'
+  status: 'processing' | 'rate_limited' | 'done' | 'failed'
   chunks?: QueueChunk[]
   error?: string
+  retry_at?: string | null // ISO time the paused item is scheduled to resume
 }
 
 export interface QueueItem extends Omit<QueueEvent, 'chunks'> {
@@ -69,6 +70,11 @@ export function useIngestionQueue(): { items: QueueItem[]; status: string } {
         ...prev,
         [msg.document_id]: {
           ...rest,
+          // A paused event (e.g. rate_limited) may omit progress; keep the last known
+          // counts so the card still shows where it stopped (e.g. 128/1436).
+          current: msg.current ?? existing?.current ?? null,
+          total: msg.total ?? existing?.total ?? null,
+          pct: msg.pct ?? existing?.pct ?? null,
           recentChunks,
           seq: existing?.seq ?? ++seqRef.current,
           lastAt: Date.now(),
@@ -94,11 +100,10 @@ export function useIngestionQueue(): { items: QueueItem[]; status: string } {
         (it.phase === 'embedding' || it.phase === 'storing') &&
         now - lastAt > STALL_MS,
     }))
-    // Processing first, then most-recently-arrived.
+    // Still-in-queue (processing or rate-limited/retrying) first, then most-recent.
     .sort((a, b) => {
-      const ap = a.status === 'processing' ? 0 : 1
-      const bp = b.status === 'processing' ? 0 : 1
-      return ap - bp || b.seq - a.seq
+      const active = (s: string) => (s === 'processing' || s === 'rate_limited' ? 0 : 1)
+      return active(a.status) - active(b.status) || b.seq - a.seq
     })
   return { items, status }
 }

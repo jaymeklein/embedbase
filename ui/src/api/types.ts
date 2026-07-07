@@ -336,6 +336,7 @@ export interface EmbeddingConfig {
   api_key: string | null // masked on GET as SECRET_MASK; write-only
   concurrency: number
   output_dimensionality: number | null // gemini only
+  max_rpm: number // max texts embedded/min against an external provider; 0 = unlimited
 }
 
 /** Parser config — only the PDF backend is edited in the UI; the rest round-trips. */
