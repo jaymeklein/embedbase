@@ -17,6 +17,7 @@ API-local status record.
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from copy import deepcopy
@@ -189,7 +190,7 @@ def _build_reranker_optional(reranker_config: Any) -> Any:
         return None
 
 
-def _atomic_write(data: dict[str, Any], path: Path) -> None:
+def _write_config(data: dict[str, Any], path: Path) -> None:
     """Persist ``data`` as YAML in place (.bak backup, then overwrite the file).
 
     Writes through the *existing* inode instead of the classic tmp-file +
@@ -198,13 +199,31 @@ def _atomic_write(data: dict[str, Any], path: Path) -> None:
     ``config.yaml``: the container keeps the old inode while the host path gets a new
     one, so one process sees the update and the other keeps the stale file (and a
     rollback can even restore an unrelated ``.bak``). Overwriting in place keeps every
-    bind mount pointing at the same file. A ``.bak`` copy is written first so a crash
-    mid-write is recoverable.
+    bind mount pointing at the same file, and the write is fsynced so the bytes are durable
+    before returning.
+
+    The ``.bak`` copy (the recovery source at boot — see
+    ``config_env.load_config_data``) is taken only when the current file is non-empty and still
+    *parses*, so a ``config.yaml`` already corrupted — or truncated to empty — by an earlier
+    crash can never overwrite the last-good backup and destroy the only recovery source.
     """
     content = yaml.safe_dump(data, sort_keys=False)
     if path.exists():
-        path.with_suffix(path.suffix + ".bak").write_text(path.read_text(encoding="utf-8"))
-    path.write_text(content, encoding="utf-8")
+        current = path.read_text(encoding="utf-8")
+        # Only back up a file that is BOTH non-empty and parseable: an empty file (a
+        # crash-truncated in-place write) parses as None without error, so guarding on parse
+        # alone would let it clobber the last-good .bak — the one boot-recovery source.
+        if current.strip():
+            try:
+                yaml.safe_load(current)
+            except yaml.YAMLError:
+                pass  # current file is corrupt — keep the last good .bak, don't overwrite it
+            else:
+                path.with_suffix(path.suffix + ".bak").write_text(current, encoding="utf-8")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(content)
+        fh.flush()
+        os.fsync(fh.fileno())
 
 
 def _record_applied(version_id: str) -> dict[str, Any]:
@@ -269,7 +288,7 @@ def apply_config(payload: AppConfig) -> dict[str, Any]:
     merged = _merge_secrets(payload.model_dump(), current)
     embed, store, reranker, new_config = _validate_and_build(merged)
     path = _config_path()
-    _atomic_write(merged, path)
+    _write_config(merged, path)
     _swap_live(embed, store, reranker, new_config)
     return _propagate(uuid.uuid4().hex[:12], previous, path)
 

@@ -562,6 +562,7 @@ def _run_ingestion(
     # instead of seeing a stale "alive" beat and backing off. It also releases the
     # fetched temp file (a no-op for the local backend, which hands back the real one).
     local_file = None
+    chunks: list[Chunk] = []  # bound before parsing so the except below can read len(chunks)
     try:
         # --- Parse → chunk ---------------------------------------------------
         try:
@@ -581,28 +582,35 @@ def _run_ingestion(
                     vector_store=vector_store, config=config, emit=emit,
                 )
         except Exception as exc:
-            if _is_rate_limit(exc):
-                # Report where it paused (chunks already at the current model) so the
-                # queue shows real progress (e.g. 128/1436), not 0. retry_at is when this
-                # task is scheduled to resume (matches the countdown ingest_document below
-                # passes to self.retry), so the queue can render a live countdown.
-                done = len(
-                    vector_store.document_chunk_ids_at_model(
-                        collection_id, document_id, config.embedding.model
+            # Progress reporting must never mask the original failure: the DB read + emit below
+            # do I/O, and if one raised it would REPLACE ``exc`` on the way out, so the outer
+            # ingest_document handler would misclassify a rate limit as a hard failure and lose
+            # the infinite-resume path. Report best-effort, then always re-raise the original.
+            try:
+                if _is_rate_limit(exc):
+                    # Report where it paused (chunks already at the current model) so the
+                    # queue shows real progress (e.g. 128/1436), not 0. retry_at is when this
+                    # task is scheduled to resume (matches the countdown ingest_document below
+                    # passes to self.retry), so the queue can render a live countdown.
+                    done = len(
+                        vector_store.document_chunk_ids_at_model(
+                            collection_id, document_id, config.embedding.model
+                        )
                     )
-                )
-                retry_at = (
-                    datetime.now(UTC) + timedelta(seconds=_retry_delay_seconds(exc))
-                ).isoformat()
-                emit(
-                    "rate_limited",
-                    current=done,
-                    total=len(chunks),
-                    status="rate_limited",
-                    retry_at=retry_at,
-                )
-            else:
-                emit("failed", status="failed", error=str(exc)[:300])
+                    retry_at = (
+                        datetime.now(UTC) + timedelta(seconds=_retry_delay_seconds(exc))
+                    ).isoformat()
+                    emit(
+                        "rate_limited",
+                        current=done,
+                        total=len(chunks),
+                        status="rate_limited",
+                        retry_at=retry_at,
+                    )
+                else:
+                    emit("failed", status="failed", error=str(exc)[:300])
+            except Exception:  # pragma: no cover - status reporting is best-effort
+                logger.warning("failed to report ingest status", job_id=job_id)
             raise
 
         # --- Mark done -------------------------------------------------------
@@ -641,16 +649,25 @@ def _mark_failed(job_id: str, error: str) -> None:
 def _is_rate_limit(exc: BaseException) -> bool:
     """True if ``exc`` is an embedding-provider rate-limit / quota error (HTTP 429).
 
-    Providers surface it differently — Gemini wraps a 429 with a RESOURCE_EXHAUSTED
-    body in ``httpx.HTTPStatusError``; OpenAI-compatible backends also return 429 — so
-    match the status code when present and fall back to the well-known error phrases.
+    Reliable signals first: a typed :class:`RateLimitError` (raised by adapters that
+    detect a 429, e.g. Gemini) or an ``httpx.HTTPStatusError`` carrying status 429
+    (OpenAI-compatible / Ollama backends). Only when neither is present does it fall back
+    to matching a few *specific* rate-limit phrases — deliberately narrow (no bare
+    "quota"/"429" substring) so an unrelated error isn't misclassified and then, because
+    the rate-limit path retries indefinitely, retried forever.
     """
     import httpx
 
+    from api.adapters.embeddings.errors import RateLimitError
+
+    if isinstance(exc, RateLimitError):
+        return True
     if isinstance(exc, httpx.HTTPStatusError):
         return exc.response.status_code == 429
     text = str(exc).lower()
-    return any(s in text for s in ("429", "resource_exhausted", "rate limit", "quota"))
+    return any(
+        s in text for s in ("resource_exhausted", "rate limit", "ratelimit", "too many requests")
+    )
 
 
 # Gemini/Google put the wait in a RetryInfo detail (``"retryDelay": "37.9s"``); other
@@ -679,6 +696,37 @@ def _set_job_rate_limited(job_id: str, error: str) -> None:
         logger.error("could not record rate-limit status", job_id=job_id)
 
 
+def _retry_pending_key(job_id: str) -> str:
+    return f"ingest:retry:{job_id}"
+
+
+def _mark_retry_pending(job_id: str, delay: int) -> None:
+    """Mark that a rate-limited job has a pending countdown retry, so the beat sweep
+    leaves it alone until the delay elapses. The sweep only re-enqueues jobs whose marker
+    has expired (orphaned by a worker crash), so it no longer double-fires alongside each
+    job's own ``self.retry`` countdown. TTL outlives the delay slightly; best-effort.
+    """
+    try:
+        _redis().set(_retry_pending_key(job_id), "1", ex=delay + 30)
+    except Exception:  # pragma: no cover - best-effort
+        logger.debug("retry-pending mark failed", job_id=job_id)
+
+
+def _pending_job_ids(redis_client: Any, job_ids: list[str]) -> set[str]:
+    """Job ids that still hold a live retry-pending marker — their countdown retry is scheduled,
+    so the beat sweep leaves them alone. Fetched in ONE round-trip (MGET) rather than an
+    ``exists`` per job. On a redis error return an empty set — fail open, so the sweep treats
+    every job as orphaned and re-enqueues rather than stranding it.
+    """
+    if not job_ids:
+        return set()
+    try:
+        marks = redis_client.mget([_retry_pending_key(j) for j in job_ids])
+    except Exception:  # pragma: no cover - best-effort; fail open (re-enqueue) on redis error
+        return set()
+    return {job_id for job_id, mark in zip(job_ids, marks, strict=True) if mark is not None}
+
+
 def _delete_stored_object(document_id: str, collection_id: str) -> None:
     """Delete a document's stored original from its backend (best-effort).
 
@@ -695,9 +743,10 @@ def _delete_stored_object(document_id: str, collection_id: str) -> None:
             ).fetchone()
         if meta is None:
             return
+        from api.services.documents import document_key
         from api.services.storage import get_storage
 
-        key = f"{collection_id}/{document_id}{meta.file_type}"
+        key = document_key(collection_id, document_id, meta.file_type)
         get_storage(get_config().storage, meta.storage_backend or "local").delete(key)
     except Exception as exc:  # best-effort: never block row/vector cleanup
         logger.warning("stored object delete skipped", document_id=document_id, error=str(exc))
@@ -741,6 +790,7 @@ def ingest_document(
             delay = _retry_delay_seconds(exc)
             logger.warning("ingest rate-limited; retrying", job_id=job_id, countdown=delay)
             _set_job_rate_limited(job_id, str(exc))
+            _mark_retry_pending(job_id, delay)  # beat sweep skips it until the countdown is due
             raise self.retry(exc=exc, countdown=delay, max_retries=None) from exc
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
         _mark_failed(job_id, str(exc))
@@ -800,6 +850,10 @@ def delete_document(self, document_id: str, collection_id: str) -> None:
         _vector_store().delete_document(collection_id, document_id)
         with SessionLocal() as db:
             db.execute(sa_delete(documents).where(documents.c.id == document_id))
+            # Drop the job row too. Otherwise a paused (``rate_limited``) document that is
+            # deleted or purged leaves an orphan job that the retry sweep keeps
+            # re-enqueuing for a document that no longer exists.
+            db.execute(sa_delete(job_records).where(job_records.c.document_id == document_id))
             db.commit()
             collection_empty = (
                 db.execute(
@@ -891,7 +945,7 @@ def purge_expired_documents(self) -> int:
 _RETRY_BATCH = int(os.environ.get("RATE_LIMIT_RETRY_BATCH", "50"))
 
 
-def requeue_rate_limited(limit: int = _RETRY_BATCH) -> int:
+def requeue_rate_limited(limit: int = _RETRY_BATCH, *, respect_pending: bool = True) -> int:
     """Re-enqueue up to ``limit`` ingests paused at status ``rate_limited``.
 
     An ingest that hits the embedding provider's per-minute (or daily) limit stops with
@@ -900,12 +954,18 @@ def requeue_rate_limited(limit: int = _RETRY_BATCH) -> int:
     the resume-aware pipeline embeds only the chunks not yet at the current model, so the
     document continues where it paused instead of restarting from chunk 0.
 
-    Shared by the periodic beat sweep (:func:`retry_rate_limited_ingests`) and the
-    immediate on-config-change resume (:mod:`worker.config_reload`, fired when a new key
-    or higher RPM resets the quota). Idempotent: a job already re-claimed and processing
-    is skipped by ``_claim_job``, so overlapping triggers (beat + hook + countdown) are a
-    no-op. Returns the number of ingests re-enqueued.
+    ``respect_pending`` (the default, used by the beat sweep) skips jobs whose countdown
+    retry is still scheduled, so the sweep only re-enqueues jobs whose retry marker has
+    expired (orphaned by a worker crash) instead of re-firing every few minutes on top of
+    each job's own ``self.retry`` countdown — which would hammer a provider that reported a
+    long (e.g. daily-quota) delay. The on-config-change resume passes
+    ``respect_pending=False`` to resume every paused job at once, since a new key / higher
+    RPM has reset the quota. Idempotent either way: a job already re-claimed and processing
+    is skipped by ``_claim_job``. Returns the number of ingests re-enqueued.
     """
+    from api.services.documents import document_key
+
+    redis_client = _redis() if respect_pending else None
     with SessionLocal() as db:
         rows = db.execute(
             select(
@@ -917,13 +977,21 @@ def requeue_rate_limited(limit: int = _RETRY_BATCH) -> int:
             .where(job_records.c.status == "rate_limited")
             .limit(limit)
         ).fetchall()
+    pending = (
+        _pending_job_ids(redis_client, [row.job_id for row in rows])
+        if redis_client is not None
+        else set()
+    )
+    requeued = 0
     for row in rows:
-        # Storage key layout mirrors api.services.documents._document_key.
-        key = f"{row.collection_id}/{row.document_id}{row.file_type}"
+        if row.job_id in pending:
+            continue  # its countdown retry is still scheduled — not orphaned, leave it
+        key = document_key(row.collection_id, row.document_id, row.file_type)
         ingest_document.delay(row.job_id, key, row.collection_id, row.document_id, row.file_type)
-    if rows:
-        logger.info("re-enqueued rate-limited ingests", count=len(rows))
-    return len(rows)
+        requeued += 1
+    if requeued:
+        logger.info("re-enqueued rate-limited ingests", count=requeued)
+    return requeued
 
 
 @celery_app.task(

@@ -9,8 +9,61 @@ worker config loaders.
 
 from __future__ import annotations
 
+import logging
 import os
+from pathlib import Path
 from typing import Any
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_read_yaml(path: Path) -> dict[str, Any]:
+    """Read YAML to a dict; ``{}`` on any read/parse/decode error (never raises).
+
+    ``encoding="utf-8"`` matches ``config_service._write_config``'s writer; without it a
+    non-UTF-8 default locale (a C-locale container, or Windows) would raise ``UnicodeDecodeError``
+    on a config with non-ASCII bytes — a ``ValueError``, not caught by the read/parse guards.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError, UnicodeDecodeError):
+        return {}
+
+
+def _recover_from_backup(path: Path) -> dict[str, Any]:
+    """Best-effort ``.bak`` recovery for a primary that is unreadable or empty; ``{}`` if none."""
+    backup = path.with_suffix(path.suffix + ".bak")
+    recovered = _safe_read_yaml(backup) if backup.exists() else {}
+    if recovered:
+        logger.warning("config %s unusable; recovered from %s", path, backup)
+    return recovered
+
+
+def load_config_data(path: Path) -> dict[str, Any]:
+    """Read a config file to a raw dict, recovering from its ``.bak`` sibling when the primary
+    is *unreadable* — either corrupt (unparseable YAML / non-UTF-8 bytes) or *empty*.
+
+    ``config_service._write_config`` overwrites the file in place (``open(path, "w")`` truncates
+    before rewriting), so a crash mid-write can leave a 0-byte file — and an empty file is
+    indistinguishable from a torn one. An empty primary therefore prefers a usable ``.bak`` over
+    booting on lost config; an intentionally-empty config simply has no non-empty ``.bak`` to
+    recover and falls through to ``{}`` (defaults + the env overlay). A missing file also returns
+    ``{}``. Shared by the API (:mod:`api.main`) and worker (:mod:`worker.config`) loaders so both
+    survive a truncated ``config.yaml`` identically, instead of one recovering while the other
+    boots broken.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+    except OSError:
+        return {}
+    except (yaml.YAMLError, UnicodeDecodeError):
+        return _recover_from_backup(path)
+    return data or _recover_from_backup(path)
+
 
 # (env var name, nested path within the vector_store section).
 _VECTOR_STORE_ENV: tuple[tuple[str, tuple[str, ...]], ...] = (
