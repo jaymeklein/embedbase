@@ -38,6 +38,27 @@ physical page, with no headings, no table of contents, and no `context_id`
 *boundaries* — you cannot infer where a context begins or ends from page numbers
 alone.
 
+### Verified against the live corpus (2026-07-07)
+
+An MCP `search_documents` sweep over the 1400-page *Licitações* PDF made the abstract
+problem concrete. Each finding is tagged with the phase that addresses it:
+
+- **Hits are whole pages, ~2.3–3.5k chars each** (`char_count` 2899 / 3489), so a 3-hit search
+  returns ~10k chars — not concise. → **B4** (sub-page chunks) + [Guardrails](#guardrails) budget.
+- **Two subjects on one page.** Page 1390 returned the *Chapter 23* intro ("Considerações
+  gerais" on sanctions) **averaged with two unrelated TCU case-law footnotes** (Acórdãos
+  2.295/2025 and 316/2024) in a single vector. → **B4** + **B1/B2** (`context_id`), incl.
+  footnote/apparatus separation.
+- **No "there's more" signal.** 12 chunks matched, 3 were returned, and the MCP said nothing.
+  → **A3** (minimal slice now shipped — see below).
+- **No context anchors.** `heading_path` / `heading_level` are `null` on this corpus (unnumbered
+  "CAPÍTULO" / "SANÇÕES" headings, no embedded ToC), so there is nothing to group on today.
+  → **B2** ladder (`get_toc()` → font/layout → docling → LLM).
+- **Provenance bug** (correctness, not completeness — see
+  [Adjacent correctness](#adjacent-correctness-issues-surfaced-while-testing)): `filename` /
+  `source_file` are the ingestion **temp** path, and *different chunks of the same document carry
+  different temp names* (`tmpruad779z.pdf`, `tmptyy5qd14.pdf`, `tmp1qd0qkfm.pdf`).
+
 ### Why this splits into two tracks
 
 - **Track A — Completeness at query time (deterministic, no LLM).** You do **not**
@@ -142,7 +163,7 @@ and ids are deterministic. When B1 lands, prefer "neighbours **sharing the hit's
 results are merged, or inside `search_collection` right after `filtered[:top_k]`.
 Degrades gracefully: if the neighbour fetch errors, return the un-expanded hits.
 
-## A3 — Saturation signal + MCP `notice` `[ ]`
+## A3 — Saturation signal + MCP `notice` `[~]`
 
 **Why (your explicit ask: "the MCP must warn there's more").** `search_collection`
 already over-fetches (`retrieval_fan_out=4` → ~20 candidates for `top_k=5`) then
@@ -183,11 +204,29 @@ Pydantic fields*:
    knows what to do when a `notice` is present. A warning the model ignores buys
    nothing.
 
-- [ ] `coverage` / `more_available` fields on `SearchResponse` + `CollectionStat`
-- [ ] Saturation computation over the pre-cut candidate pool in `search_collection`
-- [ ] `notice` string builder; include in `SearchResponse` and the MCP dict
-- [ ] MCP tool-description update telling the model how to act on `notice`
-- [ ] Tests: plateau vs elbow, per-doc coverage, no-warning-when-complete
+**Shipped (2026-07-07) — minimal slice.** `search_documents` now returns a structured
+`more_available` flag and, when it is set, a natural-language `notice` (e.g. *"12 chunks matched
+and were ranked; showing the top 3. About 9 more, of comparable relevance, fell below the top_k
+cut. …re-run with a higher top_k."*). It fires only when the post-filter ranked pool exceeds
+`top_k` **and** the shown results sit on a score *plateau* (tail ≥ 0.9 × top); a sharp elbow
+stays quiet so the warning keeps its meaning (verified live — the sanctions query's 6.80→5.86
+taper correctly emits no notice). Implemented in
+[`search.py`](../api/services/search.py) (`_more_available`),
+[`models/search.py`](../api/models/search.py), and
+[`mcp/tools.py`](../api/services/mcp/tools.py) (`_saturation_notice`) + the tool description in
+[`server.py`](../api/services/mcp/server.py). **Deferred:** the richer per-`CollectionStat`
+`coverage` object, per-document "pages X–Y of N" lines, the whole-collection BM25 match count,
+and tuning the 0.9 plateau ratio against an eval set (see
+[Measuring it](#measuring-it-better-must-be-provable)).
+
+- [~] `more_available` flag on `SearchResponse` **shipped**; fuller `coverage` object +
+  per-`CollectionStat` fields still todo
+- [~] Saturation from the post-filter ranked pool (`returned_after_filter`) + a score-plateau
+  guard; whole-collection BM25 count + elbow-threshold tuning still todo
+- [x] `notice` string builder, added to the MCP `search_documents` response
+- [x] MCP tool-description update telling the model to raise `top_k` on a `notice`
+- [~] Tests: plateau / elbow / complete (service) + notice-builder unit test done; per-doc
+  coverage + eval-set tuning todo
 
 ## A4 — MCP expansion primitives `[ ]`
 
@@ -215,7 +254,7 @@ The loop becomes: `search` → sees "doc X, pages 3–5/9, more below" →
 
 ---
 
-## A5 — Pluggable, frontend-configurable reranker (local + remote / LLM) `[ ]`
+## A5 — Pluggable, frontend-configurable reranker (local + remote / LLM) `[~]`
 
 > **Sequenced first among the implementation phases** (project decision) — it is the
 > prerequisite for running cross-encoding on Google AI Studio, and its Gemini
@@ -263,7 +302,8 @@ ollama`, keyed on `provider`/`model`/`base_url`/`api_key`).
      ask). Reuse the [tag-suggester LLM plumbing](../api/adapters/tagging/llm.py)
      verbatim: same `provider`/`base_url`/`api_key`/`model` and the same `_post` to
      `/api/chat` (Ollama) or `/v1/chat/completions` (OpenAI-compat). Prompt the model
-     to score query–chunk relevance; parse; reorder. `temperature=0`.
+     to score query–chunk relevance via **structured output** (a JSON `{score}` field,
+     not prose); read the field; reorder. `temperature=0`.
 
 3. **Config-page validation** —
    [`_build_adapters`](../api/services/config_service.py:151) already builds the
@@ -304,20 +344,43 @@ committing. Current strong candidates:
 - Prefer a **multilingual** model — the `embeddinggemma` default and a likely
   non-English corpus point that way.
 
+**Shipped (2026-07-07) — provider-pluggable + frontend-configurable reranker.** The stage now
+mirrors the embeddings adapter. `RerankerConfig` grew `provider` (`cross_encoder` | `rerank_api` |
+`llm`), `llm_provider`, `base_url`, `api_key` (masked via `SECRET_PATHS`), and `timeout_seconds`.
+The chat transport was extracted into a shared [`llm_chat.py`](../api/adapters/llm_chat.py)
+(`chat_complete` + `post_json`) with a **native Gemini `generateContent` branch**, reused by both
+the tag suggester and the new [`llm.py`](../api/adapters/reranker/llm.py) reranker; a hosted
+[`rerank_api.py`](../api/adapters/reranker/rerank_api.py) (Cohere/Jina/Voyage) sits alongside. A
+shared [`reorder.py`](../api/adapters/reranker/reorder.py) owns the score→sort→renumber step and the
+**graceful-degradation guard** (any scoring error, count mismatch, non-numeric or NaN score →
+pre-rerank order; [`search.py`](../api/services/search.py) has a matching call-site backstop), so no
+reranker path can 500 a search. The `llm` reranker asks each provider for **structured JSON output**
+(`chat_complete(response_schema=…)` → `response_format` / `format` / `responseSchema`) and reads the
+`score` field, so ranking never depends on scraping a number out of prose. The UI gained a Reranker
+section in [`ConfigPanel.tsx`](../ui/src/components/settings/ConfigPanel.tsx). Verified: ruff/mypy/
+`tsc` clean, 665 unit+integration tests, and agent review (correctness fixes folded in).
+
 Checklist:
-- [ ] `RerankerConfig`: `base_url`/`api_key`/`timeout_seconds` + documented `provider`
-- [ ] `("reranker", "api_key")` in `SECRET_PATHS`
-- [ ] `rerank_api.py` provider (Cohere / Jina / Voyage `/rerank`)
-- [ ] `llm.py` reranker reusing the tag-suggester LLM adapter (pointwise, `temp=0`)
-- [ ] **Native Gemini / Google AI Studio branch** in the shared LLM adapter
-  (`generateContent` + `x-goog-api-key`, mirroring embeddings `gemini.py`) — the
-  priority backend for the AI-Studio reranker; also unlocks Gemini tag suggestion
-- [ ] Remote-provider reachability check in the PUT dry-run
-- [ ] Modern default cross-encoder model (chosen via a small eval set)
-- [ ] Reranker section in `ConfigPanel.tsx` + `api/types.ts` (+ model-picker reuse)
-- [ ] Tests: provider dispatch, `llm` parse/reorder, secret round-trip, degrade-on-error
-- [ ] **Validate the Gemini/AI-Studio reranker end-to-end with a live AI Studio key**
-  (key supplied out-of-band — never commit it to the repo)
+- [x] `RerankerConfig`: `base_url`/`api_key`/`timeout_seconds`/`llm_provider` + documented `provider`
+- [x] `("reranker", "api_key")` in `SECRET_PATHS`
+- [x] `rerank_api.py` provider (Cohere / Jina / Voyage `/rerank`)
+- [x] `llm.py` reranker reusing the shared LLM transport (pointwise, `temp=0`, concurrent,
+  **structured-output score** — provider-native JSON, no prose parsing)
+- [x] **Native Gemini / Google AI Studio branch** in the shared LLM adapter (`generateContent` +
+  `x-goog-api-key`); the shared transport also makes a Gemini *tag*-suggester a config-only change later
+- [~] Remote-provider validation in the PUT dry-run — **credential-presence** check ships (a remote
+  provider missing its `api_key`/`base_url` raises `ValueError` → 422 at save; boot stays safe via
+  `_build_reranker_optional`). A live **network** reachability ping (à la the Ollama "Test connection"
+  button) is still todo.
+- [ ] Modern default cross-encoder model (chosen via a small eval set) — **deferred**: needs an eval
+  set + a Docker re-bake of the vendored model. The default stays offline-safe; the real unlock (the
+  model is now user-selectable, incl. a multilingual local or hosted model) has shipped.
+- [x] Reranker section in `ConfigPanel.tsx` + `api/types.ts` (+ Ollama model-picker reuse)
+- [x] Tests: provider dispatch, `llm` structured-output score/reorder, per-provider structured-output
+  payload, `rerank_api` index-map, secret round-trip, degrade-on-error (scoring error / count mismatch
+  / non-numeric / NaN / call-site backstop)
+- [ ] **Validate the Gemini/AI-Studio reranker end-to-end with a live AI Studio key** — **deferred**:
+  needs the live key (supplied out-of-band — never commit it to the repo)
 
 ---
 
@@ -440,6 +503,10 @@ structural fix that makes both overlap directions work; sequence it after B2 so
 sub-page chunks inherit context assignment.
 
 - [ ] Sub-page splitting in the PDF parser (keep `page_number`, add sub-index)
+- [ ] **Separate footnote / citation apparatus from body text** — legal PDFs embed case-law
+  footnotes (e.g. TCU acórdãos) into the page vector, blending an unrelated "subject" into the
+  body (observed 2026-07-07, page 1390: chapter intro + two acórdãos in one chunk). Split them
+  into their own chunk(s) / `context` so neither dilutes the other.
 - [ ] Ensure `chunk_index` stays contiguous for A2 adjacency
 - [ ] Re-ingest path (changes embeddings — see Migration)
 - [ ] Tests
@@ -452,6 +519,11 @@ sub-page chunks inherit context assignment.
   or a 70-page ToC "chapter" could otherwise return enormous spans. Every
   expansion/grouping path must cap output by a configurable token budget: structure
   gives the *boundary*, budget gives the right-sized *slice*.
+- **Per-hit conciseness (MCP), near-term lever.** Today a single hit returns the whole page
+  (~2.3–3.5k chars, observed 2026-07-07). B4 makes chunks tighter, but *before* that re-index the
+  MCP can return a bounded snippet per hit and let the model pull the full text on demand via
+  A4's `get_document_chunks` — a conciseness win independent of re-chunking.
+  - [ ] Snippet-per-hit + full-text-on-demand in `search_documents` (bounded char/token cap)
 - **Graceful degradation.** Mirror the retrieval roadmap's rule — any stage that
   errors or lacks a model falls back to prior behaviour. Search must never 500.
 - **Don't over-warn.** A3 stays quiet when results show a clear elbow (genuinely
@@ -511,3 +583,21 @@ Steps 1–3 need no ingestion change, no schema change, and no reasoning model �
 and likely remove ~80% of the truncation pain on the current corpus. The reasoning
 model earns its place only at step 5, at ingestion, for inputs that genuinely lack
 structure.
+
+---
+
+## Adjacent correctness issues (surfaced while testing)
+
+Not completeness problems, but found during the same MCP/UI verification and recorded here so
+they aren't lost — fix independently of the tracks above.
+
+- [ ] **Search/MCP provenance shows the ingestion *temp* filename, not the document name.** For
+  non-local (S3/MinIO) storage backends, [`_run_ingestion`](../worker/tasks.py) fetches the
+  object to a temp file and passes that path to the parser, which stores
+  `filename = os.path.basename(temp_path)` in chunk metadata — so `search_documents` and the UI
+  show `tmpruad779z.pdf` / `/tmp/…` instead of `licitacao.pdf`, and *different chunks of one
+  document can carry different temp names* (a resumed ingest creates a new temp file each time:
+  `tmptyy5qd14.pdf`, `tmp1qd0qkfm.pdf`). The local backend is unaffected (temp file = original).
+  Fix: stamp the real filename (known at `job_records.filename`) into chunk metadata at ingest,
+  or resolve the display name from the `documents` table (as the Graph view already does).
+  Confirmed 2026-07-07 (UI + MCP). Any already-ingested S3/MinIO docs need a metadata backfill.

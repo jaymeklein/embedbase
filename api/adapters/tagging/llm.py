@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from api.adapters.llm_chat import OLLAMA_DEFAULT_URL, chat_complete
 from api.models.tagging import TagSuggestion
 
 _PROMPT = (
@@ -16,15 +17,6 @@ _PROMPT = (
     '[{{"name": "example", "confidence": 0.9}}] and no prose.\n\nTEXT:\n{text}'
 )
 
-# Default endpoints mirror the embedding adapters' host.docker.internal convention.
-_OLLAMA_DEFAULT = "http://host.docker.internal:11434"
-_OPENAI_DEFAULT = "http://host.docker.internal:1234"
-
-# ponytail: local CPU inference of a small model takes ~1min/call (cold start more),
-# so the chat call needs a generous ceiling. Bump if larger models time out.
-_CHAT_TIMEOUT_SECONDS = 300.0
-
-
 def list_ollama_models(base_url: str | None) -> list[str]:
     """Return the names of models installed on the Ollama server, sorted.
 
@@ -33,7 +25,7 @@ def list_ollama_models(base_url: str | None) -> list[str]:
     """
     import httpx
 
-    url = f"{base_url or _OLLAMA_DEFAULT}/api/tags"
+    url = f"{base_url or OLLAMA_DEFAULT_URL}/api/tags"
     response = httpx.get(url, timeout=10.0)
     response.raise_for_status()
     models = response.json().get("models", [])
@@ -127,23 +119,11 @@ class LLMTagSuggester:
         ]
 
     def _complete(self, prompt: str) -> str:
-        """POST the prompt to the configured chat endpoint and return the reply text."""
-        messages = [{"role": "user", "content": prompt}]
-        if self._provider == "openai_compat":
-            url = f"{self._base_url or _OPENAI_DEFAULT}/v1/chat/completions"
-            headers = {"Authorization": f"Bearer {self._api_key}"}
-            payload: dict[str, Any] = {"model": self._model, "messages": messages}
-            data = self._post(url, payload, headers)
-            return str(data["choices"][0]["message"]["content"])
-        url = f"{self._base_url or _OLLAMA_DEFAULT}/api/chat"
-        payload = {"model": self._model, "messages": messages, "stream": False}
-        data = self._post(url, payload, {})
-        return str(data["message"]["content"])
-
-    @staticmethod
-    def _post(url: str, payload: dict[str, Any], headers: dict[str, str]) -> dict[str, Any]:
-        import httpx
-
-        response = httpx.post(url, json=payload, headers=headers, timeout=_CHAT_TIMEOUT_SECONDS)
-        response.raise_for_status()
-        return dict(response.json())
+        """Delegate to the shared chat transport (Ollama / OpenAI-compatible / Gemini)."""
+        return chat_complete(
+            provider=self._provider,
+            model=self._model,
+            base_url=self._base_url,
+            api_key=self._api_key,
+            prompt=prompt,
+        )
