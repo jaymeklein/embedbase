@@ -7,7 +7,7 @@ import yaml
 from fastapi import HTTPException
 
 from api import dependencies
-from api.models.config import AppConfig, EmbeddingConfig, VectorStoreConfig
+from api.models.config import AppConfig, EmbeddingConfig, RerankerConfig, VectorStoreConfig
 from api.services import config_reload as cr
 from api.services import config_service as cs
 from tests.unit.fake_redis import FakeRedis
@@ -91,6 +91,31 @@ def test_merge_secrets_preserves_masked_tagging_api_key():
     incoming["tagging"]["suggester"]["api_key"] = cs.SECRET_MASK
     merged = cs._merge_secrets(incoming, current)
     assert merged["tagging"]["suggester"]["api_key"] == "real-or-key"
+
+
+def test_get_masked_config_masks_reranker_api_key():
+    dependencies.set_app_config(
+        AppConfig(
+            reranker=RerankerConfig(
+                provider="rerank_api", api_key="co-secret", base_url="https://x/rerank"
+            )
+        )
+    )
+    data = cs.get_masked_config()
+    assert data["reranker"]["api_key"] == cs.SECRET_MASK  # set -> masked
+    assert data["reranker"]["provider"] == "rerank_api"  # non-secret intact
+
+
+def test_merge_secrets_preserves_masked_reranker_api_key():
+    current = AppConfig(
+        reranker=RerankerConfig(
+            provider="rerank_api", api_key="real-co-key", base_url="https://x/rerank"
+        )
+    )
+    incoming = current.model_dump()
+    incoming["reranker"]["api_key"] = cs.SECRET_MASK
+    merged = cs._merge_secrets(incoming, current)
+    assert merged["reranker"]["api_key"] == "real-co-key"
 
 
 def test_get_masked_config_masks_s3_backend_secrets():

@@ -1,8 +1,9 @@
 import httpx
 
 from api.adapters.embeddings.errors import raise_for_status
+from api.constants import GEMINI_API_BASE_URL
 
-_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+_DEFAULT_BASE_URL = GEMINI_API_BASE_URL
 
 
 class GeminiAdapter:
