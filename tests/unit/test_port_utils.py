@@ -1,6 +1,5 @@
 """Unit tests for host-port availability helpers."""
 
-import socket
 from unittest.mock import MagicMock, patch
 
 from api.port_utils import find_free_port, is_port_free
