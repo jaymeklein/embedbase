@@ -4,28 +4,8 @@ Lexical/BM25 is the STORED ``chunks.text_tsv`` column (Phase 3): deleting the
 chunks drops FTS with them, so there is no separate corpus to prune.
 """
 
+from tests.unit.fakes import FakeRedis
 from worker.tasks import delete_document
-
-
-class FakeRedis:
-    """In-memory Redis stub (delete no longer touches BM25, but the task still
-    resolves the redis singleton for realtime — kept as a harmless double)."""
-
-    def __init__(self, initial: dict | None = None) -> None:
-        self.store: dict[str, str] = dict(initial or {})
-        self.ttls: dict[str, int | None] = {}
-
-    def get(self, key: str) -> str | None:
-        return self.store.get(key)
-
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
-        self.store[key] = value
-        self.ttls[key] = ex
-
-    def incr(self, key: str) -> int:
-        self.store[key] = str(int(self.store.get(key, "0")) + 1)
-        return int(self.store[key])
-
 
 # ---------------------------------------------------------------------------
 # delete_document task — happy-path and retry
@@ -128,3 +108,46 @@ def test_delete_task_retries_on_vector_store_error(monkeypatch) -> None:
     assert result.failed()
     # 1 initial call + 3 retries = 4 total
     assert fake_vs.delete_document.call_count == 4
+
+
+def test_delete_task_removes_orphan_job_record(tmp_path, monkeypatch) -> None:
+    """delete_document hard-deletes the job_records row too, so a purged/deleted document
+    can't leave an orphan that the rate-limit sweep keeps re-enqueuing."""
+    from unittest.mock import MagicMock
+
+    from sqlalchemy import create_engine, insert, select
+    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.pool import NullPool
+
+    from api.tables import documents, job_records, metadata
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'del.db'}", future=True, poolclass=NullPool)
+    metadata.create_all(engine)
+    factory = sessionmaker(engine, class_=Session, expire_on_commit=False)
+    with factory() as s:
+        s.execute(insert(documents).values(
+            id="doc1", collection_id="col1", filename="a.pdf", file_type=".pdf",
+            created_at="t", updated_at="t",
+        ))
+        s.execute(insert(job_records).values(
+            job_id="job1", document_id="doc1", collection_id="col1", filename="a.pdf",
+            file_type=".pdf", status="rate_limited", created_at="t", updated_at="t",
+        ))
+        s.commit()
+
+    monkeypatch.setattr("worker.tasks._vector_store_singleton", MagicMock())
+    monkeypatch.setattr("worker.tasks._redis_singleton", FakeRedis())
+    monkeypatch.setattr("worker.tasks.SessionLocal", factory)
+    monkeypatch.setattr("worker.tasks._delete_stored_object", lambda *a: None)
+
+    delete_document.apply(args=["doc1", "col1"])
+
+    with factory() as s:
+        assert (
+            s.execute(select(job_records.c.job_id).where(job_records.c.document_id == "doc1"))
+            .first()
+            is None  # the orphan job row is gone
+        )
+        assert (
+            s.execute(select(documents.c.id).where(documents.c.id == "doc1")).first() is None
+        )
