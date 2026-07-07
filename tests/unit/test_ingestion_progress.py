@@ -12,41 +12,8 @@ from sqlalchemy.pool import NullPool
 
 from api.services import realtime
 from api.tables import documents, job_records, metadata
+from tests.unit.fakes import FakeEmbedder, FakeStore
 from worker.tasks import _run_ingestion
-
-
-class FakeEmbedder:
-    @property
-    def dimensions(self) -> int:
-        return 3
-
-    def embed_batch(self, texts):
-        return [[0.1, 0.2, 0.3] for _ in texts]
-
-
-class FakeStore:
-    def __init__(self):
-        self.chunks = []
-        self._models = {}  # chunk_id -> embedding_model it was stored at
-
-    def upsert(self, collection_id, chunks, vectors, model=None):
-        self.chunks.extend(chunks)
-        for c in chunks:
-            self._models[c.id] = model
-
-    def document_chunk_ids_at_model(self, collection_id, document_id, model):
-        return {
-            c.id
-            for c in self.chunks
-            if c.metadata.document_id == document_id and self._models.get(c.id) == model
-        }
-
-    def iter_document_chunks(self, collection_id, document_id):
-        return [
-            (c.id, c.metadata.document_id, c.text)
-            for c in self.chunks
-            if c.metadata.document_id == document_id
-        ]
 
 
 class RecordingRedis:
