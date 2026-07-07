@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { carryProgress } from './carryProgress'
 import { useChannel } from './useChannel'
 import type { IngestPhase } from './useIngestionProgress'
 
@@ -72,9 +73,7 @@ export function useIngestionQueue(): { items: QueueItem[]; status: string } {
           ...rest,
           // A paused event (e.g. rate_limited) may omit progress; keep the last known
           // counts so the card still shows where it stopped (e.g. 128/1436).
-          current: msg.current ?? existing?.current ?? null,
-          total: msg.total ?? existing?.total ?? null,
-          pct: msg.pct ?? existing?.pct ?? null,
+          ...carryProgress(msg, existing),
           recentChunks,
           seq: existing?.seq ?? ++seqRef.current,
           lastAt: Date.now(),
