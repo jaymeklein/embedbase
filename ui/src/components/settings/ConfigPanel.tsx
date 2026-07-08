@@ -8,7 +8,13 @@ import {
   useTestOllama,
   useUpdateConfig,
 } from '../../api/hooks'
-import type { AppConfig, EmbeddingConfig, RerankerConfig, TaggingConfig } from '../../api/types'
+import type {
+  AppConfig,
+  EmbeddingConfig,
+  RerankerConfig,
+  SearchConfig,
+  TaggingConfig,
+} from '../../api/types'
 import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
 
 /** Runtime config: embedding model + AI tag-suggester. Both apply live (API + workers reload). */
@@ -28,6 +34,7 @@ export function ConfigPanel() {
     <div className="flex flex-col gap-5">
       <EmbeddingForm config={data} />
       <RerankerForm config={data} />
+      <SearchForm config={data} />
       <ParserForm config={data} />
       <TaggingForm config={data} />
       <StorageForm config={data} />
@@ -565,6 +572,71 @@ function RerankerForm({ config }: { config: AppConfig }) {
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
           {update.isPending ? 'Saving…' : 'Save reranker config'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * Search / retrieval config. The one live-editable knob is A2 adjacency expansion — how many
+ * chunks to pull on each side of a hit and merge into a span, so a context that spilled past
+ * top_k onto the next page(s) comes back whole. 0 disables it; the other search knobs round-trip.
+ */
+function SearchForm({ config }: { config: AppConfig }) {
+  const toast = useToast()
+  const update = useUpdateConfig()
+  const search = config.search
+
+  const [expand, setExpand] = useState(String(search.expand_neighbors))
+
+  const save = () => {
+    // Round before clamping: expand_neighbors is a strict int on the backend, so a fractional
+    // entry (the number input allows "2.7") would 422 the PUT — coerce to the nearest whole count.
+    const whole = Math.round(Number(expand) || 0)
+    const clamped = Math.max(0, Math.min(whole, search.max_expand_neighbors))
+    const next: SearchConfig = { ...search, expand_neighbors: clamped }
+    update.mutate(
+      { ...config, search: next },
+      {
+        onSuccess: () => toast.success('Search config saved. Services are reloading.'),
+        onError: (e) => toast.error(e.message),
+      },
+    )
+  }
+
+  return (
+    <Card className="flex flex-col gap-5 p-5">
+      <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+        <p className="text-[13px] text-ink-muted">
+          Adjacency expansion pulls the chunks next to each result and merges them into one span, so
+          a section that runs across pages comes back whole instead of cut at the top-K boundary.
+          It's a plain lookup — no extra model calls — and <strong>safe</strong>: if it can't fetch,
+          search returns the un-expanded results.
+        </p>
+      </div>
+
+      <Section title="Retrieval">
+        <Field
+          label="Adjacency expansion (neighbours)"
+          htmlFor="search-expand"
+          hint={`chunks pulled on each side of a hit; 0 = off, max ${search.max_expand_neighbors}`}
+        >
+          <Input
+            id="search-expand"
+            type="number"
+            min="0"
+            max={String(search.max_expand_neighbors)}
+            value={expand}
+            onChange={(e) => setExpand(e.target.value)}
+          />
+        </Field>
+      </Section>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save search config'}
         </Button>
       </div>
     </Card>

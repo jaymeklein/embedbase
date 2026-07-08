@@ -2,7 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for PyMuPDF, tree-sitter grammars, and bcrypt
+# System deps for PyMuPDF and bcrypt
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl build-essential libffi-dev \
     && rm -rf /var/lib/apt/lists/*

@@ -3,9 +3,8 @@ import { UploadCloud } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { Spinner } from '../ui'
 
-/** Extensions the ingestion pipeline accepts (PDF/text/code + docling office). */
-const ACCEPT =
-  '.pdf,.txt,.md,.csv,.json,.docx,.pptx,.py,.js,.ts,.tsx,.jsx,.java,.go,.rs,.rb,.c,.cpp,.h'
+/** Extensions the ingestion pipeline accepts (core PDF/text/Markdown; DOCX/PPTX need docling). */
+const ACCEPT = '.pdf,.txt,.md,.markdown,.docx,.pptx'
 
 /**
  * Drag-and-drop upload surface with a file-picker fallback. Purely presentational:
@@ -76,7 +75,7 @@ export function UploadZone({
         )}
       </p>
       <p className="text-xs text-ink-faint">
-        PDF, text, Markdown, code, CSV, JSON, DOCX, PPTX · up to {maxSizeMb} MB each
+        PDF, text, Markdown · DOCX/PPTX with docling · up to {maxSizeMb} MB each
       </p>
     </div>
   )

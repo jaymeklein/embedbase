@@ -236,7 +236,6 @@ export interface JobStatus {
 // ── Search (mirrors api/models/search.py) ───────────────────────────────────
 
 export interface SearchFilters {
-  language?: string | null
   filename?: string | null
   tags?: string[] | null
 }
@@ -261,6 +260,7 @@ export interface SourceProvenance {
   document_id: string | null
   filename: string | null
   page_number: number | null
+  page_range: string | null // "lo-hi" when an A2 span covers multiple pages, else null
 }
 
 export interface SearchResult {
@@ -304,6 +304,8 @@ export interface Health {
   embedding_provider: string
   embedding_model: string
   embedding_model_loaded: boolean
+  /** Reranker readiness: "ready" | "unavailable" (on-by-default but failed to load) | "disabled". */
+  reranker: string
   uptime_seconds: number
   /** The server's primary LAN IP, used to offer a reachable MCP address. */
   lan_ip: string
@@ -354,6 +356,18 @@ export interface RerankerConfig {
   timeout_seconds: number // round-tripped by the UI (edited in config.yaml)
 }
 
+/** Search / retrieval knobs. `expand_neighbors` drives A2 adjacency expansion (0 = off). */
+export interface SearchConfig {
+  default_top_k: number
+  max_top_k: number
+  retrieval_fan_out: number
+  max_fan_out: number
+  hybrid_default_alpha: number
+  expand_neighbors: number
+  max_expand_neighbors: number
+  expand_char_budget: number
+}
+
 /** Parser config — only the PDF backend is edited in the UI; the rest round-trips. */
 export interface ParserConfig {
   pdf_backend: string | null // null = never picked (UI pre-selects from GPU) | "pymupdf" | "docling"
@@ -395,6 +409,7 @@ export interface Accelerator {
 export interface AppConfig {
   embedding: EmbeddingConfig
   reranker: RerankerConfig
+  search: SearchConfig
   parsers: ParserConfig
   tagging: TaggingConfig
   storage: StorageConfig

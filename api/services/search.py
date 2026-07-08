@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
+from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
 from api.models.search import (
     CollectionStat,
     SearchFilters,
@@ -18,6 +19,7 @@ from api.models.search import (
     SearchResult,
     SourceProvenance,
 )
+from api.services.expansion import expand_spans
 
 logger = structlog.get_logger()
 
@@ -34,14 +36,11 @@ def _matches(result: SearchResult, filters: SearchFilters) -> bool:
     Returns:
         True if the result matches all provided filters, otherwise False.
     """
-    language = filters.language
     filename = filters.filename
     tags = filters.tags
 
-    if not language and not filename and not tags:
+    if not filename and not tags:
         return True
-    if language and result.metadata.get("language") != language:
-        return False
     if filename and result.metadata.get("filename") != filename:
         return False
     if tags:
@@ -379,6 +378,33 @@ def _more_available(final: list[SearchResult], stats: dict[str, CollectionStat])
     return top > 0 and tail >= 0.9 * top
 
 
+async def _expand(
+    final: list[SearchResult],
+    vector_store: PgvectorAdapter,
+    neighbors: int,
+    char_budget: int,
+) -> list[SearchResult]:
+    """A2 adjacency expansion as a post-pass, off the event loop.
+
+    Grows each hit into its adjacency span (see ``api.services.expansion``). Any failure degrades
+    to the un-expanded hits — an optional completeness stage must never turn a search into a 500,
+    matching the reranker's contract.
+    """
+    if neighbors <= 0 or not final:
+        return final
+    try:
+        return await asyncio.to_thread(
+            expand_spans,
+            final,
+            neighbors=neighbors,
+            char_budget=char_budget,
+            fetch=vector_store.chunks_by_ids,
+        )
+    except Exception as exc:  # backstop: expansion must never 500 the search
+        logger.warning("span expansion failed; returning un-expanded hits", error=str(exc))
+        return final
+
+
 async def multi_collection_search(
     request: SearchRequest,
     *,
@@ -386,6 +412,8 @@ async def multi_collection_search(
     embedder: EmbeddingAdapter,
     vector_store: PgvectorAdapter,
     reranker: Reranker | None = None,
+    expand_neighbors: int = 0,
+    expand_char_budget: int = DEFAULT_EXPAND_CHAR_BUDGET,
 ) -> SearchResponse:
     """Search across one or more collections and merge with second-level RRF.
 
@@ -401,6 +429,9 @@ async def multi_collection_search(
         vector_store: Vector store adapter for similarity search + FTS scoring.
         reranker: Optional cross-encoder reranker applied per collection before
             the cross-collection merge; ``None`` skips the stage (RRF-only).
+        expand_neighbors: A2 adjacency window — chunks pulled on each side of every hit and
+            coalesced into spans after the top_k cut (0 = off). Degrades to un-expanded hits.
+        expand_char_budget: Soft cap on an assembled span's text.
 
     Returns:
         SearchResponse with ranked results, stats, and timing fields.
@@ -426,10 +457,15 @@ async def multi_collection_search(
     mode = fallback or request.resolved_mode()
     final = _merge_collections_rrf(per_collection)[: request.top_k]
     _update_top_k_stats(final, stats)
+    # Saturation + delivery are measured on the ranked top_k hits BEFORE expansion: A2 completes
+    # each hit with adjacent context, it does not change what ranked or how many hits we got.
+    under_delivered = len(final) < request.top_k
+    more_available = _more_available(final, stats)
+    results = await _expand(final, vector_store, expand_neighbors, expand_char_budget)
     total_ms = int((monotonic() - t0) * 1000)
     return SearchResponse(
-        results=final, collection_stats=stats, query_embedding_ms=embed_ms,
+        results=results, collection_stats=stats, query_embedding_ms=embed_ms,
         search_ms=total_ms - embed_ms, total_ms=total_ms,
-        search_mode=mode, under_delivered=len(final) < request.top_k,
-        more_available=_more_available(final, stats),
+        search_mode=mode, under_delivered=under_delivered,
+        more_available=more_available,
     )

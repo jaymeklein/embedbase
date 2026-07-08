@@ -8,9 +8,11 @@ from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.dependencies import (
     get_db,
     get_reranker,
+    get_search_config,
     require_embedding_adapter,
     require_vector_store,
 )
+from api.models.config import SearchConfig
 from api.models.search import SearchRequest, SearchResponse
 from api.services.auth import require_master
 from api.services.search import multi_collection_search
@@ -26,6 +28,7 @@ async def search(
     embedder: EmbeddingAdapter = Depends(require_embedding_adapter),
     vector_store: PgvectorAdapter = Depends(require_vector_store),
     reranker: Reranker | None = Depends(get_reranker),
+    search_config: SearchConfig = Depends(get_search_config),
 ) -> SearchResponse:
     """Run a hybrid (semantic + BM25) search across one or more collections.
 
@@ -36,6 +39,7 @@ async def search(
         embedder: Embedding adapter injected via Depends.
         vector_store: Vector store adapter injected via Depends (also does FTS).
         reranker: Optional cross-encoder reranker (None when disabled/not loaded).
+        search_config: Live search config (supplies the A2 adjacency-expansion window).
 
     Returns:
         SearchResponse with ranked results and per-collection stats.
@@ -46,4 +50,6 @@ async def search(
         embedder=embedder,
         vector_store=vector_store,
         reranker=reranker,
+        expand_neighbors=search_config.effective_expand_neighbors,
+        expand_char_budget=search_config.expand_char_budget,
     )

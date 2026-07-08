@@ -33,7 +33,7 @@
 - **Two APIs** — a REST API (`/docs` for OpenAPI) and an MCP server over SSE for Claude Desktop, Cursor, and Zed.
 - **Pluggable embeddings** — Ollama, sentence-transformers, any OpenAI-compatible endpoint, or Google Gemini.
 - **Pluggable storage** — uploaded files live on local disk by default, or on any number of S3-compatible backends (self-hosted MinIO, AWS S3, …).
-- **Rich parsing** — PDF (fast PyMuPDF or OCR-capable docling), DOCX, PPTX, Markdown, code, CSV, JSON — with optional NVIDIA GPU acceleration.
+- **Document parsing** — PDF (fast PyMuPDF or OCR-capable docling), Markdown, and plain text out of the box; DOCX/PPTX when the docling backend is enabled — with optional NVIDIA GPU acceleration.
 - **Live config** — most settings are editable at runtime from the Settings UI (or `PUT /config`) with no restart.
 
 ## Architecture
@@ -253,9 +253,10 @@ parsers:
   docling_tables: true
 ```
 
-`.docx` and `.pptx` always use docling (no lightweight adapter exists), so they
-work as soon as the worker image carries the ML deps. docling models download
-lazily on first use; pre-bake them with `--build-arg EMBEDBASE_DOCLING_MODELS=true`.
+`.docx` and `.pptx` have no lightweight adapter, so they require the docling backend
+(`pdf_backend: docling`). With docling off (the default) an office-format upload is
+rejected at the API with a `415` rather than failing later in the worker. docling models
+download lazily on first use; pre-bake them with `--build-arg EMBEDBASE_DOCLING_MODELS=true`.
 
 **GPU acceleration (NVIDIA RTX only)** brings docling to ~30-80 ms/page:
 

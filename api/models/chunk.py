@@ -6,33 +6,17 @@ from pydantic import BaseModel, Field
 class ChunkMetadata(BaseModel):
     source_file: str
     filename: str
-    parser: str  # pdf | txt | markdown | code | csv | json
+    parser: str  # pdf | txt | markdown
     document_id: str
     chunk_index: int
 
-    # PDF
+    # Optional, set by whichever parser can supply it (not parser-exclusive):
     page_number: int | None = None
     total_pages: int | None = None
-    # TXT
     encoding: str | None = None
     char_count: int | None = None
-    # Markdown
     heading_path: str | None = None
     heading_level: int | None = None
-    # Code
-    language: str | None = None
-    symbol_name: str | None = None
-    symbol_type: str | None = None  # function | class | method
-    start_line: int | None = None
-    end_line: int | None = None
-    # CSV
-    columns: list[str] | None = None
-    row_range: str | None = None
-    total_rows: int | None = None
-    # JSON
-    json_shape: str | None = None  # array | object
-    depth: int | None = None
-    key_count: int | None = None
 
     tags: list[str] = []
 

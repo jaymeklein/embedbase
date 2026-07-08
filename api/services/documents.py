@@ -18,12 +18,12 @@ from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.adapters.parsers import SUPPORTED_EXTENSIONS
+from api.adapters.parsers import DOCLING_EXTENSIONS, supported_extensions
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.dependencies import get_app_config
-from api.models.config import StorageConfig
+from api.models.config import ParserConfig, StorageConfig
 from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.storage import get_storage
@@ -35,6 +35,27 @@ def _storage_config() -> StorageConfig:
     """The active storage registry, or an all-local default when config is unset."""
     config = get_app_config()
     return config.storage if config else StorageConfig()
+
+
+def _reject_unsupported(ext: str, parsers: ParserConfig | None) -> None:
+    """Raise 415 when ``ext`` is not ingestible under the active parser config.
+
+    Office formats (``.docx``/``.pptx``) require the docling backend, so when they are rejected
+    only because docling is off, the message points at the switch that enables them — the upload
+    fails here, at the API boundary, instead of later in the worker on a missing dependency.
+    """
+    if ext in supported_extensions(parsers):
+        return
+    # Reaching here for an office format means docling is not configured (else it would be
+    # supported), so point at the switch that enables it.
+    base = f"Unsupported file type: {ext!r}"
+    if ext in DOCLING_EXTENSIONS:
+        raise HTTPException(
+            415,
+            f"{base}. Office formats (.docx/.pptx) need the docling parser backend — "
+            "set parsers.pdf_backend to 'docling' to enable them.",
+        )
+    raise HTTPException(415, base)
 
 
 def document_key(col_id: str, doc_id: str, ext: str) -> str:
@@ -141,12 +162,11 @@ async def ingest(
 
     filename = file.filename or "upload"
     ext = os.path.splitext(filename)[1].lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(415, f"Unsupported file type: {ext!r}")
+    config = get_app_config()
+    _reject_unsupported(ext, config.parsers if config else None)
 
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"
-    config = get_app_config()
     max_bytes = config.max_file_size_bytes if config else None
     storage_cfg = _storage_config()
     key = document_key(col_id, doc_id, ext)
@@ -180,8 +200,8 @@ async def ingest_local_path(
 
     path = Path(file_path)
     ext = path.suffix.lower()
-    if ext not in SUPPORTED_EXTENSIONS:
-        raise HTTPException(415, f"Unsupported file type: {ext!r}")
+    config = get_app_config()
+    _reject_unsupported(ext, config.parsers if config else None)
     if not path.is_file():
         raise HTTPException(404, f"File not found: {file_path!r}")
 

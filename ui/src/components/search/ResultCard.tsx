@@ -53,11 +53,18 @@ export function ResultCard({ result, query }: { result: SearchResult; query: str
           {result.score.toFixed(3)}
         </span>
       </div>
-      {src && (src.filename || src.page_number !== null) && (
+      {src && (src.filename || src.page_number !== null || src.page_range) && (
         <p className="mb-2 flex items-center gap-1.5 text-xs text-ink-muted">
           <FileText className="h-3.5 w-3.5 shrink-0" />
           <span className="truncate">{src.filename ?? 'Unknown file'}</span>
-          {src.page_number !== null && <span className="text-ink-faint">· p.{src.page_number}</span>}
+          {/* A span merged across pages advertises its full range; a single hit shows its page. */}
+          {src.page_range ? (
+            <span className="text-ink-faint">· pp.{src.page_range}</span>
+          ) : (
+            src.page_number !== null && (
+              <span className="text-ink-faint">· p.{src.page_number}</span>
+            )
+          )}
         </p>
       )}
       <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-muted">
