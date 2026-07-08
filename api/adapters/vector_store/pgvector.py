@@ -500,6 +500,36 @@ class PgvectorAdapter:
         """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
         return self._runner.run(self._iter_document_chunks(collection_id, document_id))
 
+    async def _chunks_by_ids(
+        self, collection_id: str, chunk_ids: list[str]
+    ) -> list[SearchResult]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, text, metadata FROM chunks "
+                "WHERE collection_id = $1 AND id = ANY($2::text[])",
+                collection_id, chunk_ids,
+            )
+        return [
+            SearchResult(
+                chunk_id=row["id"], text=row["text"] or "", score=0.0,
+                metadata=self._as_dict(row["metadata"]),
+            )
+            for row in rows
+        ]
+
+    def chunks_by_ids(self, collection_id: str, chunk_ids: list[str]) -> list[SearchResult]:
+        """Fetch chunks by primary key within a collection — one indexed round-trip.
+
+        The deterministic-chunk-id lookup behind A2 adjacency expansion: given computed neighbour
+        ids ``make_chunk_id(document_id, chunk_index ± w)``, return the stored chunks (``score`` is
+        a placeholder ``0.0`` — these were not ranked). Ids that do not exist (a neighbour beyond
+        the document's bounds) are simply absent from the result.
+        """
+        if not chunk_ids:
+            return []
+        return self._runner.run(self._chunks_by_ids(collection_id, chunk_ids))
+
     async def _document_chunk_ids_at_model(
         self, collection_id: str, document_id: str, model: str
     ) -> set[str]:

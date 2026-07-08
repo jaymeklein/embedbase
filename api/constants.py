@@ -29,3 +29,8 @@ RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
 # and the LLM chat transport — both hit ``{host}/v1beta/models/{model}:<verb>`` with an
 # ``x-goog-api-key`` header, so the host lives in one place.
 GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com"
+
+# A2 adjacency expansion: soft cap on an assembled span's text (farthest neighbours dropped
+# first). The SearchConfig field default and the multi_collection_search / search_documents
+# parameter fallbacks all read this one value so a retune stays a single edit.
+DEFAULT_EXPAND_CHAR_BUDGET: int = 8000
