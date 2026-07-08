@@ -89,6 +89,19 @@ Skipping step 1 or step 4 is the exact failure mode this document prevents.
   field must be added to `SECRET_PATHS` in
   [`api/services/config_service.py`](api/services/config_service.py) so it is masked
   on GET and preserved on PUT.
+- **Database access — ORM only for the metadata DB.** The metadata DB (workspaces,
+  collections, documents, tags, api_keys, job_records) goes through the **SQLAlchemy
+  2.0 async ORM**: engine + session in [`api/db.py`](api/db.py), table objects in
+  [`api/tables/`](api/tables/), every schema change an Alembic migration in
+  `api/alembic/versions/`. **Do not hand-write raw SQL against the metadata DB** —
+  build queries with `select(...)` and the table objects on the injected
+  `AsyncSession`. The **one** sanctioned exception is the pgvector vector store
+  ([`api/adapters/vector_store/pgvector.py`](api/adapters/vector_store/pgvector.py)):
+  the `chunks` table has no ORM model and is accessed with raw, **parameterised**
+  asyncpg, because it needs pgvector (`<=>`) and ParadeDB `pg_search` (`|||`,
+  `pdb.score`) operators the ORM can't express, on a loop-bound pool the request
+  `AsyncSession` can't share. New `chunks` queries follow that adapter's raw-asyncpg
+  sibling pattern (simple ones inline, complex ones as module-level `_*_SQL` constants).
 - **Tests** live in `tests/{unit,integration,smoke}`. Unit tests touch no network,
   DB, or Redis — use the shared fakes. **Every behavioural change ships with a test.**
 
