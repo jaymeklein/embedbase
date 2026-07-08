@@ -15,3 +15,17 @@ REDIS_URL: str = f"redis://redis:{REDIS_PORT}/0"
 # Correspond to the API_PORT and UI_PORT env vars consumed by docker-compose.yml.
 API_HOST_PORT: int = 8000
 UI_HOST_PORT: int = 3000
+
+# Cross-encoder reranker vendored into the api image at build time. The env var + its default
+# locate the baked model dir (read by api/adapters/reranker/cross_encoder.py); RERANKER_MODEL is
+# the default model id (RerankerConfig.model). The standalone build script
+# api/scripts/fetch_reranker_model.py mirrors all three literals because it runs before the api/
+# package is copied (see api/Dockerfile) and so cannot import this module — keep them in sync.
+MODELS_DIR_ENV: str = "EMBEDBASE_MODELS_DIR"
+MODELS_DIR_DEFAULT: str = "/opt/models"
+RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
+
+# Native Google Generative Language (Gemini) REST host. Shared by the embeddings Gemini adapter
+# and the LLM chat transport — both hit ``{host}/v1beta/models/{model}:<verb>`` with an
+# ``x-goog-api-key`` header, so the host lives in one place.
+GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com"

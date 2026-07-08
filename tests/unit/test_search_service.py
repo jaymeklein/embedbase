@@ -14,6 +14,7 @@ from api.services.search import (
     multi_collection_search,
     search_collection,
 )
+from tests.unit.fakes import FakeEmbedder
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -110,18 +111,6 @@ class AsyncRunEmbedder:
             return [0.1, 0.2, 0.3]
 
         return asyncio.run(_go())
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [[0.1, 0.2, 0.3]] * len(texts)
-
-    @property
-    def dimensions(self) -> int:
-        return 3
-
-
-class FakeEmbedder:
-    def embed(self, text: str) -> list[float]:
-        return [0.1, 0.2, 0.3]
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2, 0.3]] * len(texts)
@@ -392,6 +381,25 @@ def test_search_collection_no_reranker_keeps_order():
     assert [r.chunk_id for r in results] == ["a", "b"]
 
 
+class _RaisingReranker:
+    """Test reranker that raises — proves search_collection's call-site backstop degrades."""
+
+    def rerank(self, query: str, results: list[SearchResult]) -> list[SearchResult]:
+        raise RuntimeError("reranker exploded")
+
+
+def test_search_collection_reranker_failure_degrades_to_prior_order():
+    # An optional stage must never 500 the search: a raising reranker → pre-rerank order.
+    candidates = [_result("a", score=0.9), _result("b", score=0.5)]
+    vs = FakeVectorStore(candidates)
+    results, _, _, _ = search_collection(
+        "col1", [0.1], "q", top_k=5,
+        mode=SearchMode.SEMANTIC, vector_store=vs,
+        reranker=_RaisingReranker(),
+    )
+    assert [r.chunk_id for r in results] == ["a", "b"]  # unchanged, no exception raised
+
+
 def test_search_collection_filters_applied_after_ranking():
     candidates = [
         _result("c1", language="python"),
@@ -526,6 +534,52 @@ async def test_multi_collection_search_embedder_using_asyncio_run_does_not_crash
         vector_store=vs,
     )
     assert [r.chunk_id for r in response.results] == ["c1"]
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_flags_more_available_on_plateau():
+    """Plan A3: when the ranked pool exceeds top_k AND the shown results are on a score
+    plateau (tail ≈ top), the cut likely severed relevant matches → more_available=True."""
+    candidates = [
+        _result("c1", score=0.99), _result("c2", score=0.98), _result("c3", score=0.97),
+        _result("c4", score=0.50), _result("c5", score=0.40), _result("c6", score=0.30),
+    ]
+    vs = FakeVectorStore(candidates)
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=3)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert len(response.results) == 3
+    assert response.collection_stats["col1"].returned_after_filter == 6  # pool > shown
+    assert response.more_available is True
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_no_more_available_on_elbow():
+    """A sharp score elbow (tail ≪ top) means the returned results are genuinely the relevant
+    ones — stay quiet so the signal keeps its meaning (don't cry wolf)."""
+    candidates = [
+        _result("c1", score=0.99), _result("c2", score=0.50), _result("c3", score=0.40),
+        _result("c4", score=0.30), _result("c5", score=0.20), _result("c6", score=0.10),
+    ]
+    vs = FakeVectorStore(candidates)
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=3)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert response.more_available is False  # 0.40 / 0.99 < 0.9 → elbow, not truncation
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_no_more_available_when_complete():
+    """Pool did not exceed the returned results → nothing was cut → more_available=False."""
+    candidates = [_result("c1", score=0.9), _result("c2", score=0.8)]
+    vs = FakeVectorStore(candidates)
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert response.more_available is False
 
 
 @pytest.mark.asyncio

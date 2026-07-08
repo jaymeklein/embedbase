@@ -62,6 +62,7 @@ _Snapshot = tuple[Any, Any, Any, AppConfig]
 SECRET_PATHS: tuple[tuple[str, ...], ...] = (
     ("embedding", "api_key"),
     ("vector_store", "password"),
+    ("reranker", "api_key"),
     ("tagging", "suggester", "api_key"),
 )
 SECRET_MASK = "__SECRET_SET__"
