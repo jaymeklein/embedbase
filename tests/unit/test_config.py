@@ -15,7 +15,6 @@ def test_defaults_are_populated():
     assert cfg.vector_store.port == POSTGRES_PORT
     assert cfg.chunking.sliding_window.max_tokens == 512
     assert cfg.chunking.sliding_window.overlap_tokens == 64
-    assert cfg.chunking.csv.rows_per_chunk == 10
     assert cfg.search.hybrid_default_alpha == 0.7
     assert cfg.mcp.rate_limit_rpm == 60
 

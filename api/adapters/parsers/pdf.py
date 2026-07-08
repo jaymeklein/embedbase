@@ -52,9 +52,6 @@ class PDFParser:
     def __init__(self, config: ChunkingConfig | None = None) -> None:
         self._config = config
 
-    def supported_extensions(self) -> list[str]:
-        return [".pdf"]
-
     def parse(
         self,
         file_path: str,

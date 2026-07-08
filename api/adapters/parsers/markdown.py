@@ -52,9 +52,6 @@ class MarkdownParser:
             self._max_tokens = 512
             self._overlap = 64
 
-    def supported_extensions(self) -> list[str]:
-        return [".md", ".markdown"]
-
     def parse(self, file_path: str, document_id: str) -> list[Chunk]:
         import mistune
 

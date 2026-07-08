@@ -29,9 +29,9 @@ async def upload_document(
 ):
     """Upload and enqueue a document for ingestion.
 
-    Accepted formats: PDF, TXT, Markdown, source code (py/js/ts/go/rs/java etc.),
-    CSV, JSON, and -- via the docling parser -- DOCX and PPTX. Set ``temporary`` to
-    auto-purge the document after ``storage.temp_retention_hours`` (no-op when 0).
+    Accepted formats: PDF, TXT, and Markdown; DOCX and PPTX also require the docling
+    parser backend (``parsers.pdf_backend: docling``). Set ``temporary`` to auto-purge
+    the document after ``storage.temp_retention_hours`` (no-op when 0).
     """
     await doc_svc.resolve_collection(db, col_id, ws_id)
     return await doc_svc.ingest(db, col_id, file, principal, temporary=temporary)

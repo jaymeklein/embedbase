@@ -124,10 +124,10 @@ async def seeded():
     store = _SeededVectorStore(
         {
             "colA": [
-                _result("a1", 0.9, document_id="docA", filename="a.pdf", language="python"),
-                _result("a2", 0.5, document_id="docA2", filename="a2.pdf", language="rust"),
+                _result("a1", 0.9, document_id="docA", filename="a.pdf"),
+                _result("a2", 0.5, document_id="docA2", filename="a2.pdf"),
             ],
-            "colB": [_result("b1", 0.8, document_id="docB", filename="b.md", language="go")],
+            "colB": [_result("b1", 0.8, document_id="docB", filename="b.md")],
         }
     )
     yield factory, store

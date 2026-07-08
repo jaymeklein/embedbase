@@ -28,7 +28,6 @@ from api.models.chunk import Chunk, ChunkMetadata
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".pptx"]
 _VALID_DEVICES = ("cpu", "cuda", "auto")
 # Flash Attention 2 requires Ampere or newer; Turing (RTX 20 series, incl. the
 # 2060 Super at 7.5) is below this and falls back to standard CUDA attention.
@@ -225,10 +224,6 @@ class DoclingParser:
         self._max_tokens = max_tokens
         self._converter: Any = None
         self._chunker: Any = None
-
-    def supported_extensions(self) -> list[str]:
-        """Return the file extensions this parser can handle."""
-        return list(SUPPORTED_EXTENSIONS)
 
     def _accelerator_options(self) -> Any:
         """Build docling ``AcceleratorOptions`` from the configured device."""
