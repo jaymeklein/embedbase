@@ -36,14 +36,11 @@ def _matches(result: SearchResult, filters: SearchFilters) -> bool:
     Returns:
         True if the result matches all provided filters, otherwise False.
     """
-    language = filters.language
     filename = filters.filename
     tags = filters.tags
 
-    if not language and not filename and not tags:
+    if not filename and not tags:
         return True
-    if language and result.metadata.get("language") != language:
-        return False
     if filename and result.metadata.get("filename") != filename:
         return False
     if tags:

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from api.adapters.parsers import SUPPORTED_EXTENSIONS, get_parser
+from api.adapters.parsers import get_parser, supported_extensions
 from api.adapters.parsers.docling_adapter import DoclingParser
 from api.adapters.parsers.pdf import PDFParser
 from api.models.config import AppConfig, ParserConfig
@@ -52,15 +52,23 @@ def test_pdf_backend_docling_routes_to_docling():
     assert isinstance(parser, DoclingParser)
 
 
-def test_docx_and_pptx_always_route_to_docling():
-    assert isinstance(get_parser(".docx"), DoclingParser)
-    assert isinstance(get_parser(".pptx"), DoclingParser)
-    # Even when the PDF backend is pymupdf, office formats still use docling.
-    assert isinstance(get_parser(".docx", parsers=ParserConfig(pdf_backend="pymupdf")), DoclingParser)
+def test_office_formats_route_to_docling_when_configured():
+    cfg = ParserConfig(pdf_backend="docling")
+    assert isinstance(get_parser(".docx", parsers=cfg), DoclingParser)
+    assert isinstance(get_parser(".pptx", parsers=cfg), DoclingParser)
 
 
-def test_supported_extensions_include_office_formats():
-    assert {".docx", ".pptx"}.issubset(SUPPORTED_EXTENSIONS)
+def test_office_formats_rejected_when_docling_not_configured():
+    # docx/pptx require docling; with the default/pymupdf backend they are unsupported, so
+    # get_parser raises up front instead of building a docling parser that would fail later.
+    for parsers in (None, ParserConfig(), ParserConfig(pdf_backend="pymupdf")):
+        with pytest.raises(ValueError, match="No parser registered"):
+            get_parser(".docx", parsers=parsers)
+
+
+def test_supported_extensions_gate_office_on_docling():
+    assert {".docx", ".pptx"}.isdisjoint(supported_extensions())  # default: core formats only
+    assert {".docx", ".pptx"}.issubset(supported_extensions(ParserConfig(pdf_backend="docling")))
 
 
 def test_docling_supported_extensions():

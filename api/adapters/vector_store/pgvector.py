@@ -144,19 +144,15 @@ def _metadata_filter_sql(
     """Build an AND-chained WHERE fragment + params for metadata pre-filtering.
 
     Placeholders start at ``$<next_param>`` so callers append the returned params
-    after their fixed args. Mirrors ``api.services.search._matches``: language and
-    filename are exact-match; ``tags`` requires every requested tag present (jsonb
-    array containment ``@>``). Returns ``("", [])`` when there is nothing to filter.
+    after their fixed args. Mirrors ``api.services.search._matches``: filename is
+    exact-match; ``tags`` requires every requested tag present (jsonb array
+    containment ``@>``). Returns ``("", [])`` when there is nothing to filter.
     """
     if filters is None:
         return "", []
     conditions: list[str] = []
     params: list[Any] = []
     idx = next_param
-    if filters.language:
-        conditions.append(f"metadata->>'language' = ${idx}")
-        params.append(filters.language)
-        idx += 1
     if filters.filename:
         conditions.append(f"metadata->>'filename' = ${idx}")
         params.append(filters.filename)
@@ -383,7 +379,7 @@ class PgvectorAdapter:
             collection_id: Collection to search.
             vector: Query embedding.
             top_k: Maximum results to return.
-            filters: Optional metadata pre-filter (language/filename/tags) folded
+            filters: Optional metadata pre-filter (filename/tags) folded
                 into the SQL ``WHERE`` (Phase 4 pushdown) so the DB returns only
                 matching rows — fewer scanned, correct top-k under restrictive
                 filters. The search service still re-applies them portably.

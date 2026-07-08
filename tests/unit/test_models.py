@@ -129,7 +129,6 @@ def test_chunk_metadata_optional_fields_default_none():
     )
     assert md.page_number is None
     assert md.heading_path is None
-    assert md.language is None
     assert md.tags == []
 
 

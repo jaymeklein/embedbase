@@ -13,23 +13,21 @@ const MODES: { value: SearchModeRequest; label: string }[] = [
 ]
 
 interface FilterForm {
-  language: string
   filename: string
   tags: string
 }
 
-const EMPTY_FILTERS: FilterForm = { language: '', filename: '', tags: '' }
+const EMPTY_FILTERS: FilterForm = { filename: '', tags: '' }
 
 /** Build a `SearchFilters` payload, or undefined when no filter is set. */
 function buildFilters(f: FilterForm): SearchFilters | undefined {
-  const language = f.language.trim() || undefined
   const filename = f.filename.trim() || undefined
   const tags = f.tags
     .split(',')
     .map((t) => t.trim())
     .filter(Boolean)
-  if (!language && !filename && tags.length === 0) return undefined
-  return { language, filename, tags: tags.length > 0 ? tags : undefined }
+  if (!filename && tags.length === 0) return undefined
+  return { filename, tags: tags.length > 0 ? tags : undefined }
 }
 
 /** Two-pane hybrid search: pick collections, query, read ranked chunks. */
@@ -205,15 +203,7 @@ function Controls({
         </button>
       </div>
       {showFilters && (
-        <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-3">
-          <Field label="Language" htmlFor="f-lang">
-            <Input
-              id="f-lang"
-              value={filters.language}
-              onChange={(e) => setFilters({ ...filters, language: e.target.value })}
-              placeholder="e.g. en"
-            />
-          </Field>
+        <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-2">
           <Field label="Filename" htmlFor="f-file">
             <Input
               id="f-file"

@@ -36,7 +36,7 @@ def _factory(tmp_path):
     return sessionmaker(engine, class_=Session, expire_on_commit=False)
 
 
-# ── _chunk_label: first non-empty of heading → page → symbol → text ───────────
+# ── _chunk_label: first non-empty of heading → page → text ───────────
 
 
 def test_chunk_label_prefers_heading_path():
@@ -45,10 +45,6 @@ def test_chunk_label_prefers_heading_path():
 
 def test_chunk_label_falls_back_to_page_number():
     assert wt._chunk_label(_chunk(page_number=7)) == "p.7"
-
-
-def test_chunk_label_falls_back_to_symbol_name():
-    assert wt._chunk_label(_chunk(symbol_name="my_func")) == "my_func"
 
 
 def test_chunk_label_falls_back_to_collapsed_text():
