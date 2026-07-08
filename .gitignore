@@ -32,8 +32,8 @@ ui/dist/
 .DS_Store
 Thumbs.db
 
-# AI assistant instructions (local only)
-CLAUDE.md
+# AI assistant local session data. CLAUDE.md is intentionally committed — it is the
+# repo's working agreement / coding standard, enforced for everyone (see the file).
 .claude/*
 .vscode/launch.json
 .vscode/settings.json
