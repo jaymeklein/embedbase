@@ -25,9 +25,6 @@ def test_embedding_adapter_conformance():
 
 def test_incomplete_object_is_not_a_parser():
     class NotAParser:
-        def parse(self, file_path, document_id):
-            return []
-
-        # missing supported_extensions
+        pass  # missing the required parse()
 
     assert not isinstance(NotAParser(), ParserAdapter)

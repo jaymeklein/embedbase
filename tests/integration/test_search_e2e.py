@@ -131,10 +131,10 @@ async def search_app():
     store = _SeededVectorStore(
         {
             "colA": [
-                _result("a1", 0.9, document_id="docA", filename="a.pdf", language="python"),
-                _result("a2", 0.5, document_id="docA2", filename="a2.pdf", language="rust"),
+                _result("a1", 0.9, document_id="docA", filename="a.pdf"),
+                _result("a2", 0.5, document_id="docA2", filename="a2.pdf"),
             ],
-            "colB": [_result("b1", 0.8, document_id="docB", filename="b.md", language="go")],
+            "colB": [_result("b1", 0.8, document_id="docB", filename="b.md")],
         }
     )
 
@@ -178,13 +178,13 @@ async def test_under_delivered_on_selective_filter(search_app):
             "query": "vectors",
             "collection_ids": ["colA", "colB"],
             "top_k": 10,
-            "filters": {"language": "rust"},
+            "filters": {"filename": "a2.pdf"},
         },
         headers=AUTH,
     )
     assert r.status_code == 200
     body = r.json()
-    # Only a2 is tagged language=rust; the rest are filtered out.
+    # Only a2 has filename a2.pdf; the rest are filtered out.
     assert [res["chunk_id"] for res in body["results"]] == ["a2"]
     assert body["under_delivered"] is True
 

@@ -9,7 +9,7 @@ Update the checkboxes as PRs merge. `[ ]` = todo, `[~]` = in progress, `[x]` = d
 
 | # | PR | Problem it fixes | Status |
 |---|----|------------------|--------|
-| 1 | Real reranker | RRF only *fuses scores*; nothing reads query+chunk together | `[~]` in progress |
+| 1 | Real reranker | RRF only *fuses scores*; nothing reads query+chunk together | `[x]` done (+ pluggable via A5) |
 | 2 | Contextual retrieval at ingestion | Naive window chunks lose their document context | `[ ]` todo |
 | 3 | Modern embedding model | `all-MiniLM-L6-v2` (2021, 384-dim) caps recall | `[ ]` todo |
 | 4 | Query transformation (HyDE / multi-query) | Raw query embedded as-is; weak on vague/multi-hop | `[ ]` todo |
@@ -19,7 +19,7 @@ errors, search falls back to the previous behaviour — never a 500.
 
 ---
 
-## PR 1 — Real reranker (cross-encoder second stage) `[~]`
+## PR 1 — Real reranker (cross-encoder second stage) `[x]`
 
 **Why.** Today `_rank_candidates` "re-ranks" by Reciprocal Rank Fusion — that is
 *score fusion*, not semantic reranking. A cross-encoder reads the query and each
@@ -33,12 +33,14 @@ before the `top_k` cut.
 for embeddings, mirrors how the embedding model loads. New `Reranker` adapter
 (Protocol + registry), wired as an optional singleton like the embedder.
 
-**On by default** (`reranker.enabled: true`). The cross-encoder (~80 MB) loads at
-startup via the `api/main.py` warm-up (failure ⇒ RRF-only, never a 500), so it's
-the first *boot* that fetches it — bake it into the image for fast/offline boot.
-Set `enabled: false` in `config.yaml` (or the config page) to turn it off.
-See [`plans/context-aware-retrieval.md`](../plans/context-aware-retrieval.md) for
-the completeness track that builds on this.
+**On by default** (`reranker.enabled: true`). The cross-encoder (~80 MB) is **baked into the api
+image** (`api/scripts/fetch_reranker_model.py`) and loaded from disk at the `api/main.py` warm-up, so
+boot is fast and offline-safe (a build failure ⇒ RRF-only, never a 500; the `/healthz` `reranker`
+field surfaces that degrade). Set `enabled: false` in `config.yaml` (or the config page) to turn it
+off. The stage is now **provider-pluggable** (`cross_encoder | rerank_api | llm`) and editable from
+the UI — see the A5 slice in
+[`plans/context-aware-retrieval.md`](../plans/context-aware-retrieval.md), the completeness track
+that builds on this.
 
 - [x] `Reranker` Protocol in `api/adapters/base.py`
 - [x] `RerankerConfig` in `api/models/config.py` + `AppConfig.reranker`
@@ -49,7 +51,7 @@ the completeness track that builds on this.
 - [x] Thread through `search_collection` → rerank candidate pool before `[:top_k]`
 - [x] Pass from REST router + MCP server/tools
 - [x] Tests: reranker unit, registry, search wiring, warm-up
-- [ ] Config-page toggle (UI) — optional, can trail the backend
+- [x] Config-page toggle (UI) — shipped with the A5 pluggable-reranker section in `ConfigPanel`
 
 **Insertion point.** Per-collection, inside `search_collection`, after
 `apply_filters` and before the `top_k` truncation — so it reorders the full

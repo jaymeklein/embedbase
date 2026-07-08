@@ -182,14 +182,13 @@ def test_metadata_filter_sql_empty_when_no_filters():
 
 def test_metadata_filter_sql_builds_anded_numbered_conditions():
     frag, params = _metadata_filter_sql(
-        SearchFilters(language="python", filename="f.py", tags=["ml", "nlp"]), 4
+        SearchFilters(filename="f.py", tags=["ml", "nlp"]), 4
     )
     assert frag == (
-        " AND metadata->>'language' = $4"
-        " AND metadata->>'filename' = $5"
-        " AND metadata->'tags' @> $6::jsonb"
+        " AND metadata->>'filename' = $4"
+        " AND metadata->'tags' @> $5::jsonb"
     )
-    assert params == ["python", "f.py", '["ml", "nlp"]']
+    assert params == ["f.py", '["ml", "nlp"]']
 
 
 def test_search_folds_filter_into_where_and_appends_params():
@@ -234,14 +233,14 @@ def test_hybrid_search_folds_filter_into_both_ctes():
     adapter = _adapter(conn)
 
     adapter.hybrid_search(
-        "col1", [0.1, 0.2, 0.3], "q", top_k=5, filters=SearchFilters(language="python")
+        "col1", [0.1, 0.2, 0.3], "q", top_k=5, filters=SearchFilters(filename="f.py")
     )
 
     sql, args = conn.fetch_calls[0]
     # The pushdown predicate ($7) must appear in BOTH the semantic and bm25 CTE so a
     # restrictive filter cuts rows during each candidate scan, not after the fusion.
-    assert sql.count("metadata->>'language' = $7") == 2
-    assert args == ([0.1, 0.2, 0.3], "col1", 5, "q", 60, 0.7, "python")
+    assert sql.count("metadata->>'filename' = $7") == 2
+    assert args == ([0.1, 0.2, 0.3], "col1", 5, "q", 60, 0.7, "f.py")
 
 
 def test_hybrid_search_matched_reports_fused_score():

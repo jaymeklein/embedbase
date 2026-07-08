@@ -60,10 +60,24 @@ def lan_ip() -> str:
         s.close()
 
 
+def _reranker_status(config: AppConfig | None, reranker_loaded: bool) -> str:
+    """Reranker readiness for the health payload.
+
+    ``"disabled"`` when the stage is off; ``"ready"`` when it loaded; ``"unavailable"`` when it is
+    on-by-default but its model failed to build — search still works (it degrades to RRF-only), so
+    this surfaces that silent fallback without failing the liveness check.
+    """
+    if config is None or not config.reranker.enabled:
+        return "disabled"
+    return "ready" if reranker_loaded else "unavailable"
+
+
 async def build_health(
     store: PgvectorAdapter | None,
     embedding_adapter: EmbeddingAdapter | None,
     config: AppConfig | None = None,
+    *,
+    reranker_loaded: bool = False,
 ) -> dict[str, Any]:
     """Assemble the ``/healthz`` payload.
 
@@ -77,6 +91,7 @@ async def build_health(
         store: The active vector-store adapter, or None before startup completes.
         embedding_adapter: The active embedding adapter, or None before startup.
         config: The live application config, or None before startup completes.
+        reranker_loaded: Whether the reranker singleton is built (``get_reranker() is not None``).
 
     Returns:
         The health document serialised by the route handler.
@@ -91,6 +106,8 @@ async def build_health(
         "embedding_provider": config.embedding.provider if config else "unknown",
         "embedding_model": config.embedding.model if config else "unknown",
         "embedding_model_loaded": embedding_adapter is not None,
+        # On-by-default reranker: "unavailable" flags a silent degrade to RRF-only ranking.
+        "reranker": _reranker_status(config, reranker_loaded),
         "uptime_seconds": int(time.time() - _START_TIME),
         "lan_ip": lan_ip(),
     }
