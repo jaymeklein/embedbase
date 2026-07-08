@@ -81,6 +81,19 @@ async def test_upload_unsupported_type_returns_415(client):
     assert r.status_code == 415
 
 
+async def test_upload_docx_rejected_without_docling_returns_415(client):
+    # .docx needs the docling backend; with the default config docling is off, so the office
+    # format is rejected up front (415) — not accepted and then failed later in the worker.
+    ws_id, col_id = await _setup(client)
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents",
+        files={"file": ("deck.docx", b"data", "application/octet-stream")},
+        headers=AUTH,
+    )
+    assert r.status_code == 415
+    assert "docling" in r.json()["detail"].lower()
+
+
 async def test_upload_unknown_collection_returns_404(client):
     ws_id, _ = await _setup(client)
     r = await client.post(

@@ -410,13 +410,13 @@ def test_search_collection_reranker_failure_degrades_to_prior_order():
 
 def test_search_collection_filters_applied_after_ranking():
     candidates = [
-        _result("c1", language="python"),
-        _result("c2", language="go"),
+        _result("c1", filename="a.py"),
+        _result("c2", filename="b.py"),
     ]
     vs = FakeVectorStore(candidates)
     results, _, retrieved, returned = search_collection(
         "col1", [0.1], "q", top_k=5,
-        mode=SearchMode.SEMANTIC, filters=SearchFilters(language="python"),
+        mode=SearchMode.SEMANTIC, filters=SearchFilters(filename="a.py"),
         vector_store=vs,
     )
     assert retrieved == 2

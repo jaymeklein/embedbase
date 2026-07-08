@@ -85,7 +85,7 @@ async def search_documents(
         collection_ids: Collections to fan out across (at least one).
         top_k: Desired number of results; clamped to ``[1, max_results]``.
         hybrid: When ``True`` fuse BM25 with semantic scores (RRF).
-        filters: Optional ``language``/``filename``/``tags`` metadata filter.
+        filters: Optional ``filename``/``tags`` metadata filter.
         max_results: Upper bound on ``top_k`` (from ``mcp.max_results`` config).
         expand_neighbors: A2 adjacency window pulled around each hit (0 = off).
         expand_char_budget: Soft cap on an assembled span's text.

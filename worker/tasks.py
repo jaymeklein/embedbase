@@ -366,8 +366,6 @@ def _chunk_label(chunk: Chunk) -> str:
         return md.heading_path[:80]
     if md.page_number is not None:
         return f"p.{md.page_number}"
-    if md.symbol_name:
-        return md.symbol_name[:80]
     return " ".join(chunk.text.split())[:80]
 
 

@@ -61,19 +61,8 @@ class SlidingWindowConfig(BaseModel):
     overlap_tokens: int = 64
 
 
-class CsvChunkConfig(BaseModel):
-    rows_per_chunk: int = 10
-
-
-class CodeChunkConfig(BaseModel):
-    max_symbol_tokens: int = 4096
-    fallback_window_lines: int = 50
-
-
 class ChunkingConfig(BaseModel):
     sliding_window: SlidingWindowConfig = SlidingWindowConfig()
-    csv: CsvChunkConfig = CsvChunkConfig()
-    code: CodeChunkConfig = CodeChunkConfig()
 
 
 class SearchConfig(BaseModel):
