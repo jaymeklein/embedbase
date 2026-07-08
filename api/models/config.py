@@ -3,7 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from api.constants import POSTGRES_PORT
+from api.constants import POSTGRES_PORT, RERANKER_MODEL
 
 
 def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: str = "") -> None:
@@ -85,17 +85,31 @@ class SearchConfig(BaseModel):
 
 
 class RerankerConfig(BaseModel):
-    # Cross-encoder second-stage reranker. Reorders the over-fetched candidate
-    # pool by true query-document relevance before the top_k cut — the biggest
-    # precision win over RRF-only fusion. LLM-free: a local sentence-transformers
-    # CrossEncoder, like the embedding model. On by default; the default model
-    # (~80MB) is baked into the api image at build time and loaded from disk, so
-    # it needs no HuggingFace access at runtime (see api/adapters/reranker). A
-    # non-vendored model still loads from the Hub. Set ``enabled: false`` to disable.
+    # Second-stage reranker: reorders the over-fetched candidate pool by true
+    # query-document relevance before the top_k cut — the biggest precision win over
+    # RRF-only fusion. On by default; a build/load failure degrades to RRF-only
+    # ranking (never a 500), so enabling it is safe.
+    #
+    # The stage is provider-pluggable, mirroring the embedding adapter:
+    #   - "cross_encoder": local sentence-transformers CrossEncoder (LLM-free). The
+    #     default model (~80MB) is baked into the api image and loaded from disk, so
+    #     it needs no HuggingFace access at runtime (see api/adapters/reranker). A
+    #     non-vendored model still loads from the Hub.
+    #   - "rerank_api": a hosted /rerank endpoint (Cohere / Jina / Voyage). ``base_url``
+    #     is the full endpoint; ``api_key`` is the bearer token.
+    #   - "llm": LLM-as-reranker (pointwise relevance scoring) over a chat model, with
+    #     ``llm_provider`` selecting the backend. Heavier — practical only against a
+    #     fast remote endpoint.
+    # Set ``enabled: false`` to disable the stage entirely.
     enabled: bool = True
-    provider: str = "cross_encoder"  # "cross_encoder"
-    model: str = "cross-encoder/ms-marco-MiniLM-L6-v2"
-    top_n: int = 50  # max candidates scored per collection (caps cross-encoder cost)
+    provider: str = "cross_encoder"  # "cross_encoder" | "rerank_api" | "llm"
+    model: str = RERANKER_MODEL
+    # Chat backend for the "llm" provider only (ignored otherwise).
+    llm_provider: str = "gemini"  # "ollama" | "openai_compat" | "gemini"
+    base_url: str | None = None  # rerank_api endpoint / llm base URL (blank = provider default)
+    api_key: str | None = None  # bearer token for the hosted/LLM provider (secret; masked on GET)
+    top_n: int = 50  # max candidates scored per collection (caps rerank cost)
+    timeout_seconds: float = 60.0  # per-request timeout for the remote providers
 
 
 class ParserConfig(BaseModel):

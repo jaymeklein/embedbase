@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from api.adapters.reranker.reorder import rerank_by_scores
+from api.constants import MODELS_DIR_DEFAULT, MODELS_DIR_ENV
 from api.models.search import SearchResult
 
 # Directory where the image bakes vendored reranker models (see api/Dockerfile).
@@ -11,7 +13,7 @@ from api.models.search import SearchResult
 # because some networks block the HEAD requests the Hub uses for cache metadata —
 # so a runtime Hub download fails even when the model is otherwise reachable.
 # Loading a baked copy from disk sidesteps the Hub entirely and is offline-safe.
-_MODELS_DIR = os.environ.get("EMBEDBASE_MODELS_DIR", "/opt/models")
+_MODELS_DIR = os.environ.get(MODELS_DIR_ENV, MODELS_DIR_DEFAULT)
 
 
 def _resolve_model(model_name: str) -> str:
@@ -31,11 +33,10 @@ def _resolve_model(model_name: str) -> str:
 class CrossEncoderReranker:
     """Reorders candidates by joint query-document relevance (Reranker Protocol).
 
-    Scores at most ``top_n`` candidates with a cross-encoder and sorts them by
-    that score; any candidates beyond ``top_n`` keep their incoming order and
-    trail the reranked head. Only ``rank`` is rewritten — the response ``score``
-    is overwritten downstream by the cross-collection RRF merge, so the raw
-    cross-encoder logits are never surfaced.
+    Scores at most ``top_n`` candidates with a local cross-encoder and sorts them by that
+    score; candidates beyond ``top_n`` keep their incoming order and trail the reranked head.
+    The shared :func:`rerank_by_scores` owns the reorder + graceful-degradation bookkeeping,
+    so a model failure degrades to the pre-rerank order rather than 500-ing the search.
     """
 
     def __init__(self, model_name: str, top_n: int = 50) -> None:
@@ -45,16 +46,10 @@ class CrossEncoderReranker:
         self._top_n = max(1, top_n)
 
     def rerank(self, query: str, results: list[SearchResult]) -> list[SearchResult]:
-        if len(results) < 2:
-            return results
-        head, tail = results[: self._top_n], results[self._top_n :]
-        scores = self._model.predict([(query, r.text) for r in head])
-        scored = sorted(zip(head, scores, strict=True), key=lambda p: p[1], reverse=True)
-        ordered = []
-        for r, s in scored:
-            r.score = float(s)  # surface the cross-encoder relevance as the result score
-            ordered.append(r)
-        ranked = ordered + tail
-        for rank, result in enumerate(ranked, start=1):
-            result.rank = rank
-        return ranked
+        return rerank_by_scores(
+            query,
+            results,
+            self._top_n,
+            lambda q, texts: self._model.predict([(q, text) for text in texts]),
+            provider="cross_encoder",
+        )
