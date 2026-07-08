@@ -56,7 +56,12 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
         hybrid: bool = True,
         filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Hybrid semantic + keyword search across one or more collections."""
+        """Hybrid semantic + keyword search across one or more collections.
+
+        The response carries a ``more_available`` flag; when relevant chunks fell below the
+        ``top_k`` cut it also includes a ``notice`` string. If a ``notice`` is present and the
+        answer looks incomplete, re-run with a higher ``top_k`` before responding.
+        """
         embedder = _require(get_embedding_adapter(), "Embedding")
         vector_store = _require(get_vector_store(), "Vector store")
         async with AsyncSessionLocal() as db:
@@ -74,11 +79,18 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
             )
 
     @server.tool()
-    async def ingest_document(collection_id: str, file_path: str) -> dict[str, Any]:
-        """Ingest a container-local file (by path) into a collection."""
+    async def ingest_document(
+        collection_id: str, file_path: str, temporary: bool = False
+    ) -> dict[str, Any]:
+        """Ingest a container-local file (by path) into a collection.
+
+        Set ``temporary`` to auto-purge the document after
+        ``storage.temp_retention_hours`` (a no-op when retention is 0).
+        """
         async with AsyncSessionLocal() as db:
             return await tools.ingest_document(
-                collection_id=collection_id, file_path=file_path, db=db
+                collection_id=collection_id, file_path=file_path,
+                temporary=temporary, db=db,
             )
 
     @server.tool()
