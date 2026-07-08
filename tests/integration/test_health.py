@@ -15,7 +15,9 @@ async def test_healthz_status_ok(client):
 
 async def test_healthz_required_fields_present(client):
     data = (await client.get("/healthz")).json()
-    for field in ("status", "service", "version", "uptime_seconds", "embedding_model_loaded"):
+    for field in (
+        "status", "service", "version", "uptime_seconds", "embedding_model_loaded", "reranker",
+    ):
         assert field in data, f"Missing field: {field}"
 
 

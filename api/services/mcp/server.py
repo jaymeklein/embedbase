@@ -25,6 +25,7 @@ from api.db import AsyncSessionLocal
 from api.dependencies import (
     get_embedding_adapter,
     get_reranker,
+    get_search_config,
     get_vector_store,
 )
 from api.models.config import MCPConfig
@@ -64,6 +65,7 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
         """
         embedder = _require(get_embedding_adapter(), "Embedding")
         vector_store = _require(get_vector_store(), "Vector store")
+        search_config = get_search_config()
         async with AsyncSessionLocal() as db:
             return await tools.search_documents(
                 query=query,
@@ -72,6 +74,8 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
                 hybrid=hybrid,
                 filters=filters,
                 max_results=max_results,
+                expand_neighbors=search_config.effective_expand_neighbors,
+                expand_char_budget=search_config.expand_char_budget,
                 db=db,
                 embedder=embedder,
                 vector_store=vector_store,
