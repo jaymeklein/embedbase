@@ -5,10 +5,9 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-import yaml
-
 from api.models.config import AppConfig
 from api.services.config_env import (
+    load_config_data,
     overlay_parser_env,
     overlay_storage_env,
     overlay_vector_store_env,
@@ -26,8 +25,7 @@ def get_config() -> AppConfig:
     data: dict = {}
     for candidate in (Path("/app/config.yaml"), Path("config.yaml")):
         if candidate.exists():
-            with open(candidate) as fh:
-                data = yaml.safe_load(fh) or {}
+            data = load_config_data(candidate)  # recovers from .bak if corrupted mid-write
             break
     return AppConfig.model_validate(
         overlay_storage_env(overlay_parser_env(overlay_vector_store_env(data)))

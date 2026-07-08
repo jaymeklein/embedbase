@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
+from itertools import islice
 from typing import TYPE_CHECKING, Any
 
 from api.models.chunk import Chunk, ChunkMetadata
@@ -41,6 +42,10 @@ _HEADING_SIZE_MARGIN = 0.9
 # A heading is short; guards against a whole large-font paragraph (a pull quote,
 # a cover blurb) being mistaken for one.
 _HEADING_MAX_WORDS = 25
+# Body font size is uniform across a document, so the modal (body) size is sampled from
+# the first N pages instead of re-scanning every page — a large PDF can't afford a second
+# full layout pass just to find it (headings are detected in the main per-page loop).
+_MODAL_SAMPLE_PAGES = 50
 
 
 class PDFParser:
@@ -63,17 +68,26 @@ class PDFParser:
         chunks: list[Chunk] = []
         with fitz.open(file_path) as doc:
             total_pages = doc.page_count
-            min_heading_size = _modal_body_size(doc) + _HEADING_SIZE_MARGIN
+            # Lay out the sample pages ONCE and reuse it for both the modal-body-size estimate
+            # and heading detection, so those pages aren't extracted twice (get_text("dict") is
+            # the costly call). Pages past the sample are laid out on demand in the loop.
+            sample_dicts = [_page_layout(page) for page in islice(doc, _MODAL_SAMPLE_PAGES)]
+            min_heading_size = _modal_body_size(sample_dicts) + _HEADING_SIZE_MARGIN
             stack: list[tuple[int, str]] = []  # (level, title) — the current hierarchy
             chunk_index = 0
             for page_number, page in enumerate(doc, start=1):
                 if on_progress:
                     # Report every page scanned (incl. blank/skipped) for smooth progress.
                     on_progress(page_number, total_pages)
+                page_dict = (
+                    sample_dicts[page_number - 1]
+                    if page_number <= len(sample_dicts)
+                    else _page_layout(page)
+                )
                 # Fold this page's headings into the running hierarchy first, so the page
                 # is tagged with the section its body sits under: the last heading on the
                 # page, or — on a continuation page with none — the inherited section.
-                for level, title in _page_headings(page, min_heading_size):
+                for level, title in _page_headings(page_dict, min_heading_size):
                     while stack and stack[-1][0] >= level:
                         stack.pop()
                     stack.append((level, title))
@@ -96,7 +110,7 @@ class PDFParser:
                             chunk_index=chunk_index,
                             page_number=page_number,
                             total_pages=total_pages,
-                            char_count=len(text),
+                            char_count=len(body),
                             heading_path=heading_path,
                             heading_level=stack[-1][0] if stack else None,
                         ),
@@ -106,44 +120,48 @@ class PDFParser:
         return chunks
 
 
-def _modal_body_size(doc: Any) -> float:
-    """Most common span font size across the document — its body-text size.
+def _page_layout(page: Any) -> dict[str, Any]:
+    """``get_text("dict")`` for a page, or ``{}`` if extraction fails (malformed page)."""
+    try:
+        return page.get_text("dict")
+    except Exception:  # pragma: no cover - malformed page; degrade to no layout
+        return {}
 
-    Used as the baseline a heading must rise above. Best-effort: any extraction
-    failure falls back to 10.0 (a typical body size), which simply means headings
-    are detected relative to that default instead of the measured value.
+
+def _modal_body_size(page_dicts: list[dict[str, Any]]) -> float:
+    """Most common span font size across the sampled pages' layout — the body size.
+
+    Used as the baseline a heading must rise above. Takes pre-extracted ``get_text("dict")``
+    results so the sampled pages are laid out once and shared with heading detection rather
+    than extracted twice. Best-effort: no measurable spans falls back to 10.0 (a typical body
+    size), so headings are detected relative to that default instead of the measured value.
     """
     counts: Counter[float] = Counter()
-    try:
-        for page in doc:
-            for block in page.get_text("dict").get("blocks", []):
-                for line in block.get("lines", []):
-                    for span in line.get("spans", []):
-                        if span.get("text", "").strip():
-                            counts[round(span["size"], 1)] += 1
-    except Exception:  # pragma: no cover - malformed PDF; degrade to the default
-        return 10.0
+    for page_dict in page_dicts:
+        for block in page_dict.get("blocks", []):
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    size = span.get("size")
+                    if size is not None and span.get("text", "").strip():
+                        counts[round(size, 1)] += 1
     return counts.most_common(1)[0][0] if counts else 10.0
 
 
-def _page_headings(page: Any, min_heading_size: float) -> list[tuple[int, str]]:
+def _page_headings(page_dict: dict[str, Any], min_heading_size: float) -> list[tuple[int, str]]:
     """Heading ``(level, title)`` pairs on a page, in reading order.
 
-    A heading line is one whose largest span reaches ``min_heading_size``. A wrapped
-    heading — a heading-size line that does *not* begin with a new section number —
-    is merged into the preceding heading's title, so a title split across two lines
-    ("7.7 …do valor" + "do contrato") stays a single heading. Best-effort: a broken
-    page yields no headings rather than failing the parse.
+    Takes a pre-extracted ``get_text("dict")`` layout. A heading line is one whose largest
+    span reaches ``min_heading_size``. A wrapped heading — a heading-size line that does *not*
+    begin with a new section number — is merged into the preceding heading's title, so a title
+    split across two lines ("7.7 …do valor" + "do contrato") stays a single heading; the merge
+    stops once the title reaches ``_HEADING_MAX_WORDS`` so a run of heading-size lines (stylised
+    intros, caption blocks) can't accrete into one unbounded ``heading_path``.
     """
     headings: list[list[Any]] = []  # [level, title]
-    try:
-        blocks = page.get_text("dict").get("blocks", [])
-    except Exception:  # pragma: no cover - malformed page
-        return []
-    for block in blocks:
+    for block in page_dict.get("blocks", []):
         for line in block.get("lines", []):
             spans = [s for s in line.get("spans", []) if s.get("text", "").strip()]
-            if not spans or max(round(s["size"], 1) for s in spans) < min_heading_size:
+            if not spans or max(round(s.get("size", 0.0), 1) for s in spans) < min_heading_size:
                 continue
             text = " ".join(" ".join(s["text"] for s in spans).split())  # collapse tabs
             if not text or len(text.split()) > _HEADING_MAX_WORDS:
@@ -151,8 +169,8 @@ def _page_headings(page: Any, min_heading_size: float) -> list[tuple[int, str]]:
             match = _HEADING_NUMBER.match(text)
             if match:
                 headings.append([match.group(1).count(".") + 1, text])
-            elif headings:
-                headings[-1][1] += " " + text  # wrapped continuation of the title above
-            # else: a heading-size line with no number and no prior heading on the page
-            # is ambiguous (stray large text) — skip it rather than pollute the stack.
+            elif headings and len(headings[-1][1].split()) + len(text.split()) <= _HEADING_MAX_WORDS:
+                headings[-1][1] += " " + text  # wrapped continuation, still heading-length
+            # else: a heading-size line with no number and no prior heading on the page (stray
+            # large text), or a continuation that would overflow the title — skip it.
     return [(level, title) for level, title in headings]

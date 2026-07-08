@@ -339,6 +339,21 @@ export interface EmbeddingConfig {
   max_rpm: number // max texts embedded/min against an external provider; 0 = unlimited
 }
 
+/**
+ * The reranker (second-stage) config. Provider-pluggable, mirroring embeddings; optional and
+ * degrades to RRF-only ranking when unavailable, so it never breaks search.
+ */
+export interface RerankerConfig {
+  enabled: boolean
+  provider: string // "cross_encoder" | "rerank_api" | "llm"
+  model: string
+  llm_provider: string // "ollama" | "openai_compat" | "gemini" (only when provider === "llm")
+  base_url: string | null
+  api_key: string | null // masked on GET as SECRET_MASK; write-only
+  top_n: number
+  timeout_seconds: number // round-tripped by the UI (edited in config.yaml)
+}
+
 /** Parser config — only the PDF backend is edited in the UI; the rest round-trips. */
 export interface ParserConfig {
   pdf_backend: string | null // null = never picked (UI pre-selects from GPU) | "pymupdf" | "docling"
@@ -379,6 +394,7 @@ export interface Accelerator {
  */
 export interface AppConfig {
   embedding: EmbeddingConfig
+  reranker: RerankerConfig
   parsers: ParserConfig
   tagging: TaggingConfig
   storage: StorageConfig

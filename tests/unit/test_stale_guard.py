@@ -7,72 +7,15 @@ Verifies that _run_ingestion:
     progress), regardless of how long it had been running.
 """
 
+import pytest
 from sqlalchemy import create_engine, insert
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
+from api.adapters.embeddings.errors import RateLimitError
 from api.tables import documents, job_records, metadata
+from tests.unit.fakes import FakeEmbedder, FakeRedis, FakeStore
 from worker.tasks import _heartbeat_key, _run_ingestion
-
-
-class FakeEmbedder:
-    @property
-    def dimensions(self) -> int:
-        return 3
-
-    def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        return [[0.1, 0.2, 0.3] for _ in texts]
-
-
-class FakeStore:
-    def __init__(self) -> None:
-        self.upserts: list = []
-        self._models: dict = {}  # chunk_id -> embedding_model it was stored at
-
-    def upsert(
-        self, collection_id: str, chunks: list, vectors: list, model: str | None = None
-    ) -> None:
-        self.upserts.append((collection_id, chunks, vectors))
-        for c in chunks:
-            self._models[c.id] = model
-
-    def document_chunk_ids_at_model(
-        self, collection_id: str, document_id: str, model: str | None
-    ) -> set:
-        ids: set = set()
-        for _cid, chunks, _vec in self.upserts:
-            for c in chunks:
-                if c.metadata.document_id == document_id and self._models.get(c.id) == model:
-                    ids.add(c.id)
-        return ids
-
-    def iter_document_chunks(self, collection_id: str, document_id: str) -> list:
-        out: list = []
-        for _cid, chunks, _vec in self.upserts:
-            out.extend(
-                (c.id, c.metadata.document_id, c.text)
-                for c in chunks
-                if c.metadata.document_id == document_id
-            )
-        return out
-
-
-class FakeRedis:
-    def __init__(self) -> None:
-        self._store: dict = {}
-
-    def get(self, key: str) -> str | None:
-        return self._store.get(key)
-
-    def set(self, key: str, value: str, ex: int | None = None) -> None:
-        self._store[key] = value
-
-    def exists(self, key: str) -> int:
-        return 1 if key in self._store else 0
-
-    def incr(self, key: str) -> int:
-        self._store[key] = str(int(self._store.get(key, 0)) + 1)
-        return int(self._store[key])
 
 
 def _db_factory(tmp_path):
@@ -147,3 +90,40 @@ def test_processing_job_without_heartbeat_is_reclaimed(tmp_path):
     )
     assert result > 0
     assert len(store.upserts) > 0
+
+
+def test_rate_limit_report_failure_does_not_mask_original(tmp_path):
+    """If progress reporting fails while handling a rate limit (e.g. a DB blip in
+    document_chunk_ids_at_model), the ORIGINAL RateLimitError must still propagate — otherwise
+    ingest_document would misclassify the pause as a hard failure and lose the resume path."""
+    factory = _db_factory(tmp_path)
+    _seed(factory, "job_rl", "processing")
+
+    txt = tmp_path / "doc.txt"
+    txt.write_text("the quick brown fox " * 50)
+
+    class _RateLimitEmbedder(FakeEmbedder):
+        def embed_batch(self, texts):
+            raise RateLimitError("Gemini 429 RESOURCE_EXHAUSTED")
+
+    class _BlipStore(FakeStore):
+        # The resume-set fetch (start of _embed_and_store) succeeds; the SAME call in the
+        # rate-limit report handler then blips, simulating a transient DB error at report time.
+        def __init__(self) -> None:
+            super().__init__()
+            self._calls = 0
+
+        def document_chunk_ids_at_model(self, collection_id, document_id, model):
+            self._calls += 1
+            if self._calls == 1:
+                return set()  # normal resume-set fetch → embed all chunks
+            raise RuntimeError("postgres unavailable")  # the report-time DB blip
+
+    with pytest.raises(RateLimitError):
+        _run_ingestion(
+            "job_rl", str(txt), "col_1", "doc_1", ".txt",
+            session_factory=factory,
+            embedder=_RateLimitEmbedder(),
+            vector_store=_BlipStore(),
+            redis_client=FakeRedis(),
+        )

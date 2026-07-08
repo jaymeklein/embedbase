@@ -10,6 +10,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useState } from 'react'
 import { qk } from '../api/hooks'
+import { carryProgress } from './carryProgress'
 import { useChannel } from './useChannel'
 
 export type IngestPhase =
@@ -47,9 +48,7 @@ export function useIngestionProgress(
           ...prev,
           [msg.document_id]: {
             ...msg,
-            current: msg.current ?? existing?.current ?? null,
-            total: msg.total ?? existing?.total ?? null,
-            pct: msg.pct ?? existing?.pct ?? null,
+            ...carryProgress(msg, existing),
           },
         }
       })
