@@ -1,17 +1,9 @@
 import httpx
 
-_DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com"
+from api.adapters.embeddings.errors import raise_for_status
+from api.constants import GEMINI_API_BASE_URL
 
-
-def _raise_for_status(response: httpx.Response) -> httpx.Response:
-    """Like ``raise_for_status`` but include Google's error body (it says *why*)."""
-    if response.is_error:
-        raise httpx.HTTPStatusError(
-            f"Gemini API {response.status_code}: {response.text}",
-            request=response.request,
-            response=response,
-        )
-    return response
+_DEFAULT_BASE_URL = GEMINI_API_BASE_URL
 
 
 class GeminiAdapter:
@@ -53,7 +45,7 @@ class GeminiAdapter:
             headers={"x-goog-api-key": self._api_key},
             timeout=60.0,
         )
-        _raise_for_status(response)
+        raise_for_status(response)
         return [item["values"] for item in response.json()["embeddings"]]
 
     @property
