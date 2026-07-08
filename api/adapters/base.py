@@ -19,8 +19,6 @@ class ParserAdapter(Protocol):
         """
         ...
 
-    def supported_extensions(self) -> list[str]: ...
-
 
 @runtime_checkable
 class EmbeddingAdapter(Protocol):

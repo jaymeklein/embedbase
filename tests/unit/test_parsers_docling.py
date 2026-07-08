@@ -71,10 +71,6 @@ def test_supported_extensions_gate_office_on_docling():
     assert {".docx", ".pptx"}.issubset(supported_extensions(ParserConfig(pdf_backend="docling")))
 
 
-def test_docling_supported_extensions():
-    assert DoclingParser().supported_extensions() == [".pdf", ".docx", ".pptx"]
-
-
 # ── Device validation ─────────────────────────────────────────────────────────
 
 
