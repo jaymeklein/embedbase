@@ -1,9 +1,9 @@
-"""Chunking strategies shared by the parser adapters.
+"""Sliding-window chunking + tiktoken token counting, shared by the txt/markdown adapters.
 
-Each strategy turns a blob of text (or rows) into a list of string segments.
-Parsers attach metadata and build :class:`~api.models.chunk.Chunk` objects from
-these segments. Token counting uses ``tiktoken``'s ``cl100k_base`` encoding so
-chunk sizes line up with the OpenAI-family tokenizers most embedders track.
+``sliding_window`` turns a blob of text into a list of string segments; parsers attach
+metadata and build :class:`~api.models.chunk.Chunk` objects from these segments. Token
+counting uses ``tiktoken``'s ``cl100k_base`` encoding so chunk sizes line up with the
+OpenAI-family tokenizers most embedders track.
 """
 
 from __future__ import annotations
@@ -57,42 +57,3 @@ def sliding_window(
         if start + max_tokens >= len(tokens):
             break
     return [w for w in windows if w]
-
-
-def heading_aware(
-    sections: list[str],
-    *,
-    max_tokens: int = 512,
-    overlap_tokens: int = 64,
-) -> list[str]:
-    """Keep each section whole; recurse oversized sections into sliding windows."""
-    out: list[str] = []
-    for section in sections:
-        if not section.strip():
-            continue
-        if count_tokens(section) <= max_tokens:
-            out.append(section)
-        else:
-            out.extend(
-                sliding_window(
-                    section, max_tokens=max_tokens, overlap_tokens=overlap_tokens
-                )
-            )
-    return out
-
-
-def ast_boundary(symbols: list[str]) -> list[str]:
-    """Pass-through — a code symbol is treated as an atomic chunk."""
-    return [s for s in symbols if s.strip()]
-
-
-def row_based(rows: list[str], *, rows_per_chunk: int = 10) -> list[list[str]]:
-    """Group serialized rows into batches of ``rows_per_chunk``."""
-    if rows_per_chunk < 1:
-        raise ValueError("rows_per_chunk must be >= 1")
-    return [rows[i : i + rows_per_chunk] for i in range(0, len(rows), rows_per_chunk)]
-
-
-def passthrough(text: str) -> list[str]:
-    """Identity — a single non-empty chunk, or nothing."""
-    return [text] if text and text.strip() else []

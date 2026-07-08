@@ -236,7 +236,6 @@ export interface JobStatus {
 // ── Search (mirrors api/models/search.py) ───────────────────────────────────
 
 export interface SearchFilters {
-  language?: string | null
   filename?: string | null
   tags?: string[] | null
 }

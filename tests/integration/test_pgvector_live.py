@@ -48,13 +48,13 @@ def _pg_kwargs() -> dict:
     }
 
 
-def _chunk(doc_id: str, text: str, *, language: str | None = None,
+def _chunk(doc_id: str, text: str, *,
            filename: str = "f.txt", tags: list[str] | None = None) -> Chunk:
     return Chunk(
         text=text,
         metadata=ChunkMetadata(
             source_file=f"/{filename}", filename=filename, parser="txt",
-            document_id=doc_id, chunk_index=0, language=language, tags=tags or [],
+            document_id=doc_id, chunk_index=0, tags=tags or [],
         ),
     )
 
@@ -86,10 +86,10 @@ def live_store():
 # side surfaces it.
 def _seed_corpus(adapter: PgvectorAdapter, collection: str) -> None:
     chunks = [
-        _chunk("d_near1", "the cat sat on the warm mat", language="en"),
-        _chunk("d_near2", "a dog ran across the green field", language="en"),
-        _chunk("d_near3", "birds fly under a clear blue sky", language="fr"),
-        _chunk("d_quantum", "quantum entanglement links distant particles", language="en"),
+        _chunk("d_near1", "the cat sat on the warm mat"),
+        _chunk("d_near2", "a dog ran across the green field"),
+        _chunk("d_near3", "birds fly under a clear blue sky", filename="fr.txt"),
+        _chunk("d_quantum", "quantum entanglement links distant particles"),
     ]
     vectors = [
         [1.0, 0.05, 0.0],   # near1 — closest to the query direction
@@ -147,15 +147,15 @@ def test_hybrid_pushes_filter_into_both_candidate_scans(live_store):
     adapter, collection = live_store
     _seed_corpus(adapter, collection)
 
-    # language=fr matches only near3 (which has no "quantum" text) — so the bm25 side is
-    # empty under the filter and the semantic side is filtered to French rows. Neither
-    # the English quantum chunk nor the English near1/near2 may leak through.
+    # filename=fr.txt matches only near3 (which has no "quantum" text) — so the bm25 side
+    # is empty under the filter and the semantic side is filtered to that one row. Neither
+    # the quantum chunk nor near1/near2 may leak through.
     results, matched = adapter.hybrid_search(
-        collection, _QUERY_VEC, "quantum", top_k=4, filters=SearchFilters(language="fr")
+        collection, _QUERY_VEC, "quantum", top_k=4, filters=SearchFilters(filename="fr.txt")
     )
 
     assert {r.chunk_id for r in results} == {_chunk("d_near3", "").id}
-    assert matched is False  # the only French row has no lexical match
+    assert matched is False  # the only matching row has no lexical match
 
 
 def test_bm25_scores_returns_real_okapi_scores(live_store):
@@ -181,7 +181,7 @@ def test_search_pushes_metadata_filter_into_where(live_store):
     # Item 1: the vector search itself must return only matching rows (correct top-k
     # under a restrictive filter), not filter after the fact.
     results = adapter.search(
-        collection, _QUERY_VEC, top_k=10, filters=SearchFilters(language="fr")
+        collection, _QUERY_VEC, top_k=10, filters=SearchFilters(filename="fr.txt")
     )
 
     assert {r.chunk_id for r in results} == {_chunk("d_near3", "").id}

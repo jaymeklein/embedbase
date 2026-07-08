@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field
 
 
 class SearchFilters(BaseModel):
-    language: str | None = None
     filename: str | None = None
     tags: list[str] | None = None
 
