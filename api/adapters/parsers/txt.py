@@ -21,9 +21,6 @@ class TXTParser:
             self._max_tokens = 512
             self._overlap = 64
 
-    def supported_extensions(self) -> list[str]:
-        return [".txt"]
-
     def parse(self, file_path: str, document_id: str) -> list[Chunk]:
         import chardet
 
