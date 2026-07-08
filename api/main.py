@@ -144,8 +144,8 @@ async def _warm_up_adapters(app_config: AppConfig) -> None:
     except Exception as exc:
         logger.error("vector store unavailable", error=str(exc))
 
-    # Reranker is optional (off by default). A failure here just leaves it None,
-    # so search keeps working with RRF-only ranking.
+    # Reranker is on by default but optional: a build failure just leaves it None, so search
+    # keeps working with RRF-only ranking (the /healthz "reranker" field surfaces that degrade).
     try:
         from api.adapters.reranker import get_reranker as resolve_reranker
         reranker = await asyncio.to_thread(resolve_reranker, app_config.reranker)
