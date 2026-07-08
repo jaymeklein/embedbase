@@ -623,9 +623,11 @@ paths:
       description: 'Upload and enqueue a document for ingestion.
 
 
-        Accepted formats: PDF, TXT, Markdown, source code (py/js/ts/go/rs/java etc.),
+        Accepted formats: PDF, TXT, and Markdown; DOCX and PPTX also require the docling
 
-        CSV, JSON, and -- via the docling parser -- DOCX and PPTX.'
+        parser backend (``parsers.pdf_backend: docling``). Set ``temporary`` to auto-purge
+
+        the document after ``storage.temp_retention_hours`` (no-op when 0).'
       operationId: upload_document_workspaces__ws_id__collections__col_id__documents_post
       parameters:
       - name: ws_id
@@ -885,7 +887,10 @@ paths:
       tags:
       - documents
       summary: Get Document Raw
-      description: Serve a document's original bytes for inline viewing / opening.
+      description: 'Serve a document''s original bytes: inline FileResponse (local)
+        or 302 to a
+
+        presigned URL (S3), resolved from the document''s storage backend.'
       operationId: get_document_raw_documents__doc_id__raw_get
       parameters:
       - name: doc_id
@@ -1757,7 +1762,8 @@ paths:
         \    _principal: Authenticated master principal (enforces auth, value unused).\n\
         \    embedder: Embedding adapter injected via Depends.\n    vector_store:\
         \ Vector store adapter injected via Depends (also does FTS).\n    reranker:\
-        \ Optional cross-encoder reranker (None when disabled/not loaded).\n\nReturns:\n\
+        \ Optional cross-encoder reranker (None when disabled/not loaded).\n    search_config:\
+        \ Live search config (supplies the A2 adjacency-expansion window).\n\nReturns:\n\
         \    SearchResponse with ranked results and per-collection stats."
       operationId: search_search_post
       parameters:
@@ -2151,13 +2157,16 @@ components:
             model: embeddinggemma
             batch_size: 32
             concurrency: 8
+            max_rpm: 0
         reranker:
           $ref: '#/components/schemas/RerankerConfig'
           default:
-            enabled: false
+            enabled: true
             provider: cross_encoder
-            model: cross-encoder/ms-marco-MiniLM-L-6-v2
+            model: cross-encoder/ms-marco-MiniLM-L6-v2
+            llm_provider: gemini
             top_n: 50
+            timeout_seconds: 60.0
         vector_store:
           $ref: '#/components/schemas/VectorStoreConfig'
           default:
@@ -2173,11 +2182,6 @@ components:
             sliding_window:
               max_tokens: 512
               overlap_tokens: 64
-            csv:
-              rows_per_chunk: 10
-            code:
-              fallback_window_lines: 50
-              max_symbol_tokens: 4096
         parsers:
           $ref: '#/components/schemas/ParserConfig'
           default:
@@ -2196,6 +2200,9 @@ components:
             retrieval_fan_out: 4
             max_fan_out: 10
             hybrid_default_alpha: 0.7
+            expand_neighbors: 1
+            max_expand_neighbors: 5
+            expand_char_budget: 8000
         mcp:
           $ref: '#/components/schemas/MCPConfig'
           default:
@@ -2212,6 +2219,14 @@ components:
               model: llama3
               provider: ollama
             auto_tag_on_ingest: false
+        storage:
+          $ref: '#/components/schemas/StorageConfig'
+          default:
+            default: local
+            backends:
+              local:
+                type: local
+            temp_retention_hours: 0
         max_file_size_mb:
           type: integer
           title: Max File Size Mb
@@ -2227,6 +2242,10 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: File
+        temporary:
+          type: boolean
+          title: Temporary
+          default: false
       type: object
       required:
       - collection_id
@@ -2238,6 +2257,10 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: File
+        temporary:
+          type: boolean
+          title: Temporary
+          default: false
       type: object
       required:
       - file
@@ -2249,29 +2272,8 @@ components:
           default:
             max_tokens: 512
             overlap_tokens: 64
-        csv:
-          $ref: '#/components/schemas/CsvChunkConfig'
-          default:
-            rows_per_chunk: 10
-        code:
-          $ref: '#/components/schemas/CodeChunkConfig'
-          default:
-            max_symbol_tokens: 4096
-            fallback_window_lines: 50
       type: object
       title: ChunkingConfig
-    CodeChunkConfig:
-      properties:
-        max_symbol_tokens:
-          type: integer
-          title: Max Symbol Tokens
-          default: 4096
-        fallback_window_lines:
-          type: integer
-          title: Fallback Window Lines
-          default: 50
-      type: object
-      title: CodeChunkConfig
     CollectionCreate:
       properties:
         name:
@@ -2377,14 +2379,6 @@ components:
       type: object
       title: CollectionUpdate
       description: Body for PATCH /workspaces/{ws_id}/collections/{col_id}.
-    CsvChunkConfig:
-      properties:
-        rows_per_chunk:
-          type: integer
-          title: Rows Per Chunk
-          default: 10
-      type: object
-      title: CsvChunkConfig
     EmbeddingConfig:
       properties:
         provider:
@@ -2418,6 +2412,10 @@ components:
           - type: integer
           - type: 'null'
           title: Output Dimensionality
+        max_rpm:
+          type: integer
+          title: Max Rpm
+          default: 0
       type: object
       title: EmbeddingConfig
     GraphEdge:
@@ -2536,6 +2534,17 @@ components:
           default: []
       type: object
       title: IndexStatusResponse
+    LocalBackendConfig:
+      properties:
+        type:
+          type: string
+          const: local
+          title: Type
+          default: local
+      type: object
+      title: LocalBackendConfig
+      description: Files on the local/shared disk under ``settings.upload_dir`` (the
+        default).
     MCPConfig:
       properties:
         enabled:
@@ -2599,7 +2608,7 @@ components:
         enabled:
           type: boolean
           title: Enabled
-          default: false
+          default: true
         provider:
           type: string
           title: Provider
@@ -2607,13 +2616,80 @@ components:
         model:
           type: string
           title: Model
-          default: cross-encoder/ms-marco-MiniLM-L-6-v2
+          default: cross-encoder/ms-marco-MiniLM-L6-v2
+        llm_provider:
+          type: string
+          title: Llm Provider
+          default: gemini
+        base_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Url
+        api_key:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Api Key
         top_n:
           type: integer
           title: Top N
           default: 50
+        timeout_seconds:
+          type: number
+          title: Timeout Seconds
+          default: 60.0
       type: object
       title: RerankerConfig
+    S3BackendConfig:
+      properties:
+        type:
+          type: string
+          const: s3
+          title: Type
+          default: s3
+        endpoint_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Endpoint Url
+        public_endpoint_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Public Endpoint Url
+        region:
+          type: string
+          title: Region
+          default: us-east-1
+        bucket:
+          type: string
+          title: Bucket
+          default: embedbase
+        access_key_id:
+          type: string
+          title: Access Key Id
+          default: ''
+        secret_access_key:
+          type: string
+          title: Secret Access Key
+          default: ''
+        use_path_style:
+          type: boolean
+          title: Use Path Style
+          default: true
+      type: object
+      title: S3BackendConfig
+      description: 'An S3-compatible target — AWS S3 or a self-hosted MinIO (``endpoint_url``).
+
+
+        Credentials are kept out of ``config.yaml``: ``access_key_id`` /
+
+        ``secret_access_key`` are overlaid from ``S3__<NAME>__*`` env vars (see
+
+        :func:`api.services.config_env.overlay_storage_env`). Empty credentials mean
+
+        "use boto3''s default chain" (e.g. an AWS instance role).'
     SearchConfig:
       properties:
         default_top_k:
@@ -2636,15 +2712,22 @@ components:
           type: number
           title: Hybrid Default Alpha
           default: 0.7
+        expand_neighbors:
+          type: integer
+          title: Expand Neighbors
+          default: 1
+        max_expand_neighbors:
+          type: integer
+          title: Max Expand Neighbors
+          default: 5
+        expand_char_budget:
+          type: integer
+          title: Expand Char Budget
+          default: 8000
       type: object
       title: SearchConfig
     SearchFilters:
       properties:
-        language:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Language
         filename:
           anyOf:
           - type: string
@@ -2744,6 +2827,10 @@ components:
           type: boolean
           title: Under Delivered
           default: false
+        more_available:
+          type: boolean
+          title: More Available
+          default: false
       type: object
       required:
       - results
@@ -2819,6 +2906,11 @@ components:
           - type: integer
           - type: 'null'
           title: Page Number
+        page_range:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Page Range
       type: object
       required:
       - collection_id
@@ -2826,6 +2918,35 @@ components:
       - workspace_id
       - workspace_name
       title: SourceProvenance
+    StorageConfig:
+      properties:
+        default:
+          type: string
+          title: Default
+          default: local
+        backends:
+          additionalProperties:
+            oneOf:
+            - $ref: '#/components/schemas/LocalBackendConfig'
+            - $ref: '#/components/schemas/S3BackendConfig'
+            discriminator:
+              propertyName: type
+              mapping:
+                local: '#/components/schemas/LocalBackendConfig'
+                s3: '#/components/schemas/S3BackendConfig'
+          type: object
+          title: Backends
+          default:
+            local:
+              type: local
+        temp_retention_hours:
+          type: integer
+          title: Temp Retention Hours
+          default: 0
+      type: object
+      title: StorageConfig
+      description: Named registry of object-storage backends; ``default`` gets new
+        uploads.
     TagCreate:
       properties:
         name:

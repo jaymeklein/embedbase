@@ -34,15 +34,6 @@ def test_apply_filters_empty_filters_returns_all():
     assert apply_filters(results, SearchFilters()) == results
 
 
-def test_apply_filters_by_language():
-    results = [
-        _result("a", language="python"),
-        _result("b", language="javascript"),
-    ]
-    filtered = apply_filters(results, SearchFilters(language="python"))
-    assert [r.chunk_id for r in filtered] == ["a"]
-
-
 def test_apply_filters_by_filename():
     results = [_result("a", filename="foo.py"), _result("b", filename="bar.py")]
     filtered = apply_filters(results, SearchFilters(filename="foo.py"))
@@ -59,16 +50,16 @@ def test_apply_filters_by_tags_all_must_match():
     assert [r.chunk_id for r in filtered] == ["a"]
 
 
-def test_apply_filters_combined():
+def test_apply_filters_combined_filename_and_tags_both_must_hold():
     results = [
-        _result("a", language="python", filename="foo.py"),
-        _result("b", language="python", filename="bar.py"),
-        _result("c", language="go", filename="foo.py"),
+        _result("a", filename="foo.py", tags=["ml"]),  # both match
+        _result("b", filename="foo.py", tags=["other"]),  # right file, wrong tag
+        _result("c", filename="bar.py", tags=["ml"]),  # wrong file, right tag
     ]
-    filtered = apply_filters(results, SearchFilters(language="python", filename="foo.py"))
+    filtered = apply_filters(results, SearchFilters(filename="foo.py", tags=["ml"]))
     assert [r.chunk_id for r in filtered] == ["a"]
 
 
 def test_apply_filters_no_match_returns_empty():
-    results = [_result("a", language="python")]
-    assert apply_filters(results, SearchFilters(language="go")) == []
+    results = [_result("a", filename="foo.py")]
+    assert apply_filters(results, SearchFilters(filename="bar.py")) == []

@@ -28,11 +28,6 @@ chunking:
   sliding_window:
     max_tokens: 512
     overlap_tokens: 64
-  csv:
-    rows_per_chunk: 10
-  code:
-    max_symbol_tokens: 4096
-    fallback_window_lines: 50
 
 parsers:
   # pdf_backend: pymupdf     # leave unset and the Settings UI pre-selects from the
@@ -50,7 +45,9 @@ parsers:
   # docling_flash_attention: false  # ignored under "auto"; Ampere-only
   # docling_ocr_batch_size: 64      # ignored under "auto" (picks 64 on GPU)
   # docling_layout_batch_size: 64
-# .docx and .pptx are always parsed by docling (no lightweight adapter exists).
+# Uploads accept .pdf, .txt, .md out of the box. .docx / .pptx have no lightweight adapter,
+# so they require the docling backend (pdf_backend: docling) — otherwise they are rejected at
+# upload rather than failing later in the worker.
 
 search:
   default_top_k: 5
