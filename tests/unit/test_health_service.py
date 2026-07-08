@@ -57,6 +57,29 @@ async def test_build_health_defaults_display_values_without_config():
     assert data["embedding_provider"] == "unknown"
 
 
+async def test_build_health_reranker_ready_when_enabled_and_loaded():
+    from api.models.config import AppConfig
+
+    data = await build_health(None, None, AppConfig(), reranker_loaded=True)
+    assert data["reranker"] == "ready"  # on by default + built
+
+
+async def test_build_health_reranker_unavailable_when_enabled_but_not_loaded():
+    from api.models.config import AppConfig
+
+    # On-by-default but the model failed to build → surface the silent RRF-only degrade.
+    data = await build_health(None, None, AppConfig(), reranker_loaded=False)
+    assert data["reranker"] == "unavailable"
+
+
+async def test_build_health_reranker_disabled_when_config_off():
+    from api.models.config import AppConfig, RerankerConfig
+
+    config = AppConfig(reranker=RerankerConfig(enabled=False))
+    data = await build_health(None, None, config, reranker_loaded=True)
+    assert data["reranker"] == "disabled"  # off wins over load state
+
+
 async def test_build_health_includes_lan_ip(monkeypatch):
     from api.services import health
 

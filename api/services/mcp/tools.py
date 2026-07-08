@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
+from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
 from api.models.search import SearchRequest, SearchResponse
 from api.services import documents as doc_svc
 from api.services import workspaces as ws_svc
@@ -31,21 +32,27 @@ MASTER_PRINCIPAL = Principal(is_master=True)
 _TOP_K_FLOOR = 1
 
 
-def _saturation_notice(response: SearchResponse, max_results: int) -> str | None:
+def _saturation_notice(
+    response: SearchResponse, max_results: int, ranked_shown: int
+) -> str | None:
     """A natural-language "there's more" hint for the model when relevant chunks fell below the
     ``top_k`` cut (plan A3 — the MCP must tell the caller it returned only part of what matched).
 
     Returns ``None`` when results look complete (``more_available`` is false), so the warning
     stays meaningful and the model doesn't learn to ignore it. The LLM reads this text, not the
     structured ``more_available`` field, so it is phrased as an actionable instruction.
+
+    ``ranked_shown`` is the number of ranked hits shown *before* A2 expansion coalesces them into
+    spans. The notice describes the **ranking** cut (what a higher ``top_k`` changes), so its counts
+    must stay on the pre-expansion scale that ``more_available`` was measured on — not the
+    possibly-fewer merged spans in ``response.results``.
     """
     if not response.more_available:
         return None
     matched = sum(s.returned_after_filter for s in response.collection_stats.values())
-    shown = len(response.results)
     return (
-        f"{matched} chunks matched and were ranked; showing the top {shown}. About "
-        f"{matched - shown} more, of comparable relevance, fell below the top_k cut. If the "
+        f"{matched} chunks matched and were ranked; showing the top {ranked_shown}. About "
+        f"{matched - ranked_shown} more, of comparable relevance, fell below the top_k cut. If the "
         f"answer seems incomplete, re-run search_documents with a higher top_k "
         f"(up to {max_results})."
     )
@@ -64,6 +71,8 @@ async def search_documents(
     hybrid: bool = True,
     filters: dict[str, Any] | None = None,
     max_results: int = 20,
+    expand_neighbors: int = 0,
+    expand_char_budget: int = DEFAULT_EXPAND_CHAR_BUDGET,
     db: AsyncSession,
     embedder: EmbeddingAdapter,
     vector_store: PgvectorAdapter,
@@ -78,6 +87,8 @@ async def search_documents(
         hybrid: When ``True`` fuse BM25 with semantic scores (RRF).
         filters: Optional ``language``/``filename``/``tags`` metadata filter.
         max_results: Upper bound on ``top_k`` (from ``mcp.max_results`` config).
+        expand_neighbors: A2 adjacency window pulled around each hit (0 = off).
+        expand_char_budget: Soft cap on an assembled span's text.
         db: Active async database session.
         embedder: Embedding adapter for the query vector.
         vector_store: Vector store to search (also does FTS/BM25 scoring).
@@ -102,9 +113,16 @@ async def search_documents(
         embedder=embedder,
         vector_store=vector_store,
         reranker=reranker,
+        expand_neighbors=expand_neighbors,
+        expand_char_budget=expand_char_budget,
     )
     result = response.model_dump(mode="json")
-    notice = _saturation_notice(response, max_results)
+    # ranked_shown = the pre-expansion ranked count. more_available (search._more_available) only
+    # fires when the candidate pool exceeds len(final), and search_collection caps each collection's
+    # contribution at top_k while counting the full pool in returned_after_filter — so whenever it
+    # fires, len(final) == top_k == bounded_top_k and matched > bounded_top_k (the "N more" stays
+    # positive). A2 coalescing may leave fewer response.results, so count the ranked cut, not those.
+    notice = _saturation_notice(response, max_results, bounded_top_k)
     if notice:
         result["notice"] = notice  # only when there is genuinely more below the cut
     return result

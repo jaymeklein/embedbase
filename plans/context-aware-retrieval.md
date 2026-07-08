@@ -83,7 +83,7 @@ fixed-window).
 | # | Change | Fixes | Track | Depends on |
 |---|--------|-------|-------|------------|
 | **A1** | Reranker on by default | Precision; rescues diluted tail pages | query-time | ✅ done |
-| **A2** | Adjacency expansion + span merge | Spanning context truncated by `top_k` | query-time | — |
+| **A2** | Adjacency expansion + span merge | Spanning context truncated by `top_k` | query-time | ✅ done |
 | **A3** | Saturation signal + MCP `notice` | Caller unaware more relevant data exists | query-time | A2 |
 | **A4** | MCP expansion primitives | Agentic completion of a partial span | query-time | A3 |
 | **A5** | Pluggable, frontend-configurable reranker (local + remote/LLM) | Model outdated, not user-selectable, no remote/LLM provider | query-time | A1 |
@@ -112,20 +112,20 @@ exists).
   ([`api/main.py`](../api/main.py) lifespan → `get_reranker`), so the model loads
   at **boot**, not on a user's first query, and a load failure degrades to
   RRF-only instead of 500-ing.
-- [ ] **Bake the model into the image / pre-fetch the model cache.** With
-  `enabled: true`, first *boot* now downloads the cross-encoder
-  (`ms-marco-MiniLM-L-6-v2`, ~80 MB) from HuggingFace — slow, and it fails on an
-  air-gapped host. Ship it in the image (or a mounted cache) so boot is fast and
-  offline-safe.
-- [ ] **Surface a "reranker unavailable" health signal** — now that it's
-  on-by-default, a silent fall-back to RRF-only (download/load failure) should be
-  visible, not quietly "off".
-- [ ] Note in `docs/retrieval-upgrade-plan.md` PR 1: default is now `enabled: true`.
+- [x] **Bake the model into the image.** [`api/Dockerfile`](../api/Dockerfile) runs
+  [`fetch_reranker_model.py`](../api/scripts/fetch_reranker_model.py) at build time to vendor the
+  cross-encoder (`ms-marco-MiniLM-L6-v2`, ~80 MB) into `/opt/models`; the adapter loads that baked
+  copy, so boot is fast and offline-safe (`HF_HUB_OFFLINE=1`).
+- [x] **Surface a "reranker unavailable" health signal** — `/healthz` now carries a `reranker`
+  field (`ready` | `unavailable` | `disabled`), so a silent on-by-default fall-back to RRF-only is
+  visible rather than quietly "off".
+- [x] Reconcile `docs/retrieval-upgrade-plan.md` PR 1 (on-by-default, baked model, UI toggle,
+  `/healthz` signal) — PR 1 is marked done there.
 - [ ] Modern default model + provider selection + frontend config — tracked in **A5**
   (`ms-marco-MiniLM-L-6-v2` is a ~2019-era placeholder, and the UI has no reranker
   controls yet).
 
-## A2 — Adjacency expansion + span merge `[ ]`
+## A2 — Adjacency expansion + span merge `[x]`
 
 **Why.** When a context spans consecutive pages, the tail pages fall past
 `top_k`. But every chunk stores `document_id` + `chunk_index` (a contiguous
@@ -151,16 +151,29 @@ auto-merging / sentence-window retrieval, trivial here because ordinals are stor
 and ids are deterministic. When B1 lands, prefer "neighbours **sharing the hit's
 `context_id`**" over a blind ±`w` window.
 
-- [ ] `expand_neighbors: int = 1` in `SearchConfig` (+ `config.yaml`, `max` guard)
-- [ ] Neighbour-fetch by computed chunk-id set in the pgvector adapter
-- [ ] Span-merge (coalesce contiguous `chunk_index` runs per document)
-- [ ] **Token-budget cap** on the assembled span (see [Guardrails](#guardrails))
-- [ ] Return spans with `page_range` in `SearchResult`/provenance
-- [ ] Tests: window fetch, boundary (idx 0 / last), gap handling, budget cap
+- [x] `expand_neighbors: int = 1` (on by default) + `max_expand_neighbors` / `expand_char_budget`
+  in `SearchConfig` + an `effective_expand_neighbors` clamp (`config.yaml` is gitignored; the
+  default lives in the model)
+- [x] Neighbour-fetch by computed chunk-id set in the pgvector adapter (`chunks_by_ids`, one
+  `id = ANY(...)` round-trip)
+- [x] Span-merge (coalesce contiguous/overlapping `chunk_index` runs per document) in
+  [`expansion.py`](../api/services/expansion.py)
+- [x] **Char-budget cap** on the assembled span (farthest non-hit neighbours dropped first; a hit
+  chunk is never dropped)
+- [x] `page_range` on `SourceProvenance`; the span text replaces the orphan hit's text, best-ranked
+  hit represents each span
+- [x] **Config-tab UI** control for `expand_neighbors` (+ `SearchConfig` in `types.ts`)
+- [x] Tests: window / boundary / gap / coalesce / char-budget / degrade-on-error / disabled / clamp
+
+**Shipped (2026-07-08).** Post-`top_k` pass in
+[`multi_collection_search`](../api/services/search.py), off the event loop, with a call-site backstop
+(any fetch error → un-expanded hits, never a 500). Saturation + `under_delivered` are measured on the
+pre-expansion ranked hits, so A3's "there's more" keeps its meaning. Wired from `SearchConfig` through
+a `get_search_config` dependency into both the REST router and the MCP `search_documents` tool. B1
+will later swap the blind ±`w` window for "neighbours **sharing the hit's `context_id`**".
 
 **Insertion point.** A post-processing pass in
-[`multi_collection_search`](../api/services/search.py:361) after per-collection
-results are merged, or inside `search_collection` right after `filtered[:top_k]`.
+[`multi_collection_search`](../api/services/search.py) after per-collection results are merged.
 Degrades gracefully: if the neighbour fetch errors, return the un-expanded hits.
 
 ## A3 — Saturation signal + MCP `notice` `[~]`

@@ -3,7 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from api.constants import POSTGRES_PORT, RERANKER_MODEL
+from api.constants import DEFAULT_EXPAND_CHAR_BUDGET, POSTGRES_PORT, RERANKER_MODEL
 
 
 def _warn_extra_keys(data: dict[str, Any], model_cls: type[BaseModel], prefix: str = "") -> None:
@@ -82,6 +82,19 @@ class SearchConfig(BaseModel):
     retrieval_fan_out: int = 4
     max_fan_out: int = 10
     hybrid_default_alpha: float = 0.7
+    # A2 adjacency expansion: after the top_k cut, pull this many chunks on EACH side of every
+    # hit (by deterministic chunk-id) and coalesce contiguous runs into one span — so a context
+    # that spilled past top_k onto the next page(s) comes back whole. Deterministic key lookup;
+    # no embeddings, no LLM. On by default; 0 = off. A fetch error degrades to the un-expanded
+    # hits (never a 500).
+    expand_neighbors: int = 1
+    max_expand_neighbors: int = 5  # UI/clamp guard for expand_neighbors
+    expand_char_budget: int = DEFAULT_EXPAND_CHAR_BUDGET  # cap on an assembled span's text
+
+    @property
+    def effective_expand_neighbors(self) -> int:
+        """``expand_neighbors`` clamped to ``[0, max_expand_neighbors]`` — the value search uses."""
+        return max(0, min(self.expand_neighbors, self.max_expand_neighbors))
 
 
 class RerankerConfig(BaseModel):

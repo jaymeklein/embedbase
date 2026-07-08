@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.db import AsyncSessionLocal
-from api.models.config import AppConfig, TaggingConfig
+from api.models.config import AppConfig, SearchConfig, TaggingConfig
 
 # ---------------------------------------------------------------------------
 # Adapter singletons — set once in lifespan(), read everywhere via Depends()
@@ -34,6 +34,11 @@ def get_app_config() -> AppConfig | None:
 def get_tagging_config() -> TaggingConfig:
     """FastAPI dependency: the live tagging config, or defaults before lifespan."""
     return (_app_config or AppConfig()).tagging
+
+
+def get_search_config() -> SearchConfig:
+    """FastAPI dependency: the live search config, or defaults before lifespan."""
+    return (_app_config or AppConfig()).search
 
 
 def set_embedding_adapter(adapter: EmbeddingAdapter) -> None:

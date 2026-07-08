@@ -65,6 +65,15 @@ def test_app_config_defaults():
     assert cfg.vector_store.host == "postgres"
     assert cfg.search.retrieval_fan_out == 4
     assert cfg.search.max_fan_out == 10
+    assert cfg.search.expand_neighbors == 1  # A2 adjacency expansion on by default
+
+
+def test_search_config_effective_expand_neighbors_clamps():
+    from api.models.config import SearchConfig
+
+    assert SearchConfig().effective_expand_neighbors == 1  # default passes through
+    assert SearchConfig(expand_neighbors=99, max_expand_neighbors=5).effective_expand_neighbors == 5
+    assert SearchConfig(expand_neighbors=-3).effective_expand_neighbors == 0  # never negative
 
 
 # ---------------------------------------------------------------------------

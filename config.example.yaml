@@ -58,6 +58,11 @@ search:
   retrieval_fan_out: 4    # retrieve top_k * fan_out before applying filters
   max_fan_out: 10
   hybrid_default_alpha: 0.7  # 0.0 = BM25 only, 1.0 = semantic only
+  # A2 adjacency expansion: after the top_k cut, pull neighbour chunks around each hit and merge
+  # contiguous runs into one span, so a section that spilled past top_k comes back whole.
+  expand_neighbors: 1        # chunks pulled on EACH side of a hit; 0 = off
+  max_expand_neighbors: 5    # clamp ceiling for expand_neighbors (also the UI's max)
+  expand_char_budget: 8000   # soft cap on an assembled span's text (farthest neighbours dropped first)
 
 mcp:
   enabled: true

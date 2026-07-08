@@ -34,10 +34,13 @@ class FakeVectorStore:
     """
 
     def __init__(
-        self, results: list[SearchResult] | None = None, bm25: dict[str, float] | None = None
+        self, results: list[SearchResult] | None = None, bm25: dict[str, float] | None = None,
+        chunks: dict[str, SearchResult] | None = None,
     ) -> None:
         self._results = results or []
         self._bm25 = bm25 or {}
+        self._chunks = chunks or {}  # chunk_id -> stored chunk (A2 neighbour fetch)
+        self.chunks_raise = False  # when True, chunks_by_ids raises (degrade test)
         self.last_top_k: int = 0
 
     def search(
@@ -92,6 +95,11 @@ class FakeVectorStore:
         for rank, r in enumerate(fused, start=1):
             r.rank = rank
         return fused, True
+
+    def chunks_by_ids(self, collection_id: str, chunk_ids: list[str]) -> list[SearchResult]:
+        if self.chunks_raise:
+            raise RuntimeError("chunk fetch failed")
+        return [self._chunks[cid] for cid in chunk_ids if cid in self._chunks]
 
     def upsert(self, *args: object, **kwargs: object) -> None: ...
     def delete_document(self, *args: object) -> None: ...
@@ -600,3 +608,67 @@ async def test_multi_collection_search_preserves_real_descending_scores():
     scores = [r.score for r in response.results]
     assert scores == [0.9, 0.5, 0.3]  # real similarities preserved, descending
     assert scores == sorted(scores, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# multi_collection_search — A2 adjacency expansion
+# ---------------------------------------------------------------------------
+
+
+def _stored_doc(document_id: str, n: int) -> dict[str, SearchResult]:
+    """A document's stored chunks keyed by chunk id — what ``chunks_by_ids`` serves."""
+    from api.models.chunk import make_chunk_id
+
+    return {
+        make_chunk_id(document_id, i): SearchResult(
+            chunk_id=make_chunk_id(document_id, i), text=f"c{i}", score=0.0,
+            metadata={"document_id": document_id, "chunk_index": i, "page_number": i + 1},
+        )
+        for i in range(n)
+    }
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_expands_neighbors_into_span():
+    from api.models.chunk import make_chunk_id
+
+    hit = _result(make_chunk_id("d1", 1), score=0.9, document_id="d1", chunk_index=1)
+    vs = FakeVectorStore([hit], chunks=_stored_doc("d1", 3))
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+        expand_neighbors=1, expand_char_budget=10_000,
+    )
+    assert len(response.results) == 1
+    assert response.results[0].text == "c0\n\nc1\n\nc2"  # hit grew to its adjacency span
+    assert response.results[0].source.page_range == "1-3"
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_expansion_degrades_on_fetch_error():
+    from api.models.chunk import make_chunk_id
+
+    hit = _result(make_chunk_id("d1", 1), score=0.9, document_id="d1", chunk_index=1)
+    vs = FakeVectorStore([hit], chunks=_stored_doc("d1", 3))
+    vs.chunks_raise = True  # the neighbour fetch blows up
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+        expand_neighbors=1, expand_char_budget=10_000,
+    )
+    # Graceful degradation: the un-expanded hit is returned, no exception raised.
+    assert len(response.results) == 1
+    assert response.results[0].text == "text"  # original hit text, not a span
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_no_expansion_when_disabled():
+    from api.models.chunk import make_chunk_id
+
+    hit = _result(make_chunk_id("d1", 1), score=0.9, document_id="d1", chunk_index=1)
+    vs = FakeVectorStore([hit], chunks=_stored_doc("d1", 3))
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
+    response = await multi_collection_search(  # expand_neighbors defaults to 0 → off
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert response.results[0].text == "text"  # unexpanded

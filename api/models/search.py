@@ -43,6 +43,9 @@ class SourceProvenance(BaseModel):
     document_id: str | None = None
     filename: str | None = None
     page_number: int | None = None
+    # A2: when this result is an expanded span covering several pages, the inclusive page range
+    # (e.g. "3-5"); None for a single-page or unexpanded hit.
+    page_range: str | None = None
 
 
 class SearchResult(BaseModel):
