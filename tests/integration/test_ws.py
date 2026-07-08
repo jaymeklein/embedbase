@@ -146,15 +146,19 @@ def test_master_receives_snapshot_then_message(ws_client):
 
 
 def test_bad_key_is_rejected(ws_client):
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with ws_client.websocket_connect("/ws?topic=ingestion:col_1&key=wrong-key") as ws:
-            ws.receive_text()
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        ws_client.websocket_connect("/ws?topic=ingestion:col_1&key=wrong-key") as ws,
+    ):
+        ws.receive_text()
     assert exc.value.code == 4401
 
 
 def test_wrong_collection_key_is_rejected(ws_client):
     # SCOPED_KEY is minted for col_2; using it on col_1's topic must 403 -> 4403.
-    with pytest.raises(WebSocketDisconnect) as exc:
-        with ws_client.websocket_connect(f"/ws?topic=ingestion:col_1&key={SCOPED_KEY}") as ws:
-            ws.receive_text()
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        ws_client.websocket_connect(f"/ws?topic=ingestion:col_1&key={SCOPED_KEY}") as ws,
+    ):
+        ws.receive_text()
     assert exc.value.code == 4403

@@ -3,6 +3,7 @@
 import asyncio
 from time import monotonic
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +18,8 @@ from api.models.search import (
     SearchResult,
     SourceProvenance,
 )
+
+logger = structlog.get_logger()
 
 _DEFAULT_FAN_OUT = 4
 
@@ -173,7 +176,10 @@ def search_collection(
     # cheap no-op once the WHERE has done the work.
     filtered = apply_filters(results, filters)
     if reranker is not None:
-        filtered = reranker.rerank(query, filtered)
+        try:
+            filtered = reranker.rerank(query, filtered)
+        except Exception as exc:  # backstop: an optional stage must never 500 the search
+            logger.warning("reranker failed; using pre-rerank order", error=str(exc))
     return filtered[:top_k], effective_mode, retrieved, len(filtered)
 
 
@@ -358,6 +364,21 @@ def _collect_results(
     return per_collection, stats, fallback
 
 
+def _more_available(final: list[SearchResult], stats: dict[str, CollectionStat]) -> bool:
+    """True when the ranked candidate pool held more chunks than were returned **and** the
+    returned results sit on a score *plateau* — the last shown chunk is nearly as relevant as
+    the first — so the ``top_k`` cut likely severed comparably-relevant matches (plan A3: the
+    MCP warns "there's more"). A sharp score *elbow* means the results are genuinely complete,
+    so we stay quiet and the signal keeps its meaning. The 0.9 plateau ratio is an initial
+    default to tune against an eval set; negative reranker logits (``top <= 0``) stay quiet.
+    """
+    pool = sum(s.returned_after_filter for s in stats.values())
+    if pool <= len(final) or len(final) < 2:
+        return False
+    top, tail = final[0].score, final[-1].score
+    return top > 0 and tail >= 0.9 * top
+
+
 async def multi_collection_search(
     request: SearchRequest,
     *,
@@ -410,4 +431,5 @@ async def multi_collection_search(
         results=final, collection_stats=stats, query_embedding_ms=embed_ms,
         search_ms=total_ms - embed_ms, total_ms=total_ms,
         search_mode=mode, under_delivered=len(final) < request.top_k,
+        more_available=_more_available(final, stats),
     )
