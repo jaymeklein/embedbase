@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from api.constants import MAX_TOP_K
+
 
 class SearchFilters(BaseModel):
     filename: str | None = None
@@ -18,7 +20,7 @@ class SearchMode(StrEnum):
 class SearchRequest(BaseModel):
     query: str
     collection_ids: list[str] = Field(min_length=1)
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=5, ge=1, le=MAX_TOP_K)
     # `mode` is the explicit selector; `hybrid` is kept for the MCP tool's bool API
     # and used only when `mode` is unset.
     mode: SearchMode | None = None

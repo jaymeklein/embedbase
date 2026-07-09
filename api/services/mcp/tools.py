@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
-from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
+from api.constants import DEFAULT_EXPAND_CHAR_BUDGET, MAX_TOP_K
 from api.models.search import SearchRequest, SearchResponse
 from api.services import documents as doc_svc
 from api.services import workspaces as ws_svc
@@ -105,7 +105,8 @@ async def search_documents(
     Args:
         query: Natural-language search string.
         collection_ids: Collections to fan out across (at least one).
-        top_k: Desired number of results; clamped to ``[1, max_results]``.
+        top_k: Desired number of results; clamped to ``[1, max_results]`` and never above the
+            ``MAX_TOP_K`` model ceiling (so a ``max_results`` mis-set above it can't 500).
         hybrid: When ``True`` fuse BM25 with semantic scores (RRF).
         filters: Optional ``filename``/``tags`` metadata filter.
         max_results: Upper bound on ``top_k`` (from ``mcp.max_results`` config).
@@ -119,7 +120,12 @@ async def search_documents(
     Returns:
         A JSON-serialisable ``SearchResponse`` dict with results and stats.
     """
-    bounded_top_k = max(_TOP_K_FLOOR, min(top_k, max_results))
+    # mcp.max_results has no hard upper bound, but SearchRequest.top_k does (MAX_TOP_K). Cap the
+    # effective ceiling at both and use it everywhere below: bounded_top_k stays within the model
+    # bound (no 500 from model_validate), and the saturation notice won't advertise headroom past
+    # MAX_TOP_K that a re-run could never deliver.
+    effective_max_results = min(max_results, MAX_TOP_K)
+    bounded_top_k = max(_TOP_K_FLOOR, min(top_k, effective_max_results))
     request = SearchRequest.model_validate(
         {
             "query": query,
@@ -144,7 +150,7 @@ async def search_documents(
     # [:top_k] cut after fusing collections, while returned_after_filter counts the full pool — so
     # whenever it fires, len(final) == top_k == bounded_top_k and matched > bounded_top_k (the "N
     # more" stays positive). A2 coalescing may leave fewer response.results, so count the ranked cut.
-    notice = _saturation_notice(response, max_results, bounded_top_k)
+    notice = _saturation_notice(response, effective_max_results, bounded_top_k)
     if notice:
         result["notice"] = notice  # only when there is genuinely more below the cut
     return result

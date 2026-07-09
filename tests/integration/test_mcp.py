@@ -22,6 +22,7 @@ from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from api.constants import MAX_TOP_K
 from api.models.search import SearchResult
 from api.services.mcp import tools
 from api.services.mcp.middleware import MCPAuthRateLimitMiddleware
@@ -184,6 +185,24 @@ async def test_search_documents_clamps_top_k_to_max_results(seeded):
             vector_store=store,
         )
     assert len(out["results"]) <= 20
+
+
+async def test_search_documents_survives_max_results_above_model_bound(seeded):
+    # Regression: mcp.max_results has no upper bound, but SearchRequest.top_k is capped at
+    # MAX_TOP_K. A max_results set above that must clamp to the ceiling, not overflow the bound
+    # into a ValidationError → 500 (the never-500 rule).
+    factory, store = seeded
+    async with factory() as db:
+        out = await tools.search_documents(
+            query="vectors",
+            collection_ids=["colA"],
+            top_k=999,
+            max_results=MAX_TOP_K + 30,  # misconfigured above the model ceiling
+            db=db,
+            embedder=_FakeEmbedder(),
+            vector_store=store,
+        )
+    assert len(out["results"]) <= MAX_TOP_K  # clamped to the ceiling, no exception raised
 
 
 async def test_ingest_list_delete_roundtrip(seeded, tmp_path, monkeypatch):
