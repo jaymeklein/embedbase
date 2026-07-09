@@ -8,6 +8,7 @@ import pytest
 from api.models.search import SearchFilters, SearchMode, SearchRequest, SearchResult
 from api.services.search import (
     _apply_provenance,
+    _document_coverage,
     _merge_collections_rrf,
     _rank_by_bm25,
     _update_top_k_stats,
@@ -264,14 +265,17 @@ def test_search_collection_semantic_mode_returns_results():
     assert {r.chunk_id for r in results} == {"a", "b"}
 
 
-def test_search_collection_respects_top_k():
+def test_search_collection_returns_full_ranked_pool():
+    # search_collection no longer truncates to top_k — it returns the full over-fetched pool so
+    # multi_collection_search can fuse across collections and measure saturation, then cut once.
     candidates = [_result(f"c{i}") for i in range(10)]
     vs = FakeVectorStore(candidates)
-    results, _, _, _ = search_collection(
-        "col1", [0.1], "q", top_k=3,
+    results, _, _, returned = search_collection(
+        "col1", [0.1], "q", top_k=3,  # pool = top_k * fan_out(4) = 12 >= the 10 candidates
         mode=SearchMode.SEMANTIC, vector_store=vs,
     )
-    assert len(results) <= 3
+    assert len(results) == 10  # the whole pool, not cut to 3 (the cut is the caller's job)
+    assert returned == 10
 
 
 def test_search_collection_fan_out_multiplies_candidate_request():
@@ -366,7 +370,7 @@ class _ReverseReranker:
         return list(reversed(results))
 
 
-def test_search_collection_applies_reranker_before_top_k():
+def test_search_collection_applies_reranker_to_full_pool():
     candidates = [_result("a", score=0.9), _result("b", score=0.5), _result("c", score=0.1)]
     vs = FakeVectorStore(candidates)
     results, _, _, _ = search_collection(
@@ -374,9 +378,9 @@ def test_search_collection_applies_reranker_before_top_k():
         mode=SearchMode.SEMANTIC, vector_store=vs,
         reranker=_ReverseReranker(),
     )
-    # Reversed -> c, b, a; truncated to top_k=2 -> c, b (the reranker reordered
-    # the full pool before the cut, so "c" survives despite the lowest vector score).
-    assert [r.chunk_id for r in results] == ["c", "b"]
+    # The reranker reorders the whole pool (a,b,c -> c,b,a); the top_k cut is the caller's job now,
+    # so search_collection returns the full reranked pool. "c" leads despite the lowest vector score.
+    assert [r.chunk_id for r in results] == ["c", "b", "a"]
 
 
 def test_search_collection_no_reranker_keeps_order():
@@ -590,6 +594,90 @@ async def test_multi_collection_search_no_more_available_when_complete():
     assert response.more_available is False
 
 
+# ---------------------------------------------------------------------------
+# _document_coverage — per-document A3 saturation breakdown
+# ---------------------------------------------------------------------------
+
+_COL_INFO = {"collection_name": "c", "workspace_id": "w", "workspace_name": "ws"}
+
+
+def _provenanced(chunk_id: str, doc: str | None, *, filename: str | None = None) -> SearchResult:
+    """A SearchResult carrying provenance (document_id/filename), as search populates it."""
+    r = _result(chunk_id, document_id=doc, filename=filename)
+    _apply_provenance([r], "col1", _COL_INFO)
+    return r
+
+
+def test_document_coverage_lists_only_docs_with_hidden_matches():
+    # docA: 3 in the pool, 1 shown -> 2 hidden. docB: 2 in pool, both shown -> fully shown.
+    pool = [
+        _provenanced("a1", "docA", filename="a.pdf"),
+        _provenanced("a2", "docA", filename="a.pdf"),
+        _provenanced("a3", "docA", filename="a.pdf"),
+        _provenanced("b1", "docB", filename="b.pdf"),
+        _provenanced("b2", "docB", filename="b.pdf"),
+    ]
+    final = [pool[0], pool[3], pool[4]]  # docA x1, docB x2
+    coverage = _document_coverage([pool], final)
+    assert [c.document_id for c in coverage] == ["docA"]  # docB fully shown -> excluded
+    assert coverage[0].filename == "a.pdf"
+    assert (coverage[0].returned, coverage[0].matched) == (1, 3)
+
+
+def test_document_coverage_sorted_most_hidden_first():
+    pool = [_provenanced(f"big{i}", "docBig") for i in range(5)] + [
+        _provenanced(f"sm{i}", "docSmall") for i in range(2)
+    ]
+    final = [pool[0], pool[5]]  # docBig 1/5 (4 hidden), docSmall 1/2 (1 hidden)
+    coverage = _document_coverage([pool], final)
+    assert [c.document_id for c in coverage] == ["docBig", "docSmall"]  # biggest gap first
+
+
+def test_document_coverage_skips_results_without_document_id():
+    # A chunk with no document_id can't be named or fetched later -> excluded from coverage.
+    orphan = _provenanced("x", None)
+    assert orphan.source is not None and orphan.source.document_id is None
+    assert _document_coverage([[orphan]], []) == []
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_coverage_breaks_down_by_document():
+    """A3: when more_available fires, coverage names each document with matches below the cut."""
+    candidates = [
+        _result("a1", score=0.99, document_id="docA", filename="a.pdf"),
+        _result("a2", score=0.98, document_id="docA", filename="a.pdf"),
+        _result("b1", score=0.97, document_id="docB", filename="b.pdf"),
+        _result("a3", score=0.50, document_id="docA", filename="a.pdf"),
+        _result("a4", score=0.40, document_id="docA", filename="a.pdf"),
+        _result("a5", score=0.30, document_id="docA", filename="a.pdf"),
+    ]
+    vs = FakeVectorStore(candidates)
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=3)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert response.more_available is True
+    # top_k=3 shows a1,a2,b1. docA: 2 of 5 shown (3 hidden). docB: 1 of 1 (fully shown -> excluded).
+    assert [c.document_id for c in response.coverage] == ["docA"]
+    cov = response.coverage[0]
+    assert (cov.filename, cov.returned, cov.matched) == ("a.pdf", 2, 5)
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_coverage_empty_when_not_saturated():
+    candidates = [
+        _result("c1", score=0.9, document_id="d1"),
+        _result("c2", score=0.8, document_id="d1"),
+    ]
+    vs = FakeVectorStore(candidates)
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=5)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+    )
+    assert response.more_available is False
+    assert response.coverage == []
+
+
 @pytest.mark.asyncio
 async def test_multi_collection_search_preserves_real_descending_scores():
     # A single collection with a store that returns candidates already ranked by
@@ -672,3 +760,30 @@ async def test_multi_collection_search_no_expansion_when_disabled():
         request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
     )
     assert response.results[0].text == "text"  # unexpanded
+
+
+@pytest.mark.asyncio
+async def test_multi_collection_search_coverage_counts_pre_expansion_returned():
+    # A2 expansion coalesces adjacent shown chunks into ONE span, but coverage is computed BEFORE
+    # _expand — so coverage.returned must stay on the pre-expansion ranking scale. If it were taken
+    # from the coalesced results instead, "returned" would collapse and inflate "more below the cut".
+    from api.models.chunk import make_chunk_id
+
+    ids = [make_chunk_id("d1", i) for i in range(5)]
+    candidates = [  # scores plateau at the top (fires more_available); chunk_index 0..4
+        _result(ids[0], score=0.99, document_id="d1", chunk_index=0),
+        _result(ids[1], score=0.98, document_id="d1", chunk_index=1),
+        _result(ids[2], score=0.50, document_id="d1", chunk_index=2),
+        _result(ids[3], score=0.40, document_id="d1", chunk_index=3),
+        _result(ids[4], score=0.30, document_id="d1", chunk_index=4),
+    ]
+    vs = FakeVectorStore(candidates, chunks=_stored_doc("d1", 5))
+    request = SearchRequest(query="q", collection_ids=["col1"], top_k=2)
+    response = await multi_collection_search(
+        request, db=_make_db_mock(), embedder=FakeEmbedder(), vector_store=vs,
+        expand_neighbors=1, expand_char_budget=10_000,
+    )
+    assert response.more_available is True
+    assert len(response.results) == 1  # the 2 adjacent shown hits coalesced into a single span
+    cov = response.coverage[0]
+    assert (cov.returned, cov.matched) == (2, 5)  # 2 shown pre-coalesce (not 1 span); 5 in the pool
