@@ -2196,7 +2196,6 @@ components:
           $ref: '#/components/schemas/SearchConfig'
           default:
             default_top_k: 5
-            max_top_k: 20
             retrieval_fan_out: 4
             max_fan_out: 10
             hybrid_default_alpha: 0.7
@@ -2379,6 +2378,40 @@ components:
       type: object
       title: CollectionUpdate
       description: Body for PATCH /workspaces/{ws_id}/collections/{col_id}.
+    DocumentCoverage:
+      properties:
+        document_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Document Id
+        filename:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filename
+        returned:
+          type: integer
+          title: Returned
+        matched:
+          type: integer
+          title: Matched
+      type: object
+      required:
+      - returned
+      - matched
+      title: DocumentCoverage
+      description: 'Per-document view of the A3 saturation signal: how many of one
+        document''s chunks were shown
+
+        in ``top_k`` (``returned``) vs. how many matched the query in the ranked pool
+        (``matched``,
+
+        always ``>= returned``). Present only when ``more_available`` — it names *where*
+        the hidden
+
+        matches are so the caller can pull them (a higher ``top_k`` now; the A4 fetch
+        primitives later).'
     EmbeddingConfig:
       properties:
         provider:
@@ -2696,10 +2729,6 @@ components:
           type: integer
           title: Default Top K
           default: 5
-        max_top_k:
-          type: integer
-          title: Max Top K
-          default: 20
         retrieval_fan_out:
           type: integer
           title: Retrieval Fan Out
@@ -2831,6 +2860,12 @@ components:
           type: boolean
           title: More Available
           default: false
+        coverage:
+          items:
+            $ref: '#/components/schemas/DocumentCoverage'
+          type: array
+          title: Coverage
+          default: []
       type: object
       required:
       - results
