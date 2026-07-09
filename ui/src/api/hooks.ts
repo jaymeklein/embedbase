@@ -14,6 +14,7 @@ import type {
   AppConfig,
   CollectionCreate,
   CollectionUpdate,
+  DocumentQuery,
   DocumentSummary,
   SearchRequest,
   SearchResponse,
@@ -148,10 +149,12 @@ export function useCollections(wsId: string) {
   })
 }
 
-export function useDocuments(wsId: string, colId: string) {
+export function useDocuments(wsId: string, colId: string, query: DocumentQuery = {}) {
   return useQuery({
-    queryKey: qk.documents(wsId, colId),
-    queryFn: () => api.listDocuments(wsId, colId),
+    // Filters/page are part of the key so each combination caches separately; the shared
+    // qk.documents(wsId, colId) prefix keeps existing invalidations matching every variant.
+    queryKey: [...qk.documents(wsId, colId), query] as const,
+    queryFn: () => api.listDocuments(wsId, colId, query),
     enabled: Boolean(wsId) && Boolean(colId),
     retry: false,
     // No polling: live ingestion status streams over WebSocket
@@ -207,7 +210,7 @@ export function useRecentDocuments(limit = 8): { documents: RecentDocument[]; is
 
   const documents = pairs
     .flatMap(({ wsId, colId }, i) =>
-      (documentQueries[i]?.data ?? []).map((d) => ({
+      (documentQueries[i]?.data?.items ?? []).map((d) => ({
         ...d,
         workspace_id: wsId,
         collection_id: colId,
@@ -350,39 +353,13 @@ function useInvalidateDocuments(wsId: string, colId: string): () => Promise<void
 }
 
 export function useUploadDocument(wsId: string, colId: string) {
-  const queryClient = useQueryClient()
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: ({ file, temporary }: { file: File; temporary: boolean }) =>
       api.uploadDocument(wsId, colId, file, temporary),
-    // Show an optimistic "uploading" row while the multipart POST is in flight —
-    // before the 202 returns a real document_id. onSettled's refetch then swaps it
-    // for the server's pending row (or onError removes it).
-    onMutate: async ({ file }: { file: File; temporary: boolean }) => {
-      const key = qk.documents(wsId, colId)
-      await queryClient.cancelQueries({ queryKey: key })
-      const tempId = `upload-${file.name}-${Date.now()}`
-      const placeholder: DocumentSummary = {
-        document_id: tempId,
-        filename: file.name,
-        file_type: file.name.split('.').pop()?.toLowerCase() ?? '',
-        file_size: file.size,
-        chunk_count: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        status: 'uploading',
-      }
-      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
-        prev ? [placeholder, ...prev] : [placeholder],
-      )
-      return { tempId }
-    },
-    onError: (_err, _file, ctx) => {
-      const key = qk.documents(wsId, colId)
-      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
-        prev?.filter((d) => d.document_id !== ctx?.tempId),
-      )
-    },
+    // The list is paginated + filtered (many cache entries keyed by the active query), so a
+    // single optimistic row can't be reliably prepended. The 202 returns fast and this refetch
+    // surfaces the new pending row — the UploadZone shows the in-flight state meanwhile.
     onSettled: invalidate,
   })
 }
