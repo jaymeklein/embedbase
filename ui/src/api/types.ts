@@ -359,7 +359,6 @@ export interface RerankerConfig {
 /** Search / retrieval knobs. `expand_neighbors` drives A2 adjacency expansion (0 = off). */
 export interface SearchConfig {
   default_top_k: number
-  max_top_k: number
   retrieval_fan_out: number
   max_fan_out: number
   hybrid_default_alpha: number
