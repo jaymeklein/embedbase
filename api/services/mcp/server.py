@@ -59,9 +59,10 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
     ) -> dict[str, Any]:
         """Hybrid semantic + keyword search across one or more collections.
 
-        The response carries a ``more_available`` flag; when relevant chunks fell below the
-        ``top_k`` cut it also includes a ``notice`` string. If a ``notice`` is present and the
-        answer looks incomplete, re-run with a higher ``top_k`` before responding.
+        The response carries a ``more_available`` flag and a structured ``coverage`` list; when
+        relevant chunks fell below the ``top_k`` cut it also includes a ``notice`` string that
+        names which documents have matches below the cut and how many. If a ``notice`` is present
+        and the answer looks incomplete, re-run with a higher ``top_k`` before responding.
         """
         embedder = _require(get_embedding_adapter(), "Embedding")
         vector_store = _require(get_vector_store(), "Vector store")

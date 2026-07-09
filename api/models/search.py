@@ -64,6 +64,19 @@ class CollectionStat(BaseModel):
     contributed_to_top_k: int = 0
 
 
+class DocumentCoverage(BaseModel):
+    """Per-document view of the A3 saturation signal: how many of one document's chunks were shown
+    in ``top_k`` (``returned``) vs. how many matched the query in the ranked pool (``matched``,
+    always ``>= returned``). Present only when ``more_available`` — it names *where* the hidden
+    matches are so the caller can pull them (a higher ``top_k`` now; the A4 fetch primitives later).
+    """
+
+    document_id: str | None = None
+    filename: str | None = None
+    returned: int
+    matched: int
+
+
 class SearchResponse(BaseModel):
     results: list[SearchResult]
     collection_stats: dict[str, CollectionStat] = {}
@@ -76,3 +89,6 @@ class SearchResponse(BaseModel):
     # were returned in top_k, so the caller is seeing only part of what matched. The MCP tool
     # turns this into a natural-language ``notice`` telling the model it can raise ``top_k``.
     more_available: bool = False
+    # Per-document breakdown backing ``more_available``: the documents with matches that fell
+    # below the top_k cut, most-hidden first. Empty unless ``more_available`` is set.
+    coverage: list[DocumentCoverage] = []

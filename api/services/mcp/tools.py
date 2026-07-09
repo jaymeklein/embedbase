@@ -31,6 +31,10 @@ MASTER_PRINCIPAL = Principal(is_master=True)
 
 _TOP_K_FLOOR = 1
 
+# Cap on how many documents the notice names inline; the full list is always in the structured
+# ``coverage`` field. Keeps the LLM-facing text bounded when a query matches many documents.
+_NOTICE_DOC_LIMIT = 5
+
 
 def _saturation_notice(
     response: SearchResponse, max_results: int, ranked_shown: int
@@ -40,7 +44,9 @@ def _saturation_notice(
 
     Returns ``None`` when results look complete (``more_available`` is false), so the warning
     stays meaningful and the model doesn't learn to ignore it. The LLM reads this text, not the
-    structured ``more_available`` field, so it is phrased as an actionable instruction.
+    structured ``more_available``/``coverage`` fields, so it is phrased as an actionable instruction
+    and it *names the documents* with hidden matches (from ``coverage``) so the caller knows where
+    to look — and, once the A4 fetch primitives land, which document to expand.
 
     ``ranked_shown`` is the number of ranked hits shown *before* A2 expansion coalesces them into
     spans. The notice describes the **ranking** cut (what a higher ``top_k`` changes), so its counts
@@ -50,12 +56,28 @@ def _saturation_notice(
     if not response.more_available:
         return None
     matched = sum(s.returned_after_filter for s in response.collection_stats.values())
-    return (
+    lines = [
         f"{matched} chunks matched and were ranked; showing the top {ranked_shown}. About "
-        f"{matched - ranked_shown} more, of comparable relevance, fell below the top_k cut. If the "
-        f"answer seems incomplete, re-run search_documents with a higher top_k "
-        f"(up to {max_results})."
-    )
+        f"{matched - ranked_shown} more, of comparable relevance, fell below the top_k cut."
+    ]
+    # Name the documents whose matches were cut, most-hidden first (coverage is pre-sorted).
+    for c in response.coverage[:_NOTICE_DOC_LIMIT]:
+        who = c.filename or c.document_id or "an unnamed document"
+        lines.append(
+            f"- {who}: showing {c.returned} of {c.matched} matched "
+            f"({c.matched - c.returned} more below the cut)"
+        )
+    hidden = len(response.coverage) - _NOTICE_DOC_LIMIT
+    if hidden > 0:
+        lines.append(f"- and {hidden} more document(s) with matches below the cut")
+    # Only suggest raising top_k when there's headroom; at the ceiling it's a dead-end (the request
+    # is already clamped to max_results), so the notice just reports what's hidden without it.
+    if ranked_shown < max_results:
+        lines.append(
+            f"If the answer seems incomplete, re-run search_documents with a higher top_k "
+            f"(up to {max_results})."
+        )
+    return "\n".join(lines)
 
 
 async def list_workspaces(*, db: AsyncSession) -> dict[str, Any]:
@@ -118,10 +140,10 @@ async def search_documents(
     )
     result = response.model_dump(mode="json")
     # ranked_shown = the pre-expansion ranked count. more_available (search._more_available) only
-    # fires when the candidate pool exceeds len(final), and search_collection caps each collection's
-    # contribution at top_k while counting the full pool in returned_after_filter — so whenever it
-    # fires, len(final) == top_k == bounded_top_k and matched > bounded_top_k (the "N more" stays
-    # positive). A2 coalescing may leave fewer response.results, so count the ranked cut, not those.
+    # fires when the candidate pool exceeds len(final); multi_collection_search applies the single
+    # [:top_k] cut after fusing collections, while returned_after_filter counts the full pool — so
+    # whenever it fires, len(final) == top_k == bounded_top_k and matched > bounded_top_k (the "N
+    # more" stays positive). A2 coalescing may leave fewer response.results, so count the ranked cut.
     notice = _saturation_notice(response, max_results, bounded_top_k)
     if notice:
         result["notice"] = notice  # only when there is genuinely more below the cut
