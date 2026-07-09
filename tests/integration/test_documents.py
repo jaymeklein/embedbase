@@ -121,9 +121,9 @@ async def test_list_documents_shows_uploaded(client):
             f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH
         )
     ).json()
-    assert len(docs) == 1
-    assert docs[0]["document_id"] == up["document_id"]
-    assert docs[0]["status"] == "pending"
+    assert docs["total"] == 1
+    assert docs["items"][0]["document_id"] == up["document_id"]
+    assert docs["items"][0]["status"] == "pending"
 
 
 async def test_list_documents_reports_indexed_flag(client):
@@ -142,7 +142,7 @@ async def test_list_documents_reports_indexed_flag(client):
         await s.execute(update(doc_t).where(doc_t.c.id == a).values(chunk_count=1))
         await s.commit()
 
-    by_id = {d["document_id"]: d for d in (await client.get(base, headers=AUTH)).json()}
+    by_id = {d["document_id"]: d for d in (await client.get(base, headers=AUTH)).json()["items"]}
     assert by_id[a]["indexed"] is True
     assert by_id[b]["indexed"] is False
 
@@ -198,7 +198,7 @@ async def test_delete_document(client):
             f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH
         )
     ).json()
-    assert after == []
+    assert after["total"] == 0 and after["items"] == []
 
 
 async def test_delete_unknown_document_returns_404(client):
