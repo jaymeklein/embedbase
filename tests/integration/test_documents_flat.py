@@ -68,7 +68,7 @@ async def test_flat_delete_removes_document(client):
             f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH
         )
     ).json()
-    assert remaining == []
+    assert remaining["items"] == []
 
 
 async def test_flat_delete_unknown_returns_404(client):

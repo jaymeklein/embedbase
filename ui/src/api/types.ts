@@ -178,6 +178,39 @@ export interface DocumentSummary {
   indexed?: boolean
   /** Assigned tags, echoed by `GET .../documents`. */
   tags?: TagRef[]
+  /** Exact embedding model a finished document was ingested with, when known. */
+  embedding_model?: string | null
+  /** Storage backend holding the file (`local` / a configured S3 name). */
+  storage_backend?: string | null
+}
+
+/** `GET .../documents` — one page of documents plus the full match count for the pager. */
+export interface DocumentListResponse {
+  items: DocumentSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** Query params for the documents listing. All optional and AND-combined server-side;
+ *  `filename` is a case-insensitive substring and the `*_size`/`*_after`/`*_before` bounds
+ *  are inclusive. */
+export interface DocumentQuery {
+  limit?: number
+  offset?: number
+  filename?: string
+  file_type?: string
+  status?: string
+  indexed?: boolean
+  embedding_model?: string
+  storage_backend?: string
+  min_size?: number
+  max_size?: number
+  created_after?: string
+  created_before?: string
+  updated_after?: string
+  updated_before?: string
+  tag?: string[]
 }
 
 // ── BM25 indexing ────────────────────────────────────────────────────────────

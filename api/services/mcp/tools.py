@@ -147,8 +147,13 @@ async def ingest_document(
 
 
 async def list_documents(*, collection_id: str, db: AsyncSession) -> dict[str, Any]:
-    """List active documents (with ingestion status) in ``collection_id``."""
-    return {"documents": await doc_svc.list_documents(db, collection_id)}
+    """List active documents (with ingestion status) in ``collection_id``.
+
+    Returns the newest up-to-200 documents plus ``total`` (the full count); when ``total`` exceeds
+    the returned set, narrow the collection or use the REST endpoint's pagination for the rest.
+    """
+    page = await doc_svc.list_documents(db, collection_id, limit=200)
+    return {"documents": page["items"], "total": page["total"]}
 
 
 async def delete_document(

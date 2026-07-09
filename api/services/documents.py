@@ -15,7 +15,7 @@ from uuid import uuid4
 import structlog
 from fastapi import HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.parsers import DOCLING_EXTENSIONS, supported_extensions
@@ -68,6 +68,16 @@ def document_key(col_id: str, doc_id: str, ext: str) -> str:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _inclusive_end(bound: str) -> str:
+    """Expand a date-only upper bound (``YYYY-MM-DD``) to end-of-day so ``<= bound`` includes that
+    whole day's ISO timestamps; a full timestamp passes through unchanged. Centralising it here
+    gives every caller (UI, MCP, scripts) inclusive date filtering without its own fix-up.
+    """
+    if len(bound) == 10 and bound[4] == "-" and bound[7] == "-":
+        return f"{bound}T23:59:59.999999"
+    return bound
 
 
 def _expiry(storage_cfg: StorageConfig, temporary: bool) -> datetime | None:
@@ -220,64 +230,129 @@ async def ingest_local_path(
     )
 
 
-def _dedupe_by_document(mappings: Any) -> list[dict]:
-    """Keep one row per ``document_id`` — the first seen (latest job, per ordering)."""
-    seen: set[str] = set()
-    rows: list[dict] = []
-    for mapping in mappings:
-        row = dict(mapping)
-        if row["document_id"] in seen:
-            continue
-        seen.add(row["document_id"])
-        rows.append(row)
-    return rows
-
-
 async def list_documents(
     db: AsyncSession,
     col_id: str,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    filename: str | None = None,
+    file_type: str | None = None,
+    status: str | None = None,
+    indexed: bool | None = None,
+    embedding_model: str | None = None,
+    storage_backend: str | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    created_after: str | None = None,
+    created_before: str | None = None,
+    updated_after: str | None = None,
+    updated_before: str | None = None,
     tags: list[str] | None = None,
-) -> list[dict]:
-    """Return active documents in ``col_id`` with status, tags, and optional filter.
+) -> dict:
+    """Return one filtered, paginated page of active documents in ``col_id``.
+
+    Each document appears once, carrying its *latest* job ``status`` (a ``LATERAL`` pick of
+    the most recent ``job_records`` row — a document accrues several as it re-ingests/retries),
+    its tags, and an ``indexed`` flag (true once chunks are stored). Newest-first.
 
     Args:
         db: Active async database session.
         col_id: Collection whose documents to list.
-        tags: Optional tag names; only documents carrying *all* of them are
-            returned (AND filter).
+        limit / offset: Page window (the caller clamps ``limit``).
+        filename: Case-insensitive substring match on the filename.
+        file_type / embedding_model / storage_backend: Exact-match column filters.
+        status: Latest ingestion status (``pending``/``processing``/``done``/``failed``/…).
+        indexed: ``True`` = has stored chunks, ``False`` = none yet, ``None`` = either.
+        min_size / max_size: Inclusive ``file_size`` (bytes) bounds.
+        created_after / created_before / updated_after / updated_before: Inclusive ISO-8601
+            timestamp bounds (the columns store ``isoformat()`` strings, so lexical comparison
+            is chronological).
+        tags: Only documents carrying *all* of these tag names (AND filter).
 
     Returns:
-        One mapping per active document including its ``status``, ``tags``, and an
-        ``indexed`` bool (true once the document has stored/FTS-searchable chunks).
+        ``{"items": [...], "total": N, "limit": L, "offset": O}`` — ``total`` is the full match
+        count (for the pager); ``items`` is the requested page, each a mapping with ``status``,
+        ``tags``, and ``indexed``.
     """
     from api.services.tags import attach_tags, matching_entity_ids
 
-    stmt = (
-        select(
-            doc_t.c.id.label("document_id"),
-            doc_t.c.filename,
-            doc_t.c.file_type,
-            doc_t.c.file_size,
-            doc_t.c.chunk_count,
-            doc_t.c.embedding_model,
-            doc_t.c.created_at,
-            doc_t.c.updated_at,
-            job_t.c.status,
-        )
-        .select_from(doc_t.outerjoin(job_t, job_t.c.document_id == doc_t.c.id))
-        .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
-        # A document can have several job rows (re-ingest, retries); order so the
-        # latest job is first, then keep one row per document below.
-        .order_by(doc_t.c.created_at.desc(), job_t.c.created_at.desc())
+    # Latest job status per document as a correlated scalar subquery — portable (SQLite in tests,
+    # Postgres in prod) and naturally one row per document (a document accrues several job rows as
+    # it re-ingests/retries), so pagination and the count stay on distinct documents.
+    latest_status = (
+        select(job_t.c.status)
+        .where(job_t.c.document_id == doc_t.c.id)
+        .order_by(job_t.c.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
     )
+
+    conds: list[Any] = [doc_t.c.collection_id == col_id, doc_t.c.status.is_(None)]
+    if filename:
+        # Escape LIKE metacharacters so a literal % / _ in the term isn't treated as a wildcard.
+        term = filename.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        conds.append(doc_t.c.filename.ilike(f"%{term}%", escape="\\"))
+    if file_type:
+        conds.append(doc_t.c.file_type == file_type)
+    if status:
+        conds.append(latest_status == status)
+    if indexed is not None:
+        # "indexed" mirrors the emitted flag bool(chunk_count): a done-with-zero-chunks document
+        # (chunk_count == 0) is NOT indexed, same as a not-yet-ingested one (chunk_count IS NULL).
+        conds.append(
+            doc_t.c.chunk_count > 0
+            if indexed
+            else or_(doc_t.c.chunk_count.is_(None), doc_t.c.chunk_count == 0)
+        )
+    if embedding_model:
+        conds.append(doc_t.c.embedding_model == embedding_model)
+    if storage_backend:
+        conds.append(doc_t.c.storage_backend == storage_backend)
+    if min_size is not None:
+        conds.append(doc_t.c.file_size >= min_size)
+    if max_size is not None:
+        conds.append(doc_t.c.file_size <= max_size)
+    if created_after:
+        conds.append(doc_t.c.created_at >= created_after)
+    if created_before:
+        conds.append(doc_t.c.created_at <= _inclusive_end(created_before))
+    if updated_after:
+        conds.append(doc_t.c.updated_at >= updated_after)
+    if updated_before:
+        conds.append(doc_t.c.updated_at <= _inclusive_end(updated_before))
     if tags:
-        stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
-    rows = _dedupe_by_document(r._mapping for r in (await db.execute(stmt)).fetchall())
-    rows = await attach_tags("document", rows, "document_id", db)
-    for row in rows:
+        conds.append(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
+    where = and_(*conds)
+
+    total = (await db.execute(select(func.count()).select_from(doc_t).where(where))).scalar_one()
+    rows = (
+        await db.execute(
+            select(
+                doc_t.c.id.label("document_id"),
+                doc_t.c.filename,
+                doc_t.c.file_type,
+                doc_t.c.file_size,
+                doc_t.c.chunk_count,
+                doc_t.c.embedding_model,
+                doc_t.c.storage_backend,
+                doc_t.c.created_at,
+                doc_t.c.updated_at,
+                latest_status.label("status"),
+            )
+            .where(where)
+            # id as a stable tiebreaker so rows sharing a created_at can't shuffle across pages.
+            .order_by(doc_t.c.created_at.desc(), doc_t.c.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+    ).fetchall()
+    items = [dict(r._mapping) for r in rows]
+    items = await attach_tags("document", items, "document_id", db)
+    for row in items:
         # FTS-indexed once chunks are stored; chunk_count is set when ingestion finishes.
         row["indexed"] = bool(row.get("chunk_count"))
-    return rows
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 async def get_document_status(

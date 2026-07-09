@@ -455,9 +455,9 @@ async def test_list_documents_filters_and_echoes_tags(db_session):
     tag = await svc.create_tag(ws, "keep", None, db_session)
     await svc.assign_document_tag(ws, col, d1, tag["id"], db_session)
 
-    docs = await list_documents(db_session, col)
+    docs = (await list_documents(db_session, col))["items"]
     tagged = next(d for d in docs if d["document_id"] == d1)
     assert tagged["tags"][0]["name"] == "keep"
 
-    filtered = await list_documents(db_session, col, tags=["keep"])
+    filtered = (await list_documents(db_session, col, tags=["keep"]))["items"]
     assert [d["document_id"] for d in filtered] == [d1]
