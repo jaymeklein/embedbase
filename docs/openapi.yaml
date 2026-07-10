@@ -692,7 +692,7 @@ paths:
         ``indexed`` gates on stored chunks, and the ``*_size``/``*_after``/``*_before``
         bounds are
 
-        inclusive.'
+        inclusive. See :class:`DocumentListQuery` for the full set of query parameters.'
       operationId: list_documents_workspaces__ws_id__collections__col_id__documents_get
       parameters:
       - name: ws_id
