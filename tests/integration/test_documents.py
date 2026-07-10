@@ -209,6 +209,69 @@ async def test_delete_unknown_document_returns_404(client):
     assert r.status_code == 404
 
 
+# ── reprocess ─────────────────────────────────────────────────────────────────
+
+async def test_reprocess_document_reenqueues(client):
+    from sqlalchemy import update
+
+    from api.tables import job_records as job_t
+
+    ws_id, col_id = await _setup(client)
+    up = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()
+    doc_id = up["document_id"]
+    # Simulate the upload's ingest having failed (the real reprocess case; a still-pending job no-ops).
+    async with client.session_factory() as s:
+        await s.execute(update(job_t).where(job_t.c.document_id == doc_id).values(status="failed"))
+        await s.commit()
+
+    r = await client.post(f"/documents/{doc_id}/reprocess", headers=AUTH)
+    assert r.status_code == 202
+    body = r.json()
+    assert body["status"] == "pending"
+    assert body["document_id"] == doc_id
+    assert body["job_id"] != up["job_id"]  # a fresh retry attempt, not the original failed job
+
+    docs = (
+        await client.get(f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH)
+    ).json()
+    assert docs["total"] == 1  # still one document; its latest job is the pending retry
+    assert docs["items"][0]["status"] == "pending"
+
+
+async def test_reprocess_in_flight_document_is_noop(client):
+    """Reprocessing a document whose latest attempt is still pending/processing returns that job
+    instead of minting a duplicate — the idempotency guard against double-clicks."""
+    ws_id, col_id = await _setup(client)
+    up = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()  # its job is 'pending' straight after upload
+
+    body = (await client.post(f"/documents/{up['document_id']}/reprocess", headers=AUTH)).json()
+    assert body["job_id"] == up["job_id"]  # the in-flight job, not a fresh one
+    assert body["status"] == "pending"
+
+
+async def test_reprocess_unknown_document_returns_404(client):
+    r = await client.post("/documents/doc_nope/reprocess", headers=AUTH)
+    assert r.status_code == 404
+
+
+async def test_reprocess_requires_api_key(client):
+    ws_id, col_id = await _setup(client)
+    doc_id = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()["document_id"]
+    assert (await client.post(f"/documents/{doc_id}/reprocess")).status_code == 401
+
+
 # ── collection-scoped keys ────────────────────────────────────────────────────
 
 async def test_collection_key_can_upload_to_own_collection(client):
