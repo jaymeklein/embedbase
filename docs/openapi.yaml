@@ -1093,6 +1093,51 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /documents/{doc_id}/reprocess:
+    post:
+      tags:
+      - documents
+      summary: Reprocess Document Flat
+      description: 'Re-enqueue a document''s ingestion — the manual retry for a failed
+        file. Reuses the stored
+
+        bytes (nothing is re-uploaded) and surfaces a fresh pending job in the queue.'
+      operationId: reprocess_document_flat_documents__doc_id__reprocess_post
+      parameters:
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Doc Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /workspaces/{ws_id}/tags:
     post:
       tags:
@@ -2063,6 +2108,165 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/IndexEnqueueResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /ingestion/jobs:
+    get:
+      tags:
+      - jobs
+      summary: List Jobs
+      description: 'List ingestion jobs across all collections: paginated, filtered,
+        newest-first.
+
+
+        Returns ``{items, total, limit, offset}``. All filters are optional and AND-combined;
+
+        ``filename`` and ``collection`` are case-insensitive substrings, ``status``
+        and ``file_type``
+
+        are exact, and the ``created_*`` bounds are inclusive ISO-8601 (a date-only
+        ``created_before``
+
+        covers the whole day).'
+      operationId: list_jobs_ingestion_jobs_get
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: filename
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Filename
+      - name: file_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: File Type
+      - name: collection
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Collection
+      - name: created_after
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created After
+      - name: created_before
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Created Before
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /ingestion/jobs/stats:
+    get:
+      tags:
+      - jobs
+      summary: Job Stats
+      description: 'Live queue totals for the header: per-status job counts plus the
+        global embedding-quota
+
+        backoff, so the UI can show a real depth that *drains* (not the accumulating
+        WebSocket buffer)
+
+        and explain when ingestion is paused waiting on a provider rate limit.
+
+
+        Returns ``{"counts": {status: n, ...}, "paused_seconds": n}`` (``paused_seconds``
+        0 = running).'
+      operationId: job_stats_ingestion_jobs_stats_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
         '422':
           description: Validation Error
           content:
