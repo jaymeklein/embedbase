@@ -16,6 +16,7 @@ from api.services.documents import (
     delete_document,
     ingest,
     list_documents,
+    reprocess_document,
     resolve_document_download,
 )
 
@@ -404,6 +405,66 @@ async def test_ingest_records_default_storage_backend(db_session, monkeypatch) -
         )
     ).fetchone()
     assert row.storage_backend == "local"
+
+
+async def test_reprocess_document_creates_fresh_pending_job(db_session, monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest",
+        lambda *a: calls.append(a) or "task-r",
+    )
+    await _seed(db_session)  # doc f.txt with one job (status done)
+
+    result = await reprocess_document(db_session, _COL_ID, _DOC_ID)
+
+    assert result["status"] == "pending"
+    assert result["document_id"] == _DOC_ID
+    # a fresh job was dispatched against the stored key (nothing re-uploaded)
+    assert calls == [(result["job_id"], f"{_COL_ID}/{_DOC_ID}.txt", _COL_ID, _DOC_ID, ".txt")]
+    jobs = (
+        await db_session.execute(select(job_t).where(job_t.c.document_id == _DOC_ID))
+    ).fetchall()
+    assert len(jobs) == 2  # the original attempt is kept in history; the retry is added
+    assert {j.status for j in jobs} == {"done", "pending"}
+
+
+async def test_reprocess_missing_document_raises_404(db_session) -> None:
+    await _seed(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await reprocess_document(db_session, _COL_ID, "doc_ghost")
+    assert exc.value.status_code == 404
+
+
+async def test_reprocess_deleting_document_raises_409(db_session, monkeypatch) -> None:
+    monkeypatch.setattr("api.services.documents.task_producer.enqueue_delete", lambda *_: None)
+    await _seed(db_session)
+    await delete_document(db_session, _COL_ID, _DOC_ID)  # marks the doc status='deleting'
+    with pytest.raises(HTTPException) as exc:
+        await reprocess_document(db_session, _COL_ID, _DOC_ID)
+    assert exc.value.status_code == 409
+
+
+async def test_reprocess_is_noop_when_already_in_flight(db_session, monkeypatch) -> None:
+    # A double-click (or a stale "failed" button) must not mint a second job for the same document —
+    # _claim_job dedups by job_id, so a new id would let a multi-process worker double-embed.
+    calls: list = []
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest",
+        lambda *a: calls.append(a) or "task-r",
+    )
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_active", job_status="pending")  # already queued
+    await db_session.commit()
+
+    result = await reprocess_document(db_session, _COL_ID, "doc_active")
+
+    assert result["job_id"] == "job_doc_active"  # the EXISTING job, not a fresh one
+    assert result["status"] == "pending"
+    assert calls == []  # no duplicate task enqueued
+    jobs = (
+        await db_session.execute(select(job_t).where(job_t.c.document_id == "doc_active"))
+    ).fetchall()
+    assert len(jobs) == 1  # no duplicate job row created
 
 
 async def test_delete_enqueue_failure_rolls_back_tombstone(db_session, monkeypatch) -> None:
