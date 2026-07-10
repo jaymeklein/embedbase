@@ -8,12 +8,13 @@ api/services/jobs.py. The list spans every collection (a global admin view, mirr
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db, get_redis_client
+from api.models.document import JobListQuery
 from api.services import jobs as jobs_svc
 from api.services.auth import require_master
 
@@ -22,14 +23,7 @@ router = APIRouter(tags=["jobs"])
 
 @router.get("/ingestion/jobs")
 async def list_jobs(
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    status: str | None = Query(default=None),
-    filename: str | None = Query(default=None),
-    file_type: str | None = Query(default=None),
-    collection: str | None = Query(default=None),
-    created_after: str | None = Query(default=None),
-    created_before: str | None = Query(default=None),
+    query: Annotated[JobListQuery, Query()],
     _principal: object = Depends(require_master),
     db: AsyncSession = Depends(get_db),
 ):
@@ -38,19 +32,9 @@ async def list_jobs(
     Returns ``{items, total, limit, offset}``. All filters are optional and AND-combined;
     ``filename`` and ``collection`` are case-insensitive substrings, ``status`` and ``file_type``
     are exact, and the ``created_*`` bounds are inclusive ISO-8601 (a date-only ``created_before``
-    covers the whole day).
+    covers the whole day). See :class:`JobListQuery` for the full set of query parameters.
     """
-    return await jobs_svc.list_jobs(
-        db,
-        limit=limit,
-        offset=offset,
-        status=status,
-        filename=filename,
-        file_type=file_type,
-        collection=collection,
-        created_after=created_after,
-        created_before=created_before,
-    )
+    return await jobs_svc.list_jobs(db, query)
 
 
 @router.get("/ingestion/jobs/stats")
