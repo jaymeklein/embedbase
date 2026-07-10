@@ -61,3 +61,20 @@ class DocumentListQuery(BaseModel):
     updated_after: str | None = None
     updated_before: str | None = None
     tag: list[str] | None = None  # documents carrying *all* of these tag names (AND filter)
+
+
+class JobListQuery(BaseModel):
+    """Pagination + filters for :func:`api.services.jobs.list_jobs` (the ingestion-queue listing).
+
+    Bound straight from the request query string (a FastAPI query-parameter model); every field is
+    optional and unset filters are skipped and AND-combined. Sibling of :class:`DocumentListQuery`.
+    """
+
+    limit: int = Field(default=50, ge=1, le=200)
+    offset: int = Field(default=0, ge=0)
+    status: str | None = None  # exact job status
+    filename: str | None = None  # case-insensitive substring
+    file_type: str | None = None
+    collection: str | None = None  # case-insensitive substring on the collection name
+    created_after: str | None = None
+    created_before: str | None = None

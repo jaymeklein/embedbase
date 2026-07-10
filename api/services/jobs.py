@@ -16,21 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.constants import EMBEDDING_PAUSE_KEY
 from api.db import collections as col_t
 from api.db import job_records as job_t
-from api.services.filters import ilike_contains, inclusive_end
+from api.models.document import JobListQuery
+from api.services.filters import to_conditions
+from api.services.job_filters import build_specs
 
 
-async def list_jobs(
-    db: AsyncSession,
-    *,
-    limit: int = 50,
-    offset: int = 0,
-    status: str | None = None,
-    filename: str | None = None,
-    file_type: str | None = None,
-    collection: str | None = None,
-    created_after: str | None = None,
-    created_before: str | None = None,
-) -> dict:
+async def list_jobs(db: AsyncSession, query: JobListQuery) -> dict:
     """Return one filtered, paginated page of ingestion jobs across all collections.
 
     Ordering: actively-``processing`` jobs first (so the live card leads), then newest-first.
@@ -38,34 +29,15 @@ async def list_jobs(
     Each row is a ``job_records`` entry left-joined to its collection name (``NULL`` when the
     collection was since deleted — the job still appears). Unlike the documents listing this keeps
     *every* job row (re-ingests and retries each show), because the queue is a history of attempts.
-
-    Args:
-        db: Active async database session.
-        limit / offset: Page window (the caller clamps ``limit``).
-        status: Exact job status (``pending``/``processing``/``done``/``failed``/``rate_limited``).
-        filename / collection: Case-insensitive substring match (collection matches its name).
-        file_type: Exact file-extension match (e.g. ``.pdf``).
-        created_after / created_before: Inclusive ISO-8601 timestamp bounds (a date-only
-            ``created_before`` covers the whole day).
+    Pagination and every (optional, AND-combined) filter come from ``query`` — see
+    :class:`JobListQuery`; each filter is a ``FilterSpec`` in api/services/job_filters.py.
 
     Returns:
         ``{"items": [...], "total": N, "limit": L, "offset": O}`` — ``total`` is the full match
         count (for the pager); ``items`` is the requested page, each a mapping including
         ``collection_name`` and ``document_id`` (the latter lets the UI overlay live progress).
     """
-    conds: list[Any] = []
-    if status:
-        conds.append(job_t.c.status == status)
-    if filename:
-        conds.append(ilike_contains(job_t.c.filename, filename))
-    if file_type:
-        conds.append(job_t.c.file_type == file_type)
-    if collection:
-        conds.append(ilike_contains(col_t.c.name, collection))
-    if created_after:
-        conds.append(job_t.c.created_at >= created_after)
-    if created_before:
-        conds.append(job_t.c.created_at <= inclusive_end(created_before))
+    conds = await to_conditions(build_specs(query), db)
 
     # LEFT join so a job whose collection was deleted still lists (with a NULL collection_name);
     # the join is 1:1, so it doesn't change the job row count the pager reports. `.where(*conds)`
@@ -101,15 +73,15 @@ async def list_jobs(
                 job_t.c.created_at.desc(),
                 job_t.c.job_id.desc(),
             )
-            .limit(limit)
-            .offset(offset)
+            .limit(query.limit)
+            .offset(query.offset)
         )
     ).fetchall()
     return {
         "items": [dict(r._mapping) for r in rows],
         "total": total,
-        "limit": limit,
-        "offset": offset,
+        "limit": query.limit,
+        "offset": query.offset,
     }
 
 

@@ -5,6 +5,7 @@ from sqlalchemy import insert
 from api.db import collections as col_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
+from api.models.document import JobListQuery
 from api.services.jobs import list_jobs
 
 _NOW = "2024-01-01T00:00:00"
@@ -60,12 +61,12 @@ async def test_list_jobs_paginates_newest_first_with_total(db_session) -> None:
         await _add_job(db_session, f"job_{i}", created_at=f"2024-01-0{i + 1}T00:00:00")
     await db_session.commit()
 
-    page1 = await list_jobs(db_session, limit=2, offset=0)
+    page1 = await list_jobs(db_session, JobListQuery(limit=2, offset=0))
     assert page1["total"] == 5  # full match count, not the page length
     assert (page1["limit"], page1["offset"]) == (2, 0)
     assert [j["job_id"] for j in page1["items"]] == ["job_4", "job_3"]  # newest first
 
-    last = await list_jobs(db_session, limit=2, offset=4)
+    last = await list_jobs(db_session, JobListQuery(limit=2, offset=4))
     assert last["total"] == 5
     assert [j["job_id"] for j in last["items"]] == ["job_0"]  # trailing partial page
 
@@ -77,7 +78,7 @@ async def test_list_jobs_keeps_every_attempt_for_a_document(db_session) -> None:
     await _add_job(db_session, "job_retry", document_id="doc_x", status="done", created_at="2024-02-01T00:00:00")
     await db_session.commit()
 
-    res = await list_jobs(db_session)
+    res = await list_jobs(db_session, JobListQuery())
     assert res["total"] == 2
     assert [j["job_id"] for j in res["items"]] == ["job_retry", "job_first"]
 
@@ -87,7 +88,7 @@ async def test_list_jobs_joins_collection_name(db_session) -> None:
     await _add_job(db_session, "job_a")
     await db_session.commit()
 
-    res = await list_jobs(db_session)
+    res = await list_jobs(db_session, JobListQuery())
     assert res["items"][0]["collection_name"] == _COL_NAME
     assert res["items"][0]["workspace_id"] == _WS_ID  # for the "open in collection" link
     assert res["items"][0]["document_id"] == "doc_job_a"  # for the live overlay
@@ -99,7 +100,7 @@ async def test_list_jobs_lists_orphan_job_with_null_collection_name(db_session) 
     await _add_job(db_session, "job_orphan", collection_id="col_gone")
     await db_session.commit()
 
-    res = await list_jobs(db_session)
+    res = await list_jobs(db_session, JobListQuery())
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_orphan"
     assert res["items"][0]["collection_name"] is None
@@ -112,7 +113,7 @@ async def test_list_jobs_filters_by_status(db_session) -> None:
     await _add_job(db_session, "job_bad", status="failed")
     await db_session.commit()
 
-    res = await list_jobs(db_session, status="failed")
+    res = await list_jobs(db_session, JobListQuery(status="failed"))
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_bad"
 
@@ -123,7 +124,7 @@ async def test_list_jobs_filters_by_filename_substring_ci(db_session) -> None:
     await _add_job(db_session, "job_b", filename="notes.md", file_type=".md")
     await db_session.commit()
 
-    res = await list_jobs(db_session, filename="report")  # case-insensitive
+    res = await list_jobs(db_session, JobListQuery(filename="report"))  # case-insensitive
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_a"
 
@@ -134,7 +135,7 @@ async def test_list_jobs_filters_by_file_type(db_session) -> None:
     await _add_job(db_session, "job_md", file_type=".md")
     await db_session.commit()
 
-    res = await list_jobs(db_session, file_type=".md")
+    res = await list_jobs(db_session, JobListQuery(file_type=".md"))
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_md"
 
@@ -148,7 +149,7 @@ async def test_list_jobs_filters_by_collection_name_substring(db_session) -> Non
     await _add_job(db_session, "job_i", collection_id="col_other")
     await db_session.commit()
 
-    res = await list_jobs(db_session, collection="hand")  # matches "Handbook", case-insensitive
+    res = await list_jobs(db_session, JobListQuery(collection="hand"))  # matches "Handbook", case-insensitive
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_h"
 
@@ -160,7 +161,7 @@ async def test_list_jobs_filters_by_created_date_range_inclusive(db_session) -> 
     await db_session.commit()
 
     # A date-only upper bound covers the whole bound day (service expands it to end-of-day).
-    res = await list_jobs(db_session, created_after="2024-02-01", created_before="2024-03-15")
+    res = await list_jobs(db_session, JobListQuery(created_after="2024-02-01", created_before="2024-03-15"))
     assert res["total"] == 1
     assert res["items"][0]["job_id"] == "job_mar"
 
@@ -172,7 +173,7 @@ async def test_list_jobs_filename_filter_escapes_wildcards(db_session) -> None:
     await db_session.commit()
 
     # "a_b" must match the literal underscore only, not "_" as a single-char LIKE wildcard.
-    res = await list_jobs(db_session, filename="a_b")
+    res = await list_jobs(db_session, JobListQuery(filename="a_b"))
     assert [j["job_id"] for j in res["items"]] == ["job_underscore"]
 
 
@@ -184,7 +185,7 @@ async def test_list_jobs_lists_processing_first(db_session) -> None:
     await _add_job(db_session, "job_mid_pending", status="pending", created_at="2024-03-01T00:00:00")
     await db_session.commit()
 
-    order = [j["job_id"] for j in (await list_jobs(db_session))["items"]]
+    order = [j["job_id"] for j in (await list_jobs(db_session, JobListQuery()))["items"]]
     assert order[0] == "job_old_proc"  # processing floats up despite being the oldest
     assert order[1:] == ["job_new_done", "job_mid_pending"]  # the rest stay newest-first
 
