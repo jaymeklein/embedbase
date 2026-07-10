@@ -82,6 +82,10 @@ async def test_jobs_paginates(client):
     assert len(page["items"]) == 2
     assert (page["limit"], page["offset"]) == (2, 0)
 
+    # the JobListQuery limit bounds bind from the query string -> 422, not a silent clamp.
+    assert (await client.get("/ingestion/jobs?limit=0", headers=AUTH)).status_code == 422
+    assert (await client.get("/ingestion/jobs?limit=201", headers=AUTH)).status_code == 422
+
 
 async def test_jobs_stats_reports_counts_and_pause(client):
     ws_id, col_id = await _setup(client)
