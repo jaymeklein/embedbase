@@ -15,7 +15,7 @@ from uuid import uuid4
 import structlog
 from fastapi import HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import and_, delete, func, insert, or_, select, update
+from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.parsers import DOCLING_EXTENSIONS, supported_extensions
@@ -27,7 +27,8 @@ from api.models.config import ParserConfig, StorageConfig
 from api.models.document import DocumentListQuery
 from api.services import tasks as task_producer
 from api.services.auth import Principal
-from api.services.filters import ilike_contains, inclusive_end
+from api.services.document_filters import build_specs, latest_status_subquery
+from api.services.filters import to_conditions
 from api.services.storage import get_storage
 
 logger = structlog.get_logger()
@@ -303,52 +304,17 @@ async def list_documents(db: AsyncSession, col_id: str, query: DocumentListQuery
         count (for the pager); ``items`` is the requested page, each a mapping with ``status``,
         ``tags``, and ``indexed``.
     """
-    from api.services.tags import attach_tags, matching_entity_ids
+    from api.services.tags import attach_tags
 
-    # Latest job status per document as a correlated scalar subquery — portable (SQLite in tests,
-    # Postgres in prod) and naturally one row per document (a document accrues several job rows as
-    # it re-ingests/retries), so pagination and the count stay on distinct documents.
-    latest_status = (
-        select(job_t.c.status)
-        .where(job_t.c.document_id == doc_t.c.id)
-        .order_by(job_t.c.created_at.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
+    latest_status = latest_status_subquery()
 
-    conds: list[Any] = [doc_t.c.collection_id == col_id, doc_t.c.status.is_(None)]
-    if query.filename:
-        conds.append(ilike_contains(doc_t.c.filename, query.filename))
-    if query.file_type:
-        conds.append(doc_t.c.file_type == query.file_type)
-    if query.status:
-        conds.append(latest_status == query.status)
-    if query.indexed is not None:
-        # "indexed" mirrors the emitted flag bool(chunk_count): a done-with-zero-chunks document
-        # (chunk_count == 0) is NOT indexed, same as a not-yet-ingested one (chunk_count IS NULL).
-        conds.append(
-            doc_t.c.chunk_count > 0
-            if query.indexed
-            else or_(doc_t.c.chunk_count.is_(None), doc_t.c.chunk_count == 0)
-        )
-    if query.embedding_model:
-        conds.append(doc_t.c.embedding_model == query.embedding_model)
-    if query.storage_backend:
-        conds.append(doc_t.c.storage_backend == query.storage_backend)
-    if query.min_size is not None:
-        conds.append(doc_t.c.file_size >= query.min_size)
-    if query.max_size is not None:
-        conds.append(doc_t.c.file_size <= query.max_size)
-    if query.created_after:
-        conds.append(doc_t.c.created_at >= query.created_after)
-    if query.created_before:
-        conds.append(doc_t.c.created_at <= inclusive_end(query.created_before))
-    if query.updated_after:
-        conds.append(doc_t.c.updated_at >= query.updated_after)
-    if query.updated_before:
-        conds.append(doc_t.c.updated_at <= inclusive_end(query.updated_before))
-    if query.tag:
-        conds.append(doc_t.c.id.in_(await matching_entity_ids("document", query.tag, db)))
+    # Base scope (collection + not soft-deleted), then each active filter as a spec. A new filter
+    # is a new FilterSpec in api/services/document_filters.py, not another branch here.
+    conds = [
+        doc_t.c.collection_id == col_id,
+        doc_t.c.status.is_(None),
+        *await to_conditions(build_specs(query), db),
+    ]
     where = and_(*conds)
 
     total = (await db.execute(select(func.count()).select_from(doc_t).where(where))).scalar_one()

@@ -2131,7 +2131,8 @@ paths:
         are exact, and the ``created_*`` bounds are inclusive ISO-8601 (a date-only
         ``created_before``
 
-        covers the whole day).'
+        covers the whole day). See :class:`JobListQuery` for the full set of query
+        parameters.'
       operationId: list_jobs_ingestion_jobs_get
       parameters:
       - name: limit
