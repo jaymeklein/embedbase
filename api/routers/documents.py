@@ -6,10 +6,13 @@ This file is routing-only: path registration, dependency resolution, delegation.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
+from api.models.document import DocumentListQuery
 from api.services import documents as doc_svc
 from api.services.auth import Principal, require_auth
 
@@ -41,21 +44,7 @@ async def upload_document(
 async def list_documents(
     ws_id: str,
     col_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    filename: str | None = Query(default=None),
-    file_type: str | None = Query(default=None),
-    status: str | None = Query(default=None),
-    indexed: bool | None = Query(default=None),
-    embedding_model: str | None = Query(default=None),
-    storage_backend: str | None = Query(default=None),
-    min_size: int | None = Query(default=None, ge=0),
-    max_size: int | None = Query(default=None, ge=0),
-    created_after: str | None = Query(default=None),
-    created_before: str | None = Query(default=None),
-    updated_after: str | None = Query(default=None),
-    updated_before: str | None = Query(default=None),
-    tag: list[str] | None = Query(default=None),
+    query: Annotated[DocumentListQuery, Query()],
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
@@ -64,30 +53,12 @@ async def list_documents(
     Returns ``{items, total, limit, offset}``. All filters are optional and AND-combined;
     ``filename`` is a case-insensitive substring, ``status`` is the latest ingestion status,
     ``indexed`` gates on stored chunks, and the ``*_size``/``*_after``/``*_before`` bounds are
-    inclusive.
+    inclusive. See :class:`DocumentListQuery` for the full set of query parameters.
     """
     await doc_svc.resolve_collection(db, col_id, ws_id)
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
-    return await doc_svc.list_documents(
-        db,
-        col_id,
-        limit=limit,
-        offset=offset,
-        filename=filename,
-        file_type=file_type,
-        status=status,
-        indexed=indexed,
-        embedding_model=embedding_model,
-        storage_backend=storage_backend,
-        min_size=min_size,
-        max_size=max_size,
-        created_after=created_after,
-        created_before=created_before,
-        updated_after=updated_after,
-        updated_before=updated_before,
-        tags=tag,
-    )
+    return await doc_svc.list_documents(db, col_id, query)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status")

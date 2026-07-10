@@ -446,6 +446,7 @@ async def test_list_collections_filters_and_echoes_tags(db_session):
 
 
 async def test_list_documents_filters_and_echoes_tags(db_session):
+    from api.models.document import DocumentListQuery
     from api.services.documents import list_documents
 
     ws = await _mk_ws(db_session)
@@ -455,9 +456,9 @@ async def test_list_documents_filters_and_echoes_tags(db_session):
     tag = await svc.create_tag(ws, "keep", None, db_session)
     await svc.assign_document_tag(ws, col, d1, tag["id"], db_session)
 
-    docs = (await list_documents(db_session, col))["items"]
+    docs = (await list_documents(db_session, col, DocumentListQuery()))["items"]
     tagged = next(d for d in docs if d["document_id"] == d1)
     assert tagged["tags"][0]["name"] == "keep"
 
-    filtered = (await list_documents(db_session, col, tags=["keep"]))["items"]
+    filtered = (await list_documents(db_session, col, DocumentListQuery(tag=["keep"])))["items"]
     assert [d["document_id"] for d in filtered] == [d1]
