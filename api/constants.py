@@ -34,3 +34,8 @@ GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com"
 # first). The SearchConfig field default and the multi_collection_search / search_documents
 # parameter fallbacks all read this one value so a retune stays a single edit.
 DEFAULT_EXPAND_CHAR_BUDGET: int = 8000
+
+# Hard ceiling on results-per-search. ``SearchRequest.top_k`` is bound by this (``le``) and the MCP
+# search tool clamps ``top_k``/``max_results`` to it — one source so the model bound and the clamp
+# can't drift. (They did: a ``mcp.max_results`` set above the bound overflowed it into a 500.)
+MAX_TOP_K: int = 20

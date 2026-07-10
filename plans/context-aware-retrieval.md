@@ -80,19 +80,43 @@ fixed-window).
 
 ## Summary
 
-| # | Change | Fixes | Track | Depends on |
-|---|--------|-------|-------|------------|
-| **A1** | Reranker on by default | Precision; rescues diluted tail pages | query-time | ✅ done |
-| **A2** | Adjacency expansion + span merge | Spanning context truncated by `top_k` | query-time | ✅ done |
-| **A3** | Saturation signal + MCP `notice` | Caller unaware more relevant data exists | query-time | A2 |
-| **A4** | MCP expansion primitives | Agentic completion of a partial span | query-time | A3 |
-| **A5** | Pluggable, frontend-configurable reranker (local + remote/LLM) | Model outdated, not user-selectable, no remote/LLM provider | query-time | A1 |
-| **B1** | `context_id` in metadata + retrieval grouping | No context unit; page ≠ context | ingestion | — |
-| **B2** | Format-aware `ContextResolver` | Assign context boundaries per format | ingestion | B1 |
-| **B3** | Reasoning fallback (LLM boundaries) | Unstructured / poorly-formatted inputs | ingestion | B2 |
-| **B4** | Structure-aware (sub-page) chunking | Coarse page vectors; 2 contexts/page | ingestion | B2 |
+> **Status audit — 2026-07-08 (post-merge), verified against the code, not the
+> checkboxes.** Track A is the path. **Track B (context division at ingestion) is
+> shelved and its LLM rung (B3) is dropped** — see the decision note below.
 
-`[ ]` todo · `[~]` in progress · `[x]` done — update as phases land.
+| # | Change | Fixes | Track | Status |
+|---|--------|-------|-------|--------|
+| **A1** | Reranker on by default | Precision; rescues diluted tail pages | query-time | ✅ **done** |
+| **A2** | Adjacency expansion + span merge | Spanning context truncated by `top_k` | query-time | ✅ **done + merged** |
+| **A3** | Saturation signal + MCP `notice` | Caller unaware more relevant data exists | query-time | ✅ **done** — flag, per-document `coverage`, document-naming `notice` |
+| **A4** | MCP expansion primitives | Agentic completion of a partial span | query-time | ⬜ **next** — the "ask for more context" mechanism |
+| **A5** | Pluggable, frontend-configurable reranker (local + remote/LLM) | Model outdated, not user-selectable, no remote/LLM provider | query-time | 🟡 **shipped** — modern default model + live-key check deferred |
+| **B1** | `context_id` in metadata + retrieval grouping | No context unit; page ≠ context | ingestion | 💤 shelved |
+| **B2** | Format-aware `ContextResolver` | Assign context boundaries per format | ingestion | 💤 shelved |
+| **B3** | ~~Reasoning fallback (LLM boundaries)~~ | Unstructured / poorly-formatted inputs | ingestion | ❌ **dropped** |
+| **B4** | Structure-aware (sub-page) chunking | Coarse page vectors; 2 contexts/page | ingestion | 💤 shelved |
+
+`[ ]` todo · `[~]` in progress · `[x]` done · 🟡 partial · 💤 shelved · ❌ dropped.
+
+### Decision — no LLM context-identification at ingestion
+
+We are **not** building an ingestion-time step that uses an LLM to detect
+"context" boundaries (originally **B3**, plus the LLM rung of **B2**). The
+**agentic query-time loop already covers it, more simply**:
+
+- **A2** (shipped) mechanically pulls a hit's neighbours by deterministic
+  `chunk_index` adjacency — a context that overflows a page is recovered with no
+  reasoning.
+- **A3** (done) tells the caller *"there's more of this context below the cut,"* naming which
+  documents were under-delivered.
+- **A4** (next) gives the caller the primitives to **fetch it on demand**
+  (`get_document_chunks` / `expand_chunk` / `get_document_outline`).
+
+So the **LLM (or the user) driving the MCP decides when to pull more of a
+context at query time**, instead of us pre-computing context boundaries for every
+document at ingest. This removes the most expensive, most speculative part of the
+plan (per-document reasoning over 1400-page PDFs) and refocuses the remaining work
+on **finishing A3 and building A4**.
 
 ---
 
@@ -176,7 +200,7 @@ will later swap the blind ±`w` window for "neighbours **sharing the hit's `cont
 [`multi_collection_search`](../api/services/search.py) after per-collection results are merged.
 Degrades gracefully: if the neighbour fetch errors, return the un-expanded hits.
 
-## A3 — Saturation signal + MCP `notice` `[~]`
+## A3 — Saturation signal + MCP `notice` `[x]`
 
 **Why (your explicit ask: "the MCP must warn there's more").** `search_collection`
 already over-fetches (`retrieval_fan_out=4` → ~20 candidates for `top_k=5`) then
@@ -232,14 +256,32 @@ taper correctly emits no notice). Implemented in
 and tuning the 0.9 plateau ratio against an eval set (see
 [Measuring it](#measuring-it-better-must-be-provable)).
 
-- [~] `more_available` flag on `SearchResponse` **shipped**; fuller `coverage` object +
-  per-`CollectionStat` fields still todo
-- [~] Saturation from the post-filter ranked pool (`returned_after_filter`) + a score-plateau
-  guard; whole-collection BM25 count + elbow-threshold tuning still todo
-- [x] `notice` string builder, added to the MCP `search_documents` response
+**Completed (2026-07-08) — per-document coverage.** `SearchResponse` now carries a structured
+`coverage: list[DocumentCoverage]` (`document_id`, `filename`, `returned` vs `matched`), populated
+only when `more_available` fires and sorted most-hidden-first. The MCP `notice` **names the
+under-delivered documents** — e.g. *"report.pdf: showing 3 of 8 matched (5 more below the cut)"* —
+capped at the top 5 with a "+N more" summary (the full list is always in `coverage`). To surface the
+below-cut chunks per document, [`search_collection`](../api/services/search.py) now returns the
+**full ranked pool** and [`multi_collection_search`](../api/services/search.py) owns the single
+`[:top_k]` cut — the final results are identical (RRF ranking unchanged; deeper candidates can't
+displace the top-ranked), but the merge layer can now see what was cut. New helper
+`_document_coverage`; the plateau ratio is named `_PLATEAU_RATIO`.
+
+**Deliberately not built** (YAGNI / wrong phase): the **whole-collection BM25 match count** (a
+misleading number — lexical matches ≠ relevant, and the only current action, raising `top_k`, is
+capped at `max_results` regardless), **"pages X–Y of N total"** (needs PDF-leaky total-page counts;
+the ranked-pool `returned`/`matched` are format-agnostic), the **span-touches-boundary** signal (an
+A2 refinement, not saturation), and **elbow-threshold eval tuning** (no eval harness exists — its own
+phase; see [Measuring it](#measuring-it-better-must-be-provable)).
+
+- [x] `more_available` flag + structured `coverage` object (`DocumentCoverage` per under-delivered
+  document) on `SearchResponse`
+- [x] Saturation from the post-filter ranked pool + score-plateau guard (`_PLATEAU_RATIO`);
+  whole-collection BM25 count and elbow tuning **dropped** (rationale above)
+- [x] `notice` string builder that enumerates the under-delivered documents, in the MCP response
 - [x] MCP tool-description update telling the model to raise `top_k` on a `notice`
-- [~] Tests: plateau / elbow / complete (service) + notice-builder unit test done; per-doc
-  coverage + eval-set tuning todo
+- [x] Tests: plateau / elbow / complete + notice-builder + per-document coverage
+  (`_document_coverage`, notice enumeration, doc-list cap); eval-set tuning deferred with the harness
 
 ## A4 — MCP expansion primitives `[ ]`
 
@@ -399,6 +441,13 @@ Checklist:
 
 # Track B — Context division at ingestion (format-aware, reasoning fallback)
 
+> **💤 Shelved 2026-07-08 — Track A is the path.** The agentic query-time loop
+> (A2 + A3 + A4) covers the completeness need without pre-computing context
+> boundaries at ingest, so this whole track is deprioritised and its LLM rung
+> (**B3**) is **dropped**. B1/B2/B4 remain only as optional future *sharpening*
+> of A2/A3 — revisit them only if a measured eval shows query-time expansion is
+> insufficient. See the [Summary](#summary) decision note.
+
 The core insight: **the reasoning you imagined at query time should live at
 ingestion, computed once per document and amortised over every future query** —
 and for most formats it isn't reasoning at all, it's reading structure the file
@@ -475,7 +524,13 @@ Notes:
 - [ ] Wire into `_run_ingestion`; assign `context_id` before upsert
 - [ ] Tests per format, incl. "no structure → escalates" path
 
-## B3 — Reasoning fallback (LLM boundary detection) `[ ]`
+## B3 — Reasoning fallback (LLM boundary detection) — ❌ DROPPED
+
+> **Dropped 2026-07-08.** We will **not** use an LLM to identify context at
+> ingestion. The agentic query-time loop (**A2** adjacency + **A3** "there's more"
+> + **A4** on-demand fetch) recovers a spanning context more simply and lets the
+> MCP caller (LLM or user) decide when to pull more — see the [Summary](#summary)
+> decision note. The original design is kept below for the record only.
 
 **Why (your explicit ask).** For **poorly-formatted / scanned PDFs and plain
 text** — no outline, no headings, no reliable layout — structural and text-tiling
@@ -579,23 +634,24 @@ phases from "should help" into "measured +X%". Worth standing up alongside A2.
 
 ## Suggested order
 
-1. **A5** — reranker providers (local + remote/LLM incl. **Gemini / Google AI
-   Studio**) + frontend config + modern model. **First implementation phase** — the
-   prerequisite for running cross-encoding on AI Studio; validate with the live key
-   once the Gemini provider lands.
-2. **A1 pre-warm** (finish A1) — small, unblocks safe default-on.
-3. **A2 + A3 together** — they share the discarded candidate pool; deliver both
-   "stop truncating" and "warn there's more" in one pass. *Highest ROI.*
-4. **A4** — expansion primitives; unlocks the agentic loop.
-5. **B1 + B2** — `context_id` + resolver for the structured formats
-   (markdown/code/PDF-with-ToC) — deterministic, no LLM. Enriches A2/A3.
-6. **B3** — the reasoning fallback for unstructured/poor inputs.
-7. **B4** — sub-page chunking (biggest re-index; do last).
+**Done:** A5 (reranker providers + frontend), A1 (on by default + pre-warm), A2
+(adjacency expansion + span merge, merged).
 
-Steps 1–3 need no ingestion change, no schema change, and no reasoning model —
-and likely remove ~80% of the truncation pain on the current corpus. The reasoning
-model earns its place only at step 5, at ingestion, for inputs that genuinely lack
-structure.
+**Done:** A5, A1, A2, **and A3** (saturation flag + per-document `coverage` + document-naming
+`notice`).
+
+**Remaining path — all query-time, no ingestion change, no schema change, no reasoning model:**
+
+1. **A4** — the expansion primitives (`get_document_chunks`, `expand_chunk`,
+   `get_document_outline`). **This is the mechanism the decision above depends on** — it lets the
+   MCP caller act on A3's "there's more" (and its per-document `coverage`) and pull the rest of a
+   context on demand. A3's `notice` already tells the model *which* document to expand; A4 gives it
+   the tool to do so.
+
+**Shelved (Track B — context division at ingestion):** B1/B2/B4 are optional
+future *sharpening* of A2/A3, not the path — adjacency + the agentic loop cover the
+completeness need without them. **B3 (LLM boundaries at ingestion) is dropped.**
+Revisit Track B only if a measured eval shows query-time expansion is insufficient.
 
 ---
 

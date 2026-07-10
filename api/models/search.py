@@ -2,6 +2,8 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
+from api.constants import MAX_TOP_K
+
 
 class SearchFilters(BaseModel):
     filename: str | None = None
@@ -18,7 +20,7 @@ class SearchMode(StrEnum):
 class SearchRequest(BaseModel):
     query: str
     collection_ids: list[str] = Field(min_length=1)
-    top_k: int = Field(default=5, ge=1, le=20)
+    top_k: int = Field(default=5, ge=1, le=MAX_TOP_K)
     # `mode` is the explicit selector; `hybrid` is kept for the MCP tool's bool API
     # and used only when `mode` is unset.
     mode: SearchMode | None = None
@@ -64,6 +66,19 @@ class CollectionStat(BaseModel):
     contributed_to_top_k: int = 0
 
 
+class DocumentCoverage(BaseModel):
+    """Per-document view of the A3 saturation signal: how many of one document's chunks were shown
+    in ``top_k`` (``returned``) vs. how many matched the query in the ranked pool (``matched``,
+    always ``>= returned``). Present only when ``more_available`` — it names *where* the hidden
+    matches are so the caller can pull them (a higher ``top_k`` now; the A4 fetch primitives later).
+    """
+
+    document_id: str | None = None
+    filename: str | None = None
+    returned: int
+    matched: int
+
+
 class SearchResponse(BaseModel):
     results: list[SearchResult]
     collection_stats: dict[str, CollectionStat] = {}
@@ -76,3 +91,6 @@ class SearchResponse(BaseModel):
     # were returned in top_k, so the caller is seeing only part of what matched. The MCP tool
     # turns this into a natural-language ``notice`` telling the model it can raise ``top_k``.
     more_available: bool = False
+    # Per-document breakdown backing ``more_available``: the documents with matches that fell
+    # below the top_k cut, most-hidden first. Empty unless ``more_available`` is set.
+    coverage: list[DocumentCoverage] = []

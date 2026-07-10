@@ -167,6 +167,8 @@ def test_search_response_defaults():
     assert resp.search_mode == "hybrid"
     assert resp.under_delivered is False
     assert resp.collection_stats == {}
+    assert resp.more_available is False
+    assert resp.coverage == []  # A3: no per-document coverage until a saturation signal fires
 
 
 # ---------------------------------------------------------------------------

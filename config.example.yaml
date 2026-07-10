@@ -51,7 +51,6 @@ parsers:
 
 search:
   default_top_k: 5
-  max_top_k: 20
   retrieval_fan_out: 4    # retrieve top_k * fan_out before applying filters
   max_fan_out: 10
   hybrid_default_alpha: 0.7  # 0.0 = BM25 only, 1.0 = semantic only

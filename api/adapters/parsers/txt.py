@@ -54,6 +54,7 @@ class TXTParser:
         A single paragraph larger than the window is split with a sliding window.
         """
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        sep_tokens = count_tokens("\n\n")  # the join separator counts against the budget
         segments: list[str] = []
         buf: list[str] = []
         buf_tokens = 0
@@ -76,12 +77,16 @@ class TXTParser:
                         overlap_tokens=self._overlap,
                     )
                 )
-            elif buf_tokens + tokens > self._max_tokens:
+                continue
+            # A joined chunk pays sep_tokens per "\n\n"; charge it so a run of small
+            # paragraphs can't accumulate separators past the limit (they aren't free).
+            added = tokens + (sep_tokens if buf else 0)
+            if buf_tokens + added > self._max_tokens:
                 flush()
                 buf = [para]
                 buf_tokens = tokens
             else:
                 buf.append(para)
-                buf_tokens += tokens
+                buf_tokens += added
         flush()
         return segments

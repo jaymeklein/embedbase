@@ -67,7 +67,6 @@ class ChunkingConfig(BaseModel):
 
 class SearchConfig(BaseModel):
     default_top_k: int = 5
-    max_top_k: int = 20
     retrieval_fan_out: int = 4
     max_fan_out: int = 10
     hybrid_default_alpha: float = 0.7

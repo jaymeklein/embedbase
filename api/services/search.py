@@ -1,6 +1,7 @@
 """Search service: BM25 helpers, single-collection search, multi-collection fan-out."""
 
 import asyncio
+from collections import defaultdict
 from time import monotonic
 
 import structlog
@@ -12,6 +13,7 @@ from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
 from api.models.search import (
     CollectionStat,
+    DocumentCoverage,
     SearchFilters,
     SearchMode,
     SearchRequest,
@@ -141,17 +143,21 @@ def search_collection(
         collection_id: The collection to search.
         query_vector: Pre-computed embedding of the query.
         query: Raw query text (used for FTS/BM25).
-        top_k: Maximum number of results to return after filtering.
+        top_k: Target result count; sizes the over-fetch pool (``top_k * fan_out``) and is the
+            basis for the caller's final cut. This returns the **full ranked pool**, not just
+            ``top_k`` — ``multi_collection_search`` fuses the pools across collections, measures
+            saturation (A3), and applies the ``[:top_k]`` cut once, globally.
         fan_out: Multiplier for pre-filter candidate retrieval (clamped to 1–10).
         mode: Ranking mode (HYBRID, SEMANTIC, or BM25).
         alpha: Semantic weight in the HYBRID RRF fusion (BM25 gets 1-alpha).
         filters: Optional metadata filters applied after ranking.
         vector_store: Adapter for vector similarity search and FTS scoring.
         reranker: Optional cross-encoder; when set, reorders the over-fetched
-            candidate pool by query-document relevance before the top_k cut.
+            candidate pool by query-document relevance before the caller's top_k cut.
 
     Returns:
-        Tuple of (results, search_mode, retrieved_before_filter, returned_after_filter).
+        Tuple of (ranked_pool, search_mode, retrieved_before_filter, returned_after_filter),
+        where ``ranked_pool`` is the full filtered+reranked candidate list (the caller cuts it).
     """
     pool_size = top_k * min(max(fan_out, 1), 10)
     if mode == SearchMode.HYBRID:
@@ -179,7 +185,9 @@ def search_collection(
             filtered = reranker.rerank(query, filtered)
         except Exception as exc:  # backstop: an optional stage must never 500 the search
             logger.warning("reranker failed; using pre-rerank order", error=str(exc))
-    return filtered[:top_k], effective_mode, retrieved, len(filtered)
+    # Return the full ranked pool; multi_collection_search fuses across collections, measures the
+    # A3 saturation signal (which needs the below-cut chunks), then applies the [:top_k] cut once.
+    return filtered, effective_mode, retrieved, len(filtered)
 
 
 def _apply_provenance(
@@ -363,19 +371,67 @@ def _collect_results(
     return per_collection, stats, fallback
 
 
+# Plateau ratio for the A3 saturation signal: the last shown chunk must score at least this
+# fraction of the first for the results to count as a "plateau" (truncated) rather than a sharp
+# "elbow" (complete). An initial default to tune against an eval set — see plan A3.
+_PLATEAU_RATIO = 0.9
+
+
 def _more_available(final: list[SearchResult], stats: dict[str, CollectionStat]) -> bool:
     """True when the ranked candidate pool held more chunks than were returned **and** the
     returned results sit on a score *plateau* — the last shown chunk is nearly as relevant as
     the first — so the ``top_k`` cut likely severed comparably-relevant matches (plan A3: the
     MCP warns "there's more"). A sharp score *elbow* means the results are genuinely complete,
-    so we stay quiet and the signal keeps its meaning. The 0.9 plateau ratio is an initial
-    default to tune against an eval set; negative reranker logits (``top <= 0``) stay quiet.
+    so we stay quiet and the signal keeps its meaning. Negative reranker logits (``top <= 0``)
+    stay quiet.
     """
     pool = sum(s.returned_after_filter for s in stats.values())
     if pool <= len(final) or len(final) < 2:
         return False
     top, tail = final[0].score, final[-1].score
-    return top > 0 and tail >= 0.9 * top
+    return top > 0 and tail >= _PLATEAU_RATIO * top
+
+
+def _document_coverage(
+    per_collection: list[list[SearchResult]], final: list[SearchResult]
+) -> list[DocumentCoverage]:
+    """Per-document breakdown of the saturation signal: for each document, how many of its ranked
+    chunks were shown (``final``) vs. how many matched in the candidate pool (``per_collection``).
+
+    Only documents with hidden matches (``matched > returned``) are returned — the ones a higher
+    ``top_k`` (or an A4 fetch) would reveal — sorted most-hidden first. Counts are on the
+    pre-expansion ranking scale, matching ``_more_available``. Results without a ``document_id``
+    can't be named or fetched, so they are skipped.
+    """
+    returned: dict[str, int] = defaultdict(int)
+    matched: dict[str, int] = defaultdict(int)
+    names: dict[str, str | None] = {}
+
+    def _doc(r: SearchResult) -> str | None:
+        return r.source.document_id if r.source else None
+
+    for r in final:
+        doc = _doc(r)
+        if doc is not None:
+            returned[doc] += 1
+    # Filenames come from the pool pass alone: every returned doc is also in per_collection
+    # (final ⊆ the merged pools), so this resolves a filename for every doc coverage can emit.
+    for results in per_collection:
+        for r in results:
+            doc = _doc(r)
+            if doc is not None:
+                matched[doc] += 1
+                names.setdefault(doc, r.source.filename if r.source else None)
+
+    coverage = [
+        DocumentCoverage(
+            document_id=doc, filename=names.get(doc), returned=returned.get(doc, 0), matched=count
+        )
+        for doc, count in matched.items()
+        if count > returned.get(doc, 0)
+    ]
+    coverage.sort(key=lambda c: c.matched - c.returned, reverse=True)  # biggest gap first
+    return coverage
 
 
 async def _expand(
@@ -461,11 +517,14 @@ async def multi_collection_search(
     # each hit with adjacent context, it does not change what ranked or how many hits we got.
     under_delivered = len(final) < request.top_k
     more_available = _more_available(final, stats)
+    # Per-document coverage backs the saturation signal — computed only when we're warning, from the
+    # same pre-expansion pool, so it stays consistent with more_available and adds no cost otherwise.
+    coverage = _document_coverage(per_collection, final) if more_available else []
     results = await _expand(final, vector_store, expand_neighbors, expand_char_budget)
     total_ms = int((monotonic() - t0) * 1000)
     return SearchResponse(
         results=results, collection_stats=stats, query_embedding_ms=embed_ms,
         search_ms=total_ms - embed_ms, total_ms=total_ms,
         search_mode=mode, under_delivered=under_delivered,
-        more_available=more_available,
+        more_available=more_available, coverage=coverage,
     )

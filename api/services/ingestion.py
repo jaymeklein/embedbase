@@ -47,13 +47,24 @@ def sliding_window(
     if len(tokens) <= max_tokens:
         return [text]
 
-    step = max_tokens - overlap_tokens
+    n = len(tokens)
     windows: list[str] = []
-    for start in range(0, len(tokens), step):
-        window = tokens[start : start + max_tokens]
-        if not window:
+    start = 0
+    while start < n:
+        end = min(start + max_tokens, n)
+        chunk = enc.decode(tokens[start:end]).strip()
+        # strip() can re-tokenise the boundary token into one or two extra tokens,
+        # pushing the chunk past max_tokens. Shrink the window (in original-token
+        # space) until it fits — no content is dropped, since the trimmed tail is
+        # re-covered by the next window's overlap.
+        while count_tokens(chunk) > max_tokens and end - start > 1:
+            end -= 1
+            chunk = enc.decode(tokens[start:end]).strip()
+        if chunk:
+            windows.append(chunk)
+        if end >= n:
             break
-        windows.append(enc.decode(window).strip())
-        if start + max_tokens >= len(tokens):
-            break
-    return [w for w in windows if w]
+        # Advance by the *actual* window end (not a fixed step): a shrunk window
+        # starts the next one earlier so the dropped tail is never skipped.
+        start = max(start + 1, end - overlap_tokens)
+    return windows
