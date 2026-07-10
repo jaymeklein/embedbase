@@ -147,6 +147,29 @@ async def test_list_documents_reports_indexed_flag(client):
     assert by_id[b]["indexed"] is False
 
 
+async def test_list_documents_endpoint_binds_query_params(client):
+    """The listing endpoint builds its ``DocumentListQuery`` straight from the query string:
+    pagination, a filename filter, and the limit bounds all go through FastAPI's model binding —
+    the refactor's one real risk surface, since every other test calls the service directly."""
+    ws_id, col_id = await _setup(client)
+    base = f"/workspaces/{ws_id}/collections/{col_id}/documents"
+    for name in ("alpha.txt", "beta.txt", "gamma.txt"):
+        await client.post(base, files=_txt(name), headers=AUTH)
+
+    # limit/offset coerce from the query string and page the results: 2 of 3.
+    page = (await client.get(f"{base}?limit=2&offset=0", headers=AUTH)).json()
+    assert page["total"] == 3 and len(page["items"]) == 2
+    assert (page["limit"], page["offset"]) == (2, 0)
+
+    # a filename substring filter binds and applies.
+    filtered = (await client.get(f"{base}?filename=alpha", headers=AUTH)).json()
+    assert filtered["total"] == 1 and filtered["items"][0]["filename"] == "alpha.txt"
+
+    # the Field(ge=1, le=200) bounds survive the model refactor -> 422, never a silent clamp.
+    assert (await client.get(f"{base}?limit=0", headers=AUTH)).status_code == 422
+    assert (await client.get(f"{base}?limit=201", headers=AUTH)).status_code == 422
+
+
 async def test_document_status_returns_job(client):
     ws_id, col_id = await _setup(client)
     up = (

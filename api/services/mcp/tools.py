@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.adapters.base import EmbeddingAdapter, Reranker
 from api.adapters.vector_store.pgvector import PgvectorAdapter
 from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
+from api.models.document import DocumentListQuery
 from api.models.search import SearchRequest, SearchResponse
 from api.services import documents as doc_svc
 from api.services import workspaces as ws_svc
@@ -152,7 +153,7 @@ async def list_documents(*, collection_id: str, db: AsyncSession) -> dict[str, A
     Returns the newest up-to-200 documents plus ``total`` (the full count); when ``total`` exceeds
     the returned set, narrow the collection or use the REST endpoint's pagination for the rest.
     """
-    page = await doc_svc.list_documents(db, collection_id, limit=200)
+    page = await doc_svc.list_documents(db, collection_id, DocumentListQuery(limit=200))
     return {"documents": page["items"], "total": page["total"]}
 
 
