@@ -159,3 +159,17 @@ async def delete_document_flat(
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
     await doc_svc.delete_document(db, col_id, doc_id)
+
+
+@router.post("/documents/{doc_id}/reprocess", status_code=202)
+async def reprocess_document_flat(
+    doc_id: str,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-enqueue a document's ingestion — the manual retry for a failed file. Reuses the stored
+    bytes (nothing is re-uploaded) and surfaces a fresh pending job in the queue."""
+    col_id = await doc_svc.resolve_document_collection(db, doc_id)
+    if not principal.can_access(col_id):
+        raise HTTPException(403, "API key not valid for this collection")
+    return await doc_svc.reprocess_document(db, col_id, doc_id)
