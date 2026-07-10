@@ -2,17 +2,21 @@ import { cn } from '../../lib/cn'
 
 export type DocStatus = 'uploading' | 'pending' | 'processing' | 'done' | 'failed' | 'deleting'
 
-const MAP: Record<DocStatus, { label: string; dot: string; text: string }> = {
+/** Document states plus `rate_limited` — a job-only pause the ingestion queue surfaces. */
+export type BadgeStatus = DocStatus | 'rate_limited'
+
+const MAP: Record<BadgeStatus, { label: string; dot: string; text: string }> = {
   uploading: { label: 'Uploading', dot: 'bg-accent animate-pulse', text: 'text-accent' },
   pending: { label: 'Pending', dot: 'bg-pending', text: 'text-ink-muted' },
   processing: { label: 'Processing', dot: 'bg-warn animate-pulse', text: 'text-warn' },
   done: { label: 'Done', dot: 'bg-ok', text: 'text-ok' },
   failed: { label: 'Failed', dot: 'bg-err', text: 'text-err' },
   deleting: { label: 'Deleting', dot: 'bg-warn animate-pulse', text: 'text-warn' },
+  rate_limited: { label: 'Rate limited', dot: 'bg-warn animate-pulse', text: 'text-warn' },
 }
 
 /** Ingestion status pill with a semantic color dot. */
-export function StatusBadge({ status }: { status: DocStatus }) {
+export function StatusBadge({ status }: { status: BadgeStatus }) {
   const s = MAP[status] ?? MAP.pending
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium">
