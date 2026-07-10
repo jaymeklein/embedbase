@@ -11,6 +11,7 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
+from api.models.document import DocumentListQuery
 from api.services.auth import Principal
 from api.services.documents import (
     delete_document,
@@ -167,7 +168,7 @@ async def test_list_documents_dedupes_multiple_jobs(db_session) -> None:
     )
     await db_session.commit()
 
-    result = await list_documents(db_session, _COL_ID)
+    result = await list_documents(db_session, _COL_ID, DocumentListQuery())
     assert result["total"] == 1
     assert len(result["items"]) == 1
     assert result["items"][0]["status"] == "failed"  # latest job wins
@@ -177,12 +178,12 @@ async def test_list_documents_excludes_deleting_status(db_session, monkeypatch) 
     monkeypatch.setattr("api.services.documents.task_producer.enqueue_delete", lambda *_: None)
     await _seed(db_session)
 
-    before = await list_documents(db_session, _COL_ID)
+    before = await list_documents(db_session, _COL_ID, DocumentListQuery())
     assert before["total"] == 1
 
     await delete_document(db_session, _COL_ID, _DOC_ID)
 
-    after = await list_documents(db_session, _COL_ID)
+    after = await list_documents(db_session, _COL_ID, DocumentListQuery())
     assert after["total"] == 0
     assert after["items"] == []
 
@@ -193,12 +194,12 @@ async def test_list_documents_paginates_newest_first_with_total(db_session) -> N
         await _add_doc(db_session, f"doc_{i}", created_at=f"2024-01-0{i + 1}T00:00:00")
     await db_session.commit()
 
-    page1 = await list_documents(db_session, _COL_ID, limit=2, offset=0)
+    page1 = await list_documents(db_session, _COL_ID, DocumentListQuery(limit=2, offset=0))
     assert page1["total"] == 5  # full match count, not the page length
     assert (page1["limit"], page1["offset"]) == (2, 0)
     assert [d["document_id"] for d in page1["items"]] == ["doc_4", "doc_3"]  # newest first
 
-    last = await list_documents(db_session, _COL_ID, limit=2, offset=4)
+    last = await list_documents(db_session, _COL_ID, DocumentListQuery(limit=2, offset=4))
     assert last["total"] == 5
     assert [d["document_id"] for d in last["items"]] == ["doc_0"]  # trailing partial page
 
@@ -209,7 +210,7 @@ async def test_list_documents_filters_by_filename_substring_ci(db_session) -> No
     await _add_doc(db_session, "doc_b", filename="notes.md")
     await db_session.commit()
 
-    res = await list_documents(db_session, _COL_ID, filename="report")  # case-insensitive
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(filename="report"))  # case-insensitive
     assert res["total"] == 1
     assert res["items"][0]["document_id"] == "doc_a"
 
@@ -220,7 +221,7 @@ async def test_list_documents_filters_by_latest_status(db_session) -> None:
     await _add_doc(db_session, "doc_bad", job_status="failed")
     await db_session.commit()
 
-    res = await list_documents(db_session, _COL_ID, status="failed")
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(status="failed"))
     assert res["total"] == 1
     assert res["items"][0]["document_id"] == "doc_bad"
     assert res["items"][0]["status"] == "failed"
@@ -232,13 +233,13 @@ async def test_list_documents_filters_by_file_type_and_indexed(db_session) -> No
     await _add_doc(db_session, "doc_txt", file_type=".txt", chunk_count=None)  # not indexed
     await db_session.commit()
 
-    by_type = await list_documents(db_session, _COL_ID, file_type=".pdf")
+    by_type = await list_documents(db_session, _COL_ID, DocumentListQuery(file_type=".pdf"))
     assert by_type["total"] == 1 and by_type["items"][0]["document_id"] == "doc_pdf"
 
-    indexed = await list_documents(db_session, _COL_ID, indexed=True)
+    indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=True))
     assert indexed["total"] == 1 and indexed["items"][0]["document_id"] == "doc_pdf"
 
-    not_indexed = await list_documents(db_session, _COL_ID, indexed=False)
+    not_indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=False))
     assert not_indexed["total"] == 1 and not_indexed["items"][0]["document_id"] == "doc_txt"
 
 
@@ -248,16 +249,16 @@ async def test_list_documents_filters_by_backend_model_and_size(db_session) -> N
     await _add_doc(db_session, "doc_local", storage_backend="local", embedding_model="ollama", file_size=100)
     await db_session.commit()
 
-    s3 = await list_documents(db_session, _COL_ID, storage_backend="minio")
+    s3 = await list_documents(db_session, _COL_ID, DocumentListQuery(storage_backend="minio"))
     assert s3["total"] == 1 and s3["items"][0]["document_id"] == "doc_s3"
 
-    ollama = await list_documents(db_session, _COL_ID, embedding_model="ollama")
+    ollama = await list_documents(db_session, _COL_ID, DocumentListQuery(embedding_model="ollama"))
     assert ollama["total"] == 1 and ollama["items"][0]["document_id"] == "doc_local"
 
-    big = await list_documents(db_session, _COL_ID, min_size=1000)
+    big = await list_documents(db_session, _COL_ID, DocumentListQuery(min_size=1000))
     assert big["total"] == 1 and big["items"][0]["document_id"] == "doc_s3"
 
-    small = await list_documents(db_session, _COL_ID, max_size=1000)
+    small = await list_documents(db_session, _COL_ID, DocumentListQuery(max_size=1000))
     assert small["total"] == 1 and small["items"][0]["document_id"] == "doc_local"
 
 
@@ -268,7 +269,7 @@ async def test_list_documents_filters_by_created_date_range(db_session) -> None:
     await db_session.commit()
 
     res = await list_documents(
-        db_session, _COL_ID, created_after="2024-02-01", created_before="2024-04-01"
+        db_session, _COL_ID, DocumentListQuery(created_after="2024-02-01", created_before="2024-04-01")
     )
     assert res["total"] == 1
     assert res["items"][0]["document_id"] == "doc_mar"
@@ -281,7 +282,7 @@ async def test_list_documents_created_before_is_inclusive_of_the_day(db_session)
 
     # A date-only upper bound covers the whole day (service expands it to end-of-day), so a doc
     # created mid-day on the bound date is still matched.
-    res = await list_documents(db_session, _COL_ID, created_before="2024-03-15")
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(created_before="2024-03-15"))
     assert res["total"] == 1
     assert res["items"][0]["document_id"] == "doc_day"
 
@@ -292,8 +293,8 @@ async def test_list_documents_indexed_filter_treats_zero_chunks_as_not_indexed(d
     await _add_doc(db_session, "doc_zero", chunk_count=0)
     await db_session.commit()
 
-    assert (await list_documents(db_session, _COL_ID, indexed=True))["total"] == 0
-    not_indexed = await list_documents(db_session, _COL_ID, indexed=False)
+    assert (await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=True)))["total"] == 0
+    not_indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=False))
     assert not_indexed["total"] == 1
     assert not_indexed["items"][0]["document_id"] == "doc_zero"
 
@@ -305,7 +306,7 @@ async def test_list_documents_filename_filter_escapes_wildcards(db_session) -> N
     await db_session.commit()
 
     # "a_b" must match the literal underscore only, not "_" as a single-char LIKE wildcard.
-    res = await list_documents(db_session, _COL_ID, filename="a_b")
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(filename="a_b"))
     assert [d["document_id"] for d in res["items"]] == ["doc_underscore"]
 
 

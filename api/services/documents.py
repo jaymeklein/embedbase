@@ -24,6 +24,7 @@ from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.dependencies import get_app_config
 from api.models.config import ParserConfig, StorageConfig
+from api.models.document import DocumentListQuery
 from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.filters import ilike_contains, inclusive_end
@@ -289,45 +290,13 @@ async def ingest_local_path(
     )
 
 
-async def list_documents(
-    db: AsyncSession,
-    col_id: str,
-    *,
-    limit: int = 50,
-    offset: int = 0,
-    filename: str | None = None,
-    file_type: str | None = None,
-    status: str | None = None,
-    indexed: bool | None = None,
-    embedding_model: str | None = None,
-    storage_backend: str | None = None,
-    min_size: int | None = None,
-    max_size: int | None = None,
-    created_after: str | None = None,
-    created_before: str | None = None,
-    updated_after: str | None = None,
-    updated_before: str | None = None,
-    tags: list[str] | None = None,
-) -> dict:
+async def list_documents(db: AsyncSession, col_id: str, query: DocumentListQuery) -> dict:
     """Return one filtered, paginated page of active documents in ``col_id``.
 
-    Each document appears once, carrying its *latest* job ``status`` (a ``LATERAL`` pick of
+    Each document appears once, carrying its *latest* job ``status`` (a scalar-subquery pick of
     the most recent ``job_records`` row — a document accrues several as it re-ingests/retries),
-    its tags, and an ``indexed`` flag (true once chunks are stored). Newest-first.
-
-    Args:
-        db: Active async database session.
-        col_id: Collection whose documents to list.
-        limit / offset: Page window (the caller clamps ``limit``).
-        filename: Case-insensitive substring match on the filename.
-        file_type / embedding_model / storage_backend: Exact-match column filters.
-        status: Latest ingestion status (``pending``/``processing``/``done``/``failed``/…).
-        indexed: ``True`` = has stored chunks, ``False`` = none yet, ``None`` = either.
-        min_size / max_size: Inclusive ``file_size`` (bytes) bounds.
-        created_after / created_before / updated_after / updated_before: Inclusive ISO-8601
-            timestamp bounds (the columns store ``isoformat()`` strings, so lexical comparison
-            is chronological).
-        tags: Only documents carrying *all* of these tag names (AND filter).
+    its tags, and an ``indexed`` flag (true once chunks are stored). Newest-first. Pagination and
+    every (optional, AND-combined) filter come from ``query`` — see :class:`DocumentListQuery`.
 
     Returns:
         ``{"items": [...], "total": N, "limit": L, "offset": O}`` — ``total`` is the full match
@@ -348,38 +317,38 @@ async def list_documents(
     )
 
     conds: list[Any] = [doc_t.c.collection_id == col_id, doc_t.c.status.is_(None)]
-    if filename:
-        conds.append(ilike_contains(doc_t.c.filename, filename))
-    if file_type:
-        conds.append(doc_t.c.file_type == file_type)
-    if status:
-        conds.append(latest_status == status)
-    if indexed is not None:
+    if query.filename:
+        conds.append(ilike_contains(doc_t.c.filename, query.filename))
+    if query.file_type:
+        conds.append(doc_t.c.file_type == query.file_type)
+    if query.status:
+        conds.append(latest_status == query.status)
+    if query.indexed is not None:
         # "indexed" mirrors the emitted flag bool(chunk_count): a done-with-zero-chunks document
         # (chunk_count == 0) is NOT indexed, same as a not-yet-ingested one (chunk_count IS NULL).
         conds.append(
             doc_t.c.chunk_count > 0
-            if indexed
+            if query.indexed
             else or_(doc_t.c.chunk_count.is_(None), doc_t.c.chunk_count == 0)
         )
-    if embedding_model:
-        conds.append(doc_t.c.embedding_model == embedding_model)
-    if storage_backend:
-        conds.append(doc_t.c.storage_backend == storage_backend)
-    if min_size is not None:
-        conds.append(doc_t.c.file_size >= min_size)
-    if max_size is not None:
-        conds.append(doc_t.c.file_size <= max_size)
-    if created_after:
-        conds.append(doc_t.c.created_at >= created_after)
-    if created_before:
-        conds.append(doc_t.c.created_at <= inclusive_end(created_before))
-    if updated_after:
-        conds.append(doc_t.c.updated_at >= updated_after)
-    if updated_before:
-        conds.append(doc_t.c.updated_at <= inclusive_end(updated_before))
-    if tags:
-        conds.append(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
+    if query.embedding_model:
+        conds.append(doc_t.c.embedding_model == query.embedding_model)
+    if query.storage_backend:
+        conds.append(doc_t.c.storage_backend == query.storage_backend)
+    if query.min_size is not None:
+        conds.append(doc_t.c.file_size >= query.min_size)
+    if query.max_size is not None:
+        conds.append(doc_t.c.file_size <= query.max_size)
+    if query.created_after:
+        conds.append(doc_t.c.created_at >= query.created_after)
+    if query.created_before:
+        conds.append(doc_t.c.created_at <= inclusive_end(query.created_before))
+    if query.updated_after:
+        conds.append(doc_t.c.updated_at >= query.updated_after)
+    if query.updated_before:
+        conds.append(doc_t.c.updated_at <= inclusive_end(query.updated_before))
+    if query.tag:
+        conds.append(doc_t.c.id.in_(await matching_entity_ids("document", query.tag, db)))
     where = and_(*conds)
 
     total = (await db.execute(select(func.count()).select_from(doc_t).where(where))).scalar_one()
@@ -400,8 +369,8 @@ async def list_documents(
             .where(where)
             # id as a stable tiebreaker so rows sharing a created_at can't shuffle across pages.
             .order_by(doc_t.c.created_at.desc(), doc_t.c.id.desc())
-            .limit(limit)
-            .offset(offset)
+            .limit(query.limit)
+            .offset(query.offset)
         )
     ).fetchall()
     items = [dict(r._mapping) for r in rows]
@@ -409,7 +378,7 @@ async def list_documents(
     for row in items:
         # FTS-indexed once chunks are stored; chunk_count is set when ingestion finishes.
         row["indexed"] = bool(row.get("chunk_count"))
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    return {"items": items, "total": total, "limit": query.limit, "offset": query.offset}
 
 
 async def get_document_status(
