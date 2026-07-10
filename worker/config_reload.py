@@ -52,18 +52,22 @@ def _reload_adapters() -> bool:
 
 
 def _resume_rate_limited() -> None:
-    """Re-enqueue rate-limited ingests now that a new key / limit reset the quota.
+    """Resume rate-limited ingests now that a new key / limit reset the provider quota.
 
-    Runs after the reload ack so it never delays the API's apply, and is best-effort:
-    the beat sweep still backstops it. ``_claim_job`` keeps it idempotent against a
-    job whose own retry countdown fires around the same time.
+    Lifts the global embedding pause (the reset quota means the backoff no longer applies) and lets
+    the paused ingest tasks + the beat sweep pick the work back up. Runs after the reload ack so it
+    never delays the API's apply, and is best-effort: the beat sweep still backstops it.
+
+    ``respect_pending`` stays on (the default) so a job that already holds a live retry countdown
+    isn't re-enqueued into a *duplicate* task. Re-enqueuing every paused job on each config save
+    (the old ``respect_pending=False``) piled duplicates onto the queue — the amplifier that turned
+    one quota hit into a task storm — so a config change now clears the pause and de-dupes instead.
     """
     try:
         from worker import tasks
 
-        # respect_pending=False: a new key / higher RPM reset the quota, so resume every
-        # paused job now rather than waiting out its (now-stale) countdown marker.
-        count = tasks.requeue_rate_limited(respect_pending=False)
+        tasks.clear_embedding_pause()  # the reset quota lifts the backoff
+        count = tasks.requeue_rate_limited()  # respect_pending=True → no duplicate enqueues
         logger.info("embedding config changed; resumed rate-limited ingests", count=count)
     except Exception as exc:  # pragma: no cover - best-effort
         logger.error("could not resume rate-limited ingests", error=str(exc))
