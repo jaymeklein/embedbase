@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
@@ -12,6 +12,7 @@ import {
   useDocumentStatus,
   useDocuments,
   useIndexDocument,
+  useReprocessDocument,
   useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
@@ -39,6 +40,7 @@ import {
 } from '../components/ui'
 import { UploadZone } from '../components/documents/UploadZone'
 import { DocumentFilters, type DocumentFilterValues } from '../components/documents/DocumentFilters'
+import { Pager } from '../components/Pager'
 import { formatBytes, timeAgo } from '../lib/format'
 
 /** Largest file accepted before an upload is attempted (client-side guard). */
@@ -53,7 +55,13 @@ export default function Documents() {
   const collection = useCollection(wsId, colId)
 
   const [page, setPage] = useState(0)
-  const [filters, setFiltersState] = useState<DocumentFilterValues>({})
+  const [searchParams] = useSearchParams()
+  // Deep-link from the ingestion queue's "open file": ?filename=… pre-fills the filter so the file
+  // is shown at once instead of buried on some page of the full listing.
+  const [filters, setFiltersState] = useState<DocumentFilterValues>(() => {
+    const filename = searchParams.get('filename')
+    return filename ? { filename } : {}
+  })
   const [tagFilter, setTagFilter] = useState<string[]>([])
 
   const query: DocumentQuery = {
@@ -321,58 +329,6 @@ function DocumentList({
   )
 }
 
-/** Offset pager: "showing X–Y of N" + Prev/Next, bounded to the available pages. */
-function Pager({
-  page,
-  pageSize,
-  total,
-  onPage,
-  loading,
-}: {
-  page: number
-  pageSize: number
-  total: number
-  onPage: (p: number) => void
-  loading: boolean
-}) {
-  if (total === 0) return null
-  const start = page * pageSize + 1
-  const end = Math.min((page + 1) * pageSize, total)
-  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1)
-  return (
-    <div className="flex items-center justify-between text-[13px] text-ink-muted">
-      <span>
-        Showing{' '}
-        <span className="tabular-nums text-ink">
-          {start}–{end}
-        </span>{' '}
-        of <span className="tabular-nums text-ink">{total}</span>
-      </span>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={page === 0 || loading}
-          onClick={() => onPage(page - 1)}
-        >
-          Previous
-        </Button>
-        <span className="tabular-nums">
-          Page {page + 1} of {lastPage + 1}
-        </span>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={page >= lastPage || loading}
-          onClick={() => onPage(page + 1)}
-        >
-          Next
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 /** Inline progress bar for active rows — determinate when a page/batch total is known,
  *  an indeterminate shimmer otherwise (Docling, the queued wait, the upload). The label
  *  is driven by whether ingestion has actually started: "Uploading" until the first WS
@@ -424,6 +380,7 @@ function DocumentRow({
 
   const toast = useToast()
   const indexMut = useIndexDocument(wsId, colId)
+  const reprocessMut = useReprocessDocument(wsId, colId)
   const assignMut = useAssignDocumentTag(wsId, colId)
   const unassignMut = useUnassignDocumentTag(wsId, colId)
   const createMut = useCreateTag(wsId)
@@ -507,6 +464,21 @@ function DocumentRow({
               className="text-xs font-medium text-err hover:underline"
             >
               {showError ? 'Hide' : 'Why?'}
+            </button>
+          )}
+          {failed && (
+            <button
+              type="button"
+              disabled={reprocessMut.isPending}
+              onClick={() =>
+                reprocessMut.mutate(doc.document_id, {
+                  onSuccess: () => toast.success(`Reprocessing “${doc.filename}”.`),
+                  onError: onErr,
+                })
+              }
+              className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
+            >
+              {reprocessMut.isPending ? 'Retrying…' : 'Retry'}
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (
