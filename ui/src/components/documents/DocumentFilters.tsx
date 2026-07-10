@@ -1,5 +1,11 @@
 import { useState } from 'react'
 import { Search, SlidersHorizontal, X } from 'lucide-react'
+import {
+  FILE_TYPES,
+  filterInputCls as inputCls,
+  filterText as text,
+  INGEST_STATUSES as STATUSES,
+} from '../filters'
 
 /** The filter fields the bar edits — the server-side `DocumentQuery` minus pagination and tags
  *  (tags have their own picker). The backend also accepts `updated_after`/`updated_before`; only
@@ -17,14 +23,6 @@ export interface DocumentFilterValues {
   created_before?: string
 }
 
-const STATUSES = ['pending', 'processing', 'done', 'failed', 'rate_limited'] as const
-// Only these are ingestible (see the upload validation), so they are the full file-type set.
-const FILE_TYPES = ['.pdf', '.txt', '.md', '.docx', '.pptx'] as const
-
-const inputCls =
-  'h-9 rounded-control border border-border bg-canvas px-2.5 text-[13px] text-ink ' +
-  'placeholder:text-ink-faint focus:border-accent focus:outline-none'
-
 /** Comprehensive, collapsible filter bar for the documents listing. Primary filters (search,
  *  status, type, indexed) stay visible; the rest sit under “More”. Emits the whole value object
  *  on every change so the parent can reset pagination to the first page. */
@@ -38,7 +36,6 @@ export function DocumentFilters({
   const [expanded, setExpanded] = useState(false)
   const set = <K extends keyof DocumentFilterValues>(key: K, v: DocumentFilterValues[K]) =>
     onChange({ ...value, [key]: v })
-  const text = (s: string) => (s.trim() === '' ? undefined : s.trim())
   const num = (s: string) => (s === '' ? undefined : Number(s))
   const active = Object.values(value).some((v) => v !== undefined && v !== '')
 
