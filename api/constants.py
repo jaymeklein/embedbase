@@ -11,6 +11,11 @@ REDIS_PORT: int = 6379
 # Derived full Redis URL (avoids repeating the port literal in URL strings)
 REDIS_URL: str = f"redis://redis:{REDIS_PORT}/0"
 
+# Global embedding-quota backoff. The worker sets this TTL key (worker/tasks.py) when a provider
+# 429 pauses ingestion; the queue-stats endpoint reads its TTL to show the remaining backoff. Shared
+# here so the set side and the read side can't drift on the key name.
+EMBEDDING_PAUSE_KEY: str = "ingest:embedding_paused"
+
 # Host-mapped ports (docker-compose ``ports:`` — can conflict with host processes)
 # Correspond to the API_PORT and UI_PORT env vars consumed by docker-compose.yml.
 API_HOST_PORT: int = 8000

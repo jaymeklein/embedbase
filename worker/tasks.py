@@ -20,6 +20,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select, update
 
+from api.constants import EMBEDDING_PAUSE_KEY
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from api.services import realtime
 from api.sql_compat import dialect_insert
@@ -496,9 +497,13 @@ def _run_ingestion(
         filename = _s.execute(
             select(job_records.c.filename).where(job_records.c.job_id == job_id)
         ).scalar() or document_id
-        collection_name = _s.execute(
-            select(collections.c.name).where(collections.c.id == collection_id)
-        ).scalar() or collection_id
+        col_row = _s.execute(
+            select(collections.c.name, collections.c.workspace_id).where(
+                collections.c.id == collection_id
+            )
+        ).fetchone()
+        collection_name = (col_row.name if col_row else None) or collection_id
+        workspace_id = col_row.workspace_id if col_row else None  # for the queue's "open file" link
         backend_name = _s.execute(
             select(documents.c.storage_backend).where(documents.c.id == document_id)
         ).scalar() or "local"
@@ -530,6 +535,7 @@ def _run_ingestion(
                 "document_id": document_id,
                 "collection_id": collection_id,
                 "collection_name": collection_name,
+                "workspace_id": workspace_id,
                 "filename": filename,
                 "phase": phase,
                 "current": current,
@@ -694,35 +700,45 @@ def _set_job_rate_limited(job_id: str, error: str) -> None:
         logger.error("could not record rate-limit status", job_id=job_id)
 
 
-def _retry_pending_key(job_id: str) -> str:
-    return f"ingest:retry:{job_id}"
+# --- Global embedding-quota circuit breaker --------------------------------------------------
+# One shared backoff timer so a single provider quota/429 can't snowball into a retry storm.
+# Without it, every one of N queued documents independently re-hit the exhausted quota on its own
+# countdown — turning one 429 into thousands of quota-burning retries that never let anything
+# finish (and only ever grow the "waiting" count). Instead the first 429 pauses ALL ingestion for
+# the provider's suggested delay: the beat sweep skips while paused, so no NEW work is enqueued, and
+# any task already in flight just marks its job ``rate_limited`` and stops. The first sweep after the
+# pause lifts re-enqueues a BOUNDED batch (``_RETRY_BATCH``); if the quota is still out, the first
+# 429 in that batch re-arms the pause. Stored as a TTL key so it self-clears when the window elapses
+# and survives a worker restart. The key name is shared with the API (constants.EMBEDDING_PAUSE_KEY)
+# so the queue-stats endpoint can read the remaining backoff.
+_PAUSE_KEY = EMBEDDING_PAUSE_KEY
 
 
-def _mark_retry_pending(job_id: str, delay: int) -> None:
-    """Mark that a rate-limited job has a pending countdown retry, so the beat sweep
-    leaves it alone until the delay elapses. The sweep only re-enqueues jobs whose marker
-    has expired (orphaned by a worker crash), so it no longer double-fires alongside each
-    job's own ``self.retry`` countdown. TTL outlives the delay slightly; best-effort.
-    """
+def _pause_embedding(seconds: int) -> None:
+    """Back ALL ingestion off for ``seconds`` after a provider rate-limit/quota 429."""
     try:
-        _redis().set(_retry_pending_key(job_id), "1", ex=delay + 30)
+        _redis().set(_PAUSE_KEY, "1", ex=max(1, seconds))
+    except Exception:  # pragma: no cover - best-effort; a missed pause just costs one more 429
+        logger.debug("embedding pause mark failed")
+
+
+def _embedding_paused_seconds() -> int:
+    """Seconds until embedding un-pauses (0 when not paused), read from the pause key's TTL. Fails
+    open (0) on a redis error so a redis blip can't wedge ingestion shut."""
+    try:
+        ttl = _redis().ttl(_PAUSE_KEY)
+    except Exception:  # pragma: no cover - best-effort; fail open
+        return 0
+    return ttl if ttl > 0 else 0
+
+
+def clear_embedding_pause() -> None:
+    """Lift the global embedding pause — e.g. after a config change (new key / raised limit) resets
+    the provider quota, so paused ingests should resume instead of waiting out the backoff."""
+    try:
+        _redis().delete(_PAUSE_KEY)
     except Exception:  # pragma: no cover - best-effort
-        logger.debug("retry-pending mark failed", job_id=job_id)
-
-
-def _pending_job_ids(redis_client: Any, job_ids: list[str]) -> set[str]:
-    """Job ids that still hold a live retry-pending marker — their countdown retry is scheduled,
-    so the beat sweep leaves them alone. Fetched in ONE round-trip (MGET) rather than an
-    ``exists`` per job. On a redis error return an empty set — fail open, so the sweep treats
-    every job as orphaned and re-enqueues rather than stranding it.
-    """
-    if not job_ids:
-        return set()
-    try:
-        marks = redis_client.mget([_retry_pending_key(j) for j in job_ids])
-    except Exception:  # pragma: no cover - best-effort; fail open (re-enqueue) on redis error
-        return set()
-    return {job_id for job_id, mark in zip(job_ids, marks, strict=True) if mark is not None}
+        logger.debug("embedding pause clear failed")
 
 
 def _delete_stored_object(document_id: str, collection_id: str) -> None:
@@ -779,17 +795,19 @@ def ingest_document(
         raise  # plain raise — never self.retry()
     except Exception as exc:
         if _is_rate_limit(exc):
-            # Provider quota reached — not a failure. Its partial progress is already
-            # persisted (chunks embedded so far are upserted); reschedule this task to
-            # resume after the provider's suggested delay. countdown gives a precise,
-            # item-aligned retry time (surfaced to the queue as retry_at); max_retries
-            # None keeps retrying until every chunk is embedded. The 5-min beat sweep
-            # remains only as a backstop for a job orphaned by a worker crash.
+            # Provider quota reached — NOT a failure. The chunks embedded so far are already
+            # persisted, so leave the job at status ``rate_limited`` (resume-aware) and pause the
+            # WHOLE worker for the provider's suggested delay: the beat sweep skips while paused, so
+            # a single 429 can't snowball into every queued document re-hitting the exhausted quota.
+            # The beat sweep (gated on that pause) re-enqueues this job as a FRESH task once the
+            # backoff lifts. Deliberately NOT self.retry: its max_retries=None resolves to the task's
+            # cap of 3 in Celery, so retrying would raise MaxRetriesExceeded and strand the doc after
+            # three windows — with acks_late the failed task is acked and nothing re-enqueues it.
             delay = _retry_delay_seconds(exc)
-            logger.warning("ingest rate-limited; retrying", job_id=job_id, countdown=delay)
+            logger.warning("ingest rate-limited; pausing worker", job_id=job_id, backoff=delay)
+            _pause_embedding(delay)  # back the whole worker off, not just this document
             _set_job_rate_limited(job_id, str(exc))
-            _mark_retry_pending(job_id, delay)  # beat sweep skips it until the countdown is due
-            raise self.retry(exc=exc, countdown=delay, max_retries=None) from exc
+            return None  # ack this delivery; the beat sweep resumes it as a fresh task, uncapped
         logger.error("ingest task failed", job_id=job_id, error=str(exc))
         _mark_failed(job_id, str(exc))
         raise self.retry(exc=exc) from exc
@@ -943,27 +961,22 @@ def purge_expired_documents(self) -> int:
 _RETRY_BATCH = int(os.environ.get("RATE_LIMIT_RETRY_BATCH", "50"))
 
 
-def requeue_rate_limited(limit: int = _RETRY_BATCH, *, respect_pending: bool = True) -> int:
-    """Re-enqueue up to ``limit`` ingests paused at status ``rate_limited``.
+def _requeue_by_status(status: str, limit: int, *, only_if_stale: bool = False) -> int:
+    """Re-enqueue up to ``limit`` jobs at ``status`` as FRESH ingest tasks (new Celery lineage, so
+    they never hit a task's bounded ``max_retries``). Each keeps its ``job_id`` so ``_claim_job``
+    re-claims it and the resume-aware pipeline continues from the chunks already embedded — never
+    from chunk 0. Idempotent: a job already processing/done is skipped by ``_claim_job``.
 
-    An ingest that hits the embedding provider's per-minute (or daily) limit stops with
-    status ``rate_limited`` — not ``failed`` — leaving the document partly embedded. Each
-    such job is re-enqueued under its existing ``job_id`` (so ``_claim_job`` re-claims it);
-    the resume-aware pipeline embeds only the chunks not yet at the current model, so the
-    document continues where it paused instead of restarting from chunk 0.
+    ``only_if_stale`` (for ``processing`` recovery) skips jobs with a LIVE heartbeat — those are
+    actively being worked by another delivery, not stuck. Returns the number re-enqueued.
 
-    ``respect_pending`` (the default, used by the beat sweep) skips jobs whose countdown
-    retry is still scheduled, so the sweep only re-enqueues jobs whose retry marker has
-    expired (orphaned by a worker crash) instead of re-firing every few minutes on top of
-    each job's own ``self.retry`` countdown — which would hammer a provider that reported a
-    long (e.g. daily-quota) delay. The on-config-change resume passes
-    ``respect_pending=False`` to resume every paused job at once, since a new key / higher
-    RPM has reset the quota. Idempotent either way: a job already re-claimed and processing
-    is skipped by ``_claim_job``. Returns the number of ingests re-enqueued.
+    Oldest-touched first (``updated_at`` ascending) so a backlog larger than ``limit`` rotates fairly
+    across sweeps — a re-attempt bumps ``updated_at``, moving the job to the back — instead of the
+    same ``limit`` rows being re-selected every tick while the rest starve.
     """
     from api.services.documents import document_key
 
-    redis_client = _redis() if respect_pending else None
+    redis_client = _redis() if only_if_stale else None
     with SessionLocal() as db:
         rows = db.execute(
             select(
@@ -972,24 +985,57 @@ def requeue_rate_limited(limit: int = _RETRY_BATCH, *, respect_pending: bool = T
                 job_records.c.collection_id,
                 job_records.c.file_type,
             )
-            .where(job_records.c.status == "rate_limited")
+            .where(job_records.c.status == status)
+            .order_by(job_records.c.updated_at.asc())
             .limit(limit)
         ).fetchall()
-    pending = (
-        _pending_job_ids(redis_client, [row.job_id for row in rows])
-        if redis_client is not None
-        else set()
-    )
-    requeued = 0
+    requeued_ids: list[str] = []
     for row in rows:
-        if row.job_id in pending:
-            continue  # its countdown retry is still scheduled — not orphaned, leave it
+        if only_if_stale and _job_alive(redis_client, row.job_id):
+            continue  # a fresh heartbeat means it's actively progressing — leave it be
         key = document_key(row.collection_id, row.document_id, row.file_type)
         ingest_document.delay(row.job_id, key, row.collection_id, row.document_id, row.file_type)
-        requeued += 1
-    if requeued:
-        logger.info("re-enqueued rate-limited ingests", count=requeued)
-    return requeued
+        requeued_ids.append(row.job_id)
+    if requeued_ids:
+        # Bump updated_at so the oldest-first ORDER BY rotates these to the BACK. updated_at
+        # otherwise only moves when a job is claimed/settled, so a slow drain (worker busy on one
+        # big doc) would re-select the SAME limit rows every tick and pile unbounded duplicate
+        # deliveries onto the broker. Rotating means each sweep re-enqueues a different batch, so
+        # the in-flight duplicates stay bounded by the backlog size (and _claim_job dedups them).
+        with SessionLocal() as db:
+            db.execute(
+                update(job_records)
+                .where(job_records.c.job_id.in_(requeued_ids))
+                .values(updated_at=_now())
+            )
+            db.commit()
+        logger.info("re-enqueued ingests", status=status, count=len(requeued_ids))
+    return len(requeued_ids)
+
+
+def requeue_rate_limited(limit: int = _RETRY_BATCH) -> int:
+    """Re-enqueue ingests paused at status ``rate_limited`` (hit the provider's per-minute or daily
+    limit, stopped mid-document). Resumed as fresh tasks, uncapped."""
+    return _requeue_by_status("rate_limited", limit)
+
+
+def requeue_stuck_processing(limit: int = _RETRY_BATCH) -> int:
+    """Resume ingests stuck at status ``processing`` with a stale heartbeat — a worker that crashed
+    or restarted mid-embed leaves the job ``processing`` with no live ``ingest:hb:`` key and, unlike
+    a rate-limited job, no retry pending. Rather than tell the user to re-ingest it themselves, we
+    pick it back up automatically. A job with a live heartbeat is actively progressing and is left
+    alone."""
+    return _requeue_by_status("processing", limit, only_if_stale=True)
+
+
+def requeue_orphaned_pending(limit: int = _RETRY_BATCH) -> int:
+    """Resume ingests stuck at status ``pending`` — enqueued but with no live task (their Celery
+    message was lost to a broker purge or a worker restart that dropped an unstarted delivery).
+    Nothing else re-enqueues ``pending``, so without this a file the user uploaded would sit queued
+    forever. Re-enqueuing one that DOES still have its task is harmless: ``_claim_job`` dedups at run
+    (the loser sees ``processing``/``done`` and skips), so a freshly-uploaded pending doc isn't
+    double-ingested."""
+    return _requeue_by_status("pending", limit)
 
 
 @celery_app.task(
@@ -999,8 +1045,13 @@ def requeue_rate_limited(limit: int = _RETRY_BATCH, *, respect_pending: bool = T
     retry_backoff_max=60,
 )
 def retry_rate_limited_ingests(self) -> int:
-    """Beat sweep (every few minutes): re-enqueue ingests paused on a provider rate
-    limit / quota — a backstop to each job's own retry countdown and to the immediate
-    resume triggered the moment the embedding config changes. Returns the count swept.
+    """Beat sweep (every few minutes): resume every ingest the worker can't finish on its own — jobs
+    paused on a provider rate limit / quota, jobs stuck ``processing`` after a worker crash, and jobs
+    orphaned at ``pending`` (lost task). All are re-enqueued as fresh tasks, so a file the user handed
+    to the queue is never silently dropped. Returns the count swept.
     """
-    return requeue_rate_limited()
+    if _embedding_paused_seconds() > 0:
+        # A global quota backoff is in effect — re-enqueuing would just pause again. Wait it out: the
+        # pause TTL self-clears, and the next sweep resumes everything.
+        return 0
+    return requeue_rate_limited() + requeue_stuck_processing() + requeue_orphaned_pending()

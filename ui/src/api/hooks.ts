@@ -7,14 +7,22 @@
  * handler fires.
  */
 
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { api } from './client'
 import type {
   ApiKeyCreate,
   AppConfig,
   CollectionCreate,
   CollectionUpdate,
+  DocumentQuery,
   DocumentSummary,
+  JobQuery,
   SearchRequest,
   SearchResponse,
   Tag,
@@ -38,6 +46,8 @@ export const qk = {
   apiKeys: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'keys'] as const,
   config: ['config'] as const,
+  jobs: ['jobs'] as const,
+  jobStats: ['jobs', 'stats'] as const,
   ollamaModels: (baseUrl: string) => ['config', 'ollama-models', baseUrl] as const,
   tags: (wsId: string) => ['workspaces', wsId, 'tags'] as const,
   tagItems: (wsId: string, tagId: string) =>
@@ -148,14 +158,63 @@ export function useCollections(wsId: string) {
   })
 }
 
-export function useDocuments(wsId: string, colId: string) {
+export function useDocuments(wsId: string, colId: string, query: DocumentQuery = {}) {
   return useQuery({
-    queryKey: qk.documents(wsId, colId),
-    queryFn: () => api.listDocuments(wsId, colId),
+    // Filters/page are part of the key so each combination caches separately; the shared
+    // qk.documents(wsId, colId) prefix keeps existing invalidations matching every variant.
+    queryKey: [...qk.documents(wsId, colId), query] as const,
+    queryFn: () => api.listDocuments(wsId, colId, query),
     enabled: Boolean(wsId) && Boolean(colId),
     retry: false,
+    // Keep the current page visible while the next one loads, so paging forward doesn't blank
+    // `total` to 0 mid-fetch (which would trip the page-clamp effect and snap back to page 0).
+    placeholderData: keepPreviousData,
     // No polling: live ingestion status streams over WebSocket
     // (useIngestionProgress), which invalidates this query when a doc settles.
+  })
+}
+
+/**
+ * Global, paginated ingestion-job history (the durable backing for the live queue page).
+ *
+ * Not polled: the `ingestion-queue` WebSocket (useIngestionQueue) invalidates `qk.jobs` when a
+ * job starts or settles, so page 1 refreshes as work moves — while active rows stream live
+ * progress over that same socket.
+ */
+export function useJobs(query: JobQuery = {}) {
+  return useQuery({
+    // Filters/page are part of the key so each combination caches separately; the shared
+    // qk.jobs prefix keeps the WebSocket invalidation matching every variant.
+    queryKey: [...qk.jobs, query] as const,
+    queryFn: () => api.listJobs(query),
+    retry: false,
+    // Keep the current page while the next loads, so paging forward doesn't blank `total` to 0
+    // mid-fetch and trip the page-clamp effect back to page 0 (mirrors useDocuments).
+    placeholderData: keepPreviousData,
+  })
+}
+
+/**
+ * Live queue totals for the ingestion-queue header: real server-side per-status counts (which
+ * drain as jobs finish, unlike the accumulating WebSocket buffer) + the embedding-quota backoff.
+ *
+ * Polls every 5s while there's outstanding work or a pause — during a quota backoff the worker
+ * defers silently (no WebSocket events), so a poll is what keeps the countdown + counts live. Goes
+ * idle (no polling) once the queue is empty and unpaused. `qk.jobStats` is under the `qk.jobs`
+ * prefix, so the WebSocket settle-invalidation refreshes it too.
+ */
+export function useJobStats() {
+  return useQuery({
+    queryKey: qk.jobStats,
+    queryFn: () => api.jobStats(),
+    retry: false,
+    refetchInterval: (query) => {
+      const d = query.state.data
+      if (!d) return false
+      const outstanding =
+        (d.counts.pending ?? 0) + (d.counts.processing ?? 0) + (d.counts.rate_limited ?? 0)
+      return outstanding > 0 || d.paused_seconds > 0 ? 5000 : false
+    },
   })
 }
 
@@ -207,7 +266,7 @@ export function useRecentDocuments(limit = 8): { documents: RecentDocument[]; is
 
   const documents = pairs
     .flatMap(({ wsId, colId }, i) =>
-      (documentQueries[i]?.data ?? []).map((d) => ({
+      (documentQueries[i]?.data?.items ?? []).map((d) => ({
         ...d,
         workspace_id: wsId,
         collection_id: colId,
@@ -350,39 +409,13 @@ function useInvalidateDocuments(wsId: string, colId: string): () => Promise<void
 }
 
 export function useUploadDocument(wsId: string, colId: string) {
-  const queryClient = useQueryClient()
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
     mutationFn: ({ file, temporary }: { file: File; temporary: boolean }) =>
       api.uploadDocument(wsId, colId, file, temporary),
-    // Show an optimistic "uploading" row while the multipart POST is in flight —
-    // before the 202 returns a real document_id. onSettled's refetch then swaps it
-    // for the server's pending row (or onError removes it).
-    onMutate: async ({ file }: { file: File; temporary: boolean }) => {
-      const key = qk.documents(wsId, colId)
-      await queryClient.cancelQueries({ queryKey: key })
-      const tempId = `upload-${file.name}-${Date.now()}`
-      const placeholder: DocumentSummary = {
-        document_id: tempId,
-        filename: file.name,
-        file_type: file.name.split('.').pop()?.toLowerCase() ?? '',
-        file_size: file.size,
-        chunk_count: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        status: 'uploading',
-      }
-      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
-        prev ? [placeholder, ...prev] : [placeholder],
-      )
-      return { tempId }
-    },
-    onError: (_err, _file, ctx) => {
-      const key = qk.documents(wsId, colId)
-      queryClient.setQueryData<DocumentSummary[]>(key, (prev) =>
-        prev?.filter((d) => d.document_id !== ctx?.tempId),
-      )
-    },
+    // The list is paginated + filtered (many cache entries keyed by the active query), so a
+    // single optimistic row can't be reliably prepended. The 202 returns fast and this refetch
+    // surfaces the new pending row — the UploadZone shows the in-flight state meanwhile.
     onSettled: invalidate,
   })
 }
@@ -392,6 +425,24 @@ export function useDeleteDocument(wsId: string, colId: string) {
   return useMutation({
     mutationFn: (docId: string) => api.deleteDocument(wsId, colId, docId),
     onSuccess: invalidate,
+  })
+}
+
+/**
+ * Re-enqueue a failed (or stuck) document's ingestion. Always refreshes the queue (`qk.jobs`
+ * prefix → list + stats); also refreshes the owning collection's document list when the caller
+ * knows it (the Documents page passes wsId/colId; the global queue does not).
+ */
+export function useReprocessDocument(wsId?: string, colId?: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (docId: string) => api.reprocessDocument(docId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: qk.jobs })
+      if (wsId && colId) {
+        await queryClient.invalidateQueries({ queryKey: qk.documents(wsId, colId) })
+      }
+    },
   })
 }
 
