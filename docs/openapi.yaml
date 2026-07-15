@@ -1712,106 +1712,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /workspaces/{ws_id}/collections/{col_id}/suggest-tags:
-    post:
-      tags:
-      - tags
-      summary: Suggest Collection Tags
-      operationId: suggest_collection_tags_workspaces__ws_id__collections__col_id__suggest_tags_post
-      parameters:
-      - name: ws_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Ws Id
-      - name: col_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Col Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
-      - name: X-API-Key
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: X-Api-Key
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/suggest-tags:
-    post:
-      tags:
-      - tags
-      summary: Suggest Document Tags
-      operationId: suggest_document_tags_workspaces__ws_id__collections__col_id__documents__doc_id__suggest_tags_post
-      parameters:
-      - name: ws_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Ws Id
-      - name: col_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Col Id
-      - name: doc_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Doc Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
-      - name: X-API-Key
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: X-Api-Key
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /workspaces/{ws_id}/graph:
     get:
       tags:
@@ -2540,16 +2440,6 @@ components:
             enabled: true
             rate_limit_rpm: 60
             max_results: 20
-        tagging:
-          $ref: '#/components/schemas/TaggingConfig'
-          default:
-            suggester:
-              backend: llm
-              max_tags: 8
-              min_confidence: 0.8
-              model: llama3
-              provider: ollama
-            auto_tag_on_ingest: false
         storage:
           $ref: '#/components/schemas/StorageConfig'
           default:
@@ -3312,40 +3202,6 @@ components:
         Repoints every assignment of ``source_id`` onto ``target_id`` and then
 
         deletes the now-empty source tag.'
-    TagSuggesterConfig:
-      properties:
-        backend:
-          type: string
-          title: Backend
-          default: llm
-        provider:
-          type: string
-          title: Provider
-          default: ollama
-        model:
-          type: string
-          title: Model
-          default: llama3
-        base_url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Base Url
-        api_key:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Api Key
-        max_tags:
-          type: integer
-          title: Max Tags
-          default: 8
-        min_confidence:
-          type: number
-          title: Min Confidence
-          default: 0.8
-      type: object
-      title: TagSuggesterConfig
     TagUpdate:
       properties:
         name:
@@ -3361,22 +3217,6 @@ components:
       type: object
       title: TagUpdate
       description: Body for PATCH /workspaces/{ws_id}/tags/{tag_id}.
-    TaggingConfig:
-      properties:
-        suggester:
-          $ref: '#/components/schemas/TagSuggesterConfig'
-          default:
-            backend: llm
-            provider: ollama
-            model: llama3
-            max_tags: 8
-            min_confidence: 0.8
-        auto_tag_on_ingest:
-          type: boolean
-          title: Auto Tag On Ingest
-          default: false
-      type: object
-      title: TaggingConfig
     ValidationError:
       properties:
         loc:
