@@ -178,6 +178,39 @@ export interface DocumentSummary {
   indexed?: boolean
   /** Assigned tags, echoed by `GET .../documents`. */
   tags?: TagRef[]
+  /** Exact embedding model a finished document was ingested with, when known. */
+  embedding_model?: string | null
+  /** Storage backend holding the file (`local` / a configured S3 name). */
+  storage_backend?: string | null
+}
+
+/** `GET .../documents` — one page of documents plus the full match count for the pager. */
+export interface DocumentListResponse {
+  items: DocumentSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** Query params for the documents listing. All optional and AND-combined server-side;
+ *  `filename` is a case-insensitive substring and the `*_size`/`*_after`/`*_before` bounds
+ *  are inclusive. */
+export interface DocumentQuery {
+  limit?: number
+  offset?: number
+  filename?: string
+  file_type?: string
+  status?: string
+  indexed?: boolean
+  embedding_model?: string
+  storage_backend?: string
+  min_size?: number
+  max_size?: number
+  created_after?: string
+  created_before?: string
+  updated_after?: string
+  updated_before?: string
+  tag?: string[]
 }
 
 // ── BM25 indexing ────────────────────────────────────────────────────────────
@@ -215,6 +248,53 @@ export interface UploadAccepted {
   file_type: string
   file_size: number
   status: DocStatus
+}
+
+// ── Ingestion queue (job history; mirrors GET /ingestion/jobs) ───────────────
+
+/** A row from `GET /ingestion/jobs` — one `job_records` attempt joined to its collection name.
+ *  `document_id` lets the queue page overlay live WebSocket progress onto the matching row. */
+export interface JobSummary {
+  job_id: string
+  document_id: string
+  collection_id: string
+  collection_name: string | null // null when the collection was since deleted
+  workspace_id: string | null // for the "open in collection" link; null if the collection is gone
+  filename: string
+  file_type: string
+  status: string // pending | processing | done | failed | rate_limited
+  chunk_count: number | null
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** `GET /ingestion/jobs` — one page of jobs plus the full match count for the pager. */
+export interface JobListResponse {
+  items: JobSummary[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** Query params for the ingestion-jobs listing. All optional and AND-combined server-side;
+ *  `filename`/`collection` are case-insensitive substrings and the `created_*` bounds inclusive. */
+export interface JobQuery {
+  limit?: number
+  offset?: number
+  status?: string
+  filename?: string
+  file_type?: string
+  collection?: string
+  created_after?: string
+  created_before?: string
+}
+
+/** `GET /ingestion/jobs/stats` — live queue totals for the header. Server-side, so it drains as
+ *  jobs finish (unlike the accumulating WebSocket buffer). */
+export interface JobStats {
+  counts: Record<string, number> // status → count; a status with no jobs is absent
+  paused_seconds: number // >0 = ingestion paused on a provider quota backoff, resuming in N seconds
 }
 
 /** `GET .../documents/{id}/status` — the latest job record (or delete tombstone). */

@@ -6,10 +6,13 @@ This file is routing-only: path registration, dependency resolution, delegation.
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
+from api.models.document import DocumentListQuery
 from api.services import documents as doc_svc
 from api.services.auth import Principal, require_auth
 
@@ -41,15 +44,21 @@ async def upload_document(
 async def list_documents(
     ws_id: str,
     col_id: str,
-    tag: list[str] | None = Query(default=None),
+    query: Annotated[DocumentListQuery, Query()],
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all documents in a collection with their ingestion + index status."""
+    """List documents in a collection: paginated, filtered, newest-first, with latest status.
+
+    Returns ``{items, total, limit, offset}``. All filters are optional and AND-combined;
+    ``filename`` is a case-insensitive substring, ``status`` is the latest ingestion status,
+    ``indexed`` gates on stored chunks, and the ``*_size``/``*_after``/``*_before`` bounds are
+    inclusive. See :class:`DocumentListQuery` for the full set of query parameters.
+    """
     await doc_svc.resolve_collection(db, col_id, ws_id)
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
-    return await doc_svc.list_documents(db, col_id, tags=tag)
+    return await doc_svc.list_documents(db, col_id, query)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status")
@@ -121,3 +130,17 @@ async def delete_document_flat(
     if not principal.can_access(col_id):
         raise HTTPException(403, "API key not valid for this collection")
     await doc_svc.delete_document(db, col_id, doc_id)
+
+
+@router.post("/documents/{doc_id}/reprocess", status_code=202)
+async def reprocess_document_flat(
+    doc_id: str,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-enqueue a document's ingestion — the manual retry for a failed file. Reuses the stored
+    bytes (nothing is re-uploaded) and surfaces a fresh pending job in the queue."""
+    col_id = await doc_svc.resolve_document_collection(db, doc_id)
+    if not principal.can_access(col_id):
+        raise HTTPException(403, "API key not valid for this collection")
+    return await doc_svc.reprocess_document(db, col_id, doc_id)

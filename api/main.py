@@ -27,6 +27,7 @@ from api.routers import (
     graph,
     health,
     indexing,
+    jobs,
     mcp,
     search,
     tags,
@@ -230,6 +231,7 @@ def create_app() -> FastAPI:
     app.include_router(graph.router)
     app.include_router(search.router)
     app.include_router(indexing.router)
+    app.include_router(jobs.router)
     app.include_router(config.router)
     app.include_router(ws.router)
 
