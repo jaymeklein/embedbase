@@ -25,7 +25,6 @@ import type {
   JobQuery,
   SearchRequest,
   SearchResponse,
-  Tag,
   TagCreate,
   TagMerge,
   TagUpdate,
@@ -64,14 +63,9 @@ export function useHealth() {
 /** Sentinel the API returns for a set secret; echo it back unchanged to keep it. */
 export const SECRET_MASK = '__SECRET_SET__'
 
-/**
- * Live runtime config (secrets masked). Fetched lazily: pass `enabled: false` on
- * pages that only opportunistically use config so the (whole-config) request isn't
- * fired app-wide — it's only issued where config is actually shown (the Settings
- * config tab). A disabled caller still reads the cache if another view populated it.
- */
-export function useConfig(enabled = true) {
-  return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false, enabled })
+/** Live runtime config (secrets masked). Shared cache — callers on the same key refetch once. */
+export function useConfig() {
+  return useQuery({ queryKey: qk.config, queryFn: () => api.getConfig(), retry: false })
 }
 
 /** GPU suitability for the docling PDF backend (drives the backend picker's default + warning). */
@@ -80,7 +74,7 @@ export function useAccelerator() {
 }
 
 /**
- * Models installed on the Ollama server, for the suggester model picker.
+ * Models installed on the Ollama server, for the embedding/reranker model pickers.
  * Re-fetches when the edited base URL changes; only enabled when asked for.
  */
 export function useOllamaModels(baseUrl: string, enabled: boolean) {
@@ -92,14 +86,6 @@ export function useOllamaModels(baseUrl: string, enabled: boolean) {
   })
 }
 
-/**
- * Test Ollama connectivity on demand: resolves with the installed models when
- * the server is reachable, rejects with the API error when it is not.
- */
-export function useTestOllama() {
-  return useMutation({ mutationFn: (baseUrl: string) => api.listOllamaModels(baseUrl || undefined) })
-}
-
 /** Apply a full config payload (PUT /config) and refetch the live config. */
 export function useUpdateConfig() {
   const queryClient = useQueryClient()
@@ -107,33 +93,6 @@ export function useUpdateConfig() {
     mutationFn: (body: AppConfig) => api.updateConfig(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.config }),
   })
-}
-
-/**
- * Whether auto-tagging will actually produce tags on ingest right now.
- *
- * Needs `auto_tag_on_ingest` on AND the suggester provider reachable. Returns
- * `undefined` while config/probe is still resolving so callers can avoid a false
- * "no provider" warning before the answer is known.
- *
- * ponytail: only Ollama is probed for reachability (the one probe that exists);
- * other providers are treated as on when configured — add a probe if one exists.
- */
-export function useAutoTagAvailability(enabled = true): { available: boolean | undefined } {
-  const config = useConfig(enabled)
-  const tagging = config.data?.tagging
-  const autoTag = tagging?.auto_tag_on_ingest === true
-  const provider = tagging?.suggester.provider
-  const baseUrl = tagging?.suggester.base_url ?? ''
-  const ollama = useOllamaModels(baseUrl, Boolean(autoTag && provider === 'ollama'))
-
-  if (config.isLoading) return { available: undefined }
-  if (!autoTag) return { available: false }
-  if (provider === 'ollama') {
-    if (ollama.isLoading) return { available: undefined }
-    return { available: ollama.isSuccess }
-  }
-  return { available: true }
 }
 
 export function useWorkspaces() {
@@ -613,44 +572,6 @@ export function useUnassignDocumentTag(wsId: string, colId: string) {
       api.unassignDocumentTag(wsId, colId, docId, tagId),
     onSuccess: invalidate,
   })
-}
-
-/** Ephemeral tag suggestions for a collection (nothing persists until applied). */
-export function useSuggestCollectionTags(wsId: string, colId: string) {
-  return useMutation({ mutationFn: () => api.suggestCollectionTags(wsId, colId) })
-}
-
-/** Ephemeral tag suggestions for a document (nothing persists until applied). */
-export function useSuggestDocumentTags(wsId: string, colId: string, docId: string) {
-  return useMutation({ mutationFn: () => api.suggestDocumentTags(wsId, colId, docId) })
-}
-
-/** Normalize a name the same way the backend does, for exact-match detection. */
-function normalizeName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-/**
- * Returns `apply(names, assign)`: resolve each tag name to an id (creating any
- * that don't exist yet in the workspace), then assign it via the caller's
- * `assign` callback. Used to apply approved AI suggestions through the regular
- * create + assign endpoints, so nothing persists until the user approves.
- *
- * ponytail: reads the cached tag list to map names→ids; a tag created elsewhere
- * since the last fetch falls through to create and may 409 — acceptable, the
- * error surfaces to the caller.
- */
-export function useApplyTagsByName(wsId: string) {
-  const queryClient = useQueryClient()
-  const createTag = useCreateTag(wsId)
-  return async (names: string[], assign: (tagId: string) => Promise<unknown>) => {
-    const existing = queryClient.getQueryData<Tag[]>(qk.tags(wsId)) ?? []
-    const byName = new Map(existing.map((t) => [t.name, t.id]))
-    for (const name of names) {
-      const id = byName.get(normalizeName(name)) ?? (await createTag.mutateAsync({ name })).id
-      await assign(id)
-    }
-  }
 }
 
 /** Fetch the tag-correlation graph for a workspace (or one collection within it). */
