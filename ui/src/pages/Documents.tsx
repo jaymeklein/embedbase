@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
 import {
   useApplyTagsByName,
@@ -12,13 +12,14 @@ import {
   useDocumentStatus,
   useDocuments,
   useIndexDocument,
+  useReprocessDocument,
   useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
   useWorkspace,
 } from '../api/hooks'
 import { api } from '../api/client'
-import type { DocumentSummary } from '../api/types'
+import type { DocumentQuery, DocumentSummary } from '../api/types'
 import {
   useIngestionProgress,
   type IngestionProgress,
@@ -38,17 +39,48 @@ import {
   useToast,
 } from '../components/ui'
 import { UploadZone } from '../components/documents/UploadZone'
+import { DocumentFilters, type DocumentFilterValues } from '../components/documents/DocumentFilters'
+import { Pager } from '../components/Pager'
 import { formatBytes, timeAgo } from '../lib/format'
 
 /** Largest file accepted before an upload is attempted (client-side guard). */
 const MAX_FILE_SIZE_MB = 50
+/** Documents fetched per page (matches the server default; ≤ its 200 cap). */
+const PAGE_SIZE = 50
 
 /** Documents within a collection: upload, live ingestion status, and delete. */
 export default function Documents() {
   const { wsId = '', colId = '' } = useParams()
   const workspace = useWorkspace(wsId)
   const collection = useCollection(wsId, colId)
-  const { data, isLoading, isError, error, refetch } = useDocuments(wsId, colId)
+
+  const [page, setPage] = useState(0)
+  const [searchParams] = useSearchParams()
+  // Deep-link from the ingestion queue's "open file": ?filename=… pre-fills the filter so the file
+  // is shown at once instead of buried on some page of the full listing.
+  const [filters, setFiltersState] = useState<DocumentFilterValues>(() => {
+    const filename = searchParams.get('filename')
+    return filename ? { filename } : {}
+  })
+  const [tagFilter, setTagFilter] = useState<string[]>([])
+
+  const query: DocumentQuery = {
+    limit: PAGE_SIZE,
+    offset: page * PAGE_SIZE,
+    ...filters,
+    tag: tagFilter.length > 0 ? tagFilter : undefined,
+  }
+  const { data, isLoading, isError, error, refetch } = useDocuments(wsId, colId, query)
+  const items = data?.items ?? []
+  const total = data?.total ?? 0
+  const hasFilters =
+    tagFilter.length > 0 || Object.values(filters).some((v) => v != null && v !== '')
+  const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
+  // A total that shrinks (deleting the tail of a page) can strand `page` past the end — clamp it
+  // so the pager count and empty state stay coherent instead of showing "51–50 of 50".
+  useEffect(() => {
+    if (page > lastPage) setPage(lastPage)
+  }, [page, lastPage])
 
   const toast = useToast()
   const uploadMut = useUploadDocument(wsId, colId)
@@ -59,7 +91,6 @@ export default function Documents() {
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
-  const [tagFilter, setTagFilter] = useState<string[]>([])
   // Temporary-upload toggle. Only offered when retention is enabled (>0 hours);
   // with retention off the server ignores the flag, so a control would be a no-op.
   // Fetch config here (not lazily) so the toggle shows on a direct page load, not only
@@ -68,15 +99,27 @@ export default function Documents() {
   const retentionHours = config?.storage?.temp_retention_hours ?? 0
   const [temporary, setTemporary] = useState(false)
 
-  const toggleTag = (name: string) =>
+  // Any filter/tag change resets to the first page — the old offset may exceed the new count.
+  const setFilters = (next: DocumentFilterValues) => {
+    setFiltersState(next)
+    setPage(0)
+  }
+  const toggleTag = (name: string) => {
     setTagFilter((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     )
-  const shown = data?.filter((doc) =>
-    tagFilter.every((name) => doc.tags?.some((t) => t.name === name)),
-  )
-  // Only offer tags present on this collection's documents, not the whole workspace.
-  const filterTags = useMemo(() => collectTags(data), [data])
+    setPage(0)
+  }
+  // Tags offered in the filter bar: those on the current page PLUS any selected tag not on the
+  // page, so a selected tag stays deselectable even when it filters the list down to zero rows.
+  const tagOptions = useMemo(() => {
+    const present = collectTags(data?.items)
+    const names = new Set(present.map((t) => t.name))
+    const missing = tagFilter
+      .filter((n) => !names.has(n))
+      .map((n) => ({ id: n, name: n, color: null }))
+    return [...present, ...missing]
+  }, [data, tagFilter])
 
   /** Stream the validated files to the server, reporting per-file failures. */
   const uploadFiles = async (valid: File[]) => {
@@ -167,18 +210,25 @@ export default function Documents() {
         </label>
       )}
 
-      <TagFilterBar tags={filterTags} selected={tagFilter} onToggle={toggleTag} />
+      <DocumentFilters value={filters} onChange={setFilters} />
+
+      {tagOptions.length > 0 && (
+        <TagFilterBar tags={tagOptions} selected={tagFilter} onToggle={toggleTag} />
+      )}
 
       <DocumentList
         wsId={wsId}
         colId={colId}
-        data={shown}
+        data={items}
+        filtered={hasFilters}
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
         onRetry={() => void refetch()}
         onDelete={setDeleteTarget}
       />
+
+      <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} loading={isLoading} />
 
       <ConfirmDialog
         open={pendingFiles !== null}
@@ -215,6 +265,7 @@ function DocumentList({
   wsId,
   colId,
   data,
+  filtered,
   isLoading,
   isError,
   message,
@@ -224,6 +275,7 @@ function DocumentList({
   wsId: string
   colId: string
   data: DocumentSummary[] | undefined
+  filtered: boolean
   isLoading: boolean
   isError: boolean
   message?: string
@@ -247,7 +299,13 @@ function DocumentList({
     return <QueryError title="Could not load documents" message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
-    return (
+    return filtered ? (
+      <EmptyState
+        icon={<FileText className="h-7 w-7" />}
+        title="No matching documents"
+        description="No documents match the current filters. Adjust or clear them to see more."
+      />
+    ) : (
       <EmptyState
         icon={<FileText className="h-7 w-7" />}
         title="No documents yet"
@@ -322,6 +380,7 @@ function DocumentRow({
 
   const toast = useToast()
   const indexMut = useIndexDocument(wsId, colId)
+  const reprocessMut = useReprocessDocument(wsId, colId)
   const assignMut = useAssignDocumentTag(wsId, colId)
   const unassignMut = useUnassignDocumentTag(wsId, colId)
   const createMut = useCreateTag(wsId)
@@ -405,6 +464,21 @@ function DocumentRow({
               className="text-xs font-medium text-err hover:underline"
             >
               {showError ? 'Hide' : 'Why?'}
+            </button>
+          )}
+          {failed && (
+            <button
+              type="button"
+              disabled={reprocessMut.isPending}
+              onClick={() =>
+                reprocessMut.mutate(doc.document_id, {
+                  onSuccess: () => toast.success(`Reprocessing “${doc.filename}”.`),
+                  onError: onErr,
+                })
+              }
+              className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
+            >
+              {reprocessMut.isPending ? 'Retrying…' : 'Retry'}
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (

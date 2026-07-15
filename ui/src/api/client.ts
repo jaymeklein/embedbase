@@ -14,10 +14,14 @@ import type {
   Collection,
   CollectionCreate,
   CollectionUpdate,
-  DocumentSummary,
+  DocumentListResponse,
+  DocumentQuery,
   Health,
   IndexEnqueueResponse,
   IndexStatusResponse,
+  JobListResponse,
+  JobQuery,
+  JobStats,
   JobStatus,
   MintedApiKey,
   ApiKeyCreate,
@@ -106,6 +110,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 }
 
 const enc = encodeURIComponent
+
+/** Serialise a query object to a `?a=b&c=d` string: skips null/empty values and expands array
+ *  params (e.g. repeated `tag`). Returns '' when nothing is set. Shared by the documents and
+ *  ingestion-jobs listings. */
+function toQueryString(query: object): string {
+  const params = new URLSearchParams()
+  for (const [key, value] of Object.entries(query)) {
+    if (value == null || value === '') continue
+    if (Array.isArray(value)) value.forEach((v) => params.append(key, String(v)))
+    else params.set(key, String(value))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
 
 export const api = {
   // ── Workspaces ────────────────────────────────────────────────────────────
@@ -201,8 +219,10 @@ export const api = {
     }),
 
   // ── Documents ─────────────────────────────────────────────────────────────
-  listDocuments: (wsId: string, colId: string) =>
-    request<DocumentSummary[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`),
+  listDocuments: (wsId: string, colId: string, query: DocumentQuery = {}) =>
+    request<DocumentListResponse>(
+      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents${toQueryString(query)}`,
+    ),
   uploadDocument: (wsId: string, colId: string, file: File, temporary = false) => {
     const form = new FormData()
     form.append('file', file)
@@ -220,6 +240,12 @@ export const api = {
     request<void>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}`,
       { method: 'DELETE' },
+    ),
+  /** Re-enqueue a failed (or stuck) document's ingestion — reuses the stored bytes. */
+  reprocessDocument: (docId: string) =>
+    request<{ job_id: string; document_id: string; status: string }>(
+      `/documents/${enc(docId)}/reprocess`,
+      { method: 'POST' },
     ),
   /**
    * Open a document's original file in a new tab. The fetch carries auth (which
@@ -273,6 +299,11 @@ export const api = {
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 60_000)
   },
+
+  // ── Ingestion queue (job history) ─────────────────────────────────────────
+  listJobs: (query: JobQuery = {}) =>
+    request<JobListResponse>(`/ingestion/jobs${toQueryString(query)}`),
+  jobStats: () => request<JobStats>('/ingestion/jobs/stats'),
 
   // ── Graph ─────────────────────────────────────────────────────────────────
   graph: (wsId: string, colId: string | null, linkTypes: string[] = ['tags']) => {

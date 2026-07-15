@@ -11,11 +11,13 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
+from api.models.document import DocumentListQuery
 from api.services.auth import Principal
 from api.services.documents import (
     delete_document,
     ingest,
     list_documents,
+    reprocess_document,
     resolve_document_download,
 )
 
@@ -115,6 +117,45 @@ async def test_delete_nonexistent_raises_404(db_session) -> None:
     assert exc.value.status_code == 404
 
 
+async def _seed_collection(db_session) -> None:
+    """Seed just the workspace + collection (no document); tests add their own docs."""
+    await _insert_workspace(db_session)
+    await _insert_collection(db_session)
+    await db_session.commit()
+
+
+async def _add_doc(
+    db_session,
+    doc_id: str,
+    *,
+    filename: str = "x.txt",
+    file_type: str = ".txt",
+    file_size: int = 100,
+    chunk_count: int | None = None,
+    embedding_model: str | None = None,
+    storage_backend: str | None = None,
+    created_at: str = _NOW,
+    job_status: str | None = None,
+) -> None:
+    """Insert one active document (+ an optional latest job row) into _COL_ID."""
+    await db_session.execute(
+        insert(doc_t).values(
+            id=doc_id, collection_id=_COL_ID, filename=filename, file_type=file_type,
+            file_size=file_size, chunk_count=chunk_count, embedding_model=embedding_model,
+            storage_backend=storage_backend, created_at=created_at, updated_at=created_at,
+            status=None,
+        )
+    )
+    if job_status is not None:
+        await db_session.execute(
+            insert(job_t).values(
+                job_id=f"job_{doc_id}", document_id=doc_id, collection_id=_COL_ID,
+                filename=filename, file_type=file_type, status=job_status,
+                created_at=created_at, updated_at=created_at,
+            )
+        )
+
+
 async def test_list_documents_dedupes_multiple_jobs(db_session) -> None:
     """A document with several job rows (re-ingest/retries) appears once, latest job."""
     await _seed(db_session)  # one job: status "done", created 2024-01-01
@@ -127,22 +168,146 @@ async def test_list_documents_dedupes_multiple_jobs(db_session) -> None:
     )
     await db_session.commit()
 
-    docs = await list_documents(db_session, _COL_ID)
-    assert len(docs) == 1
-    assert docs[0]["status"] == "failed"  # latest job wins
+    result = await list_documents(db_session, _COL_ID, DocumentListQuery())
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["items"][0]["status"] == "failed"  # latest job wins
 
 
 async def test_list_documents_excludes_deleting_status(db_session, monkeypatch) -> None:
     monkeypatch.setattr("api.services.documents.task_producer.enqueue_delete", lambda *_: None)
     await _seed(db_session)
 
-    docs_before = await list_documents(db_session, _COL_ID)
-    assert len(docs_before) == 1
+    before = await list_documents(db_session, _COL_ID, DocumentListQuery())
+    assert before["total"] == 1
 
     await delete_document(db_session, _COL_ID, _DOC_ID)
 
-    docs_after = await list_documents(db_session, _COL_ID)
-    assert docs_after == []
+    after = await list_documents(db_session, _COL_ID, DocumentListQuery())
+    assert after["total"] == 0
+    assert after["items"] == []
+
+
+async def test_list_documents_paginates_newest_first_with_total(db_session) -> None:
+    await _seed_collection(db_session)
+    for i in range(5):
+        await _add_doc(db_session, f"doc_{i}", created_at=f"2024-01-0{i + 1}T00:00:00")
+    await db_session.commit()
+
+    page1 = await list_documents(db_session, _COL_ID, DocumentListQuery(limit=2, offset=0))
+    assert page1["total"] == 5  # full match count, not the page length
+    assert (page1["limit"], page1["offset"]) == (2, 0)
+    assert [d["document_id"] for d in page1["items"]] == ["doc_4", "doc_3"]  # newest first
+
+    last = await list_documents(db_session, _COL_ID, DocumentListQuery(limit=2, offset=4))
+    assert last["total"] == 5
+    assert [d["document_id"] for d in last["items"]] == ["doc_0"]  # trailing partial page
+
+
+async def test_list_documents_filters_by_filename_substring_ci(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_a", filename="Report-2024.pdf")
+    await _add_doc(db_session, "doc_b", filename="notes.md")
+    await db_session.commit()
+
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(filename="report"))  # case-insensitive
+    assert res["total"] == 1
+    assert res["items"][0]["document_id"] == "doc_a"
+
+
+async def test_list_documents_filters_by_latest_status(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_ok", job_status="done")
+    await _add_doc(db_session, "doc_bad", job_status="failed")
+    await db_session.commit()
+
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(status="failed"))
+    assert res["total"] == 1
+    assert res["items"][0]["document_id"] == "doc_bad"
+    assert res["items"][0]["status"] == "failed"
+
+
+async def test_list_documents_filters_by_file_type_and_indexed(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_pdf", file_type=".pdf", chunk_count=3)  # indexed
+    await _add_doc(db_session, "doc_txt", file_type=".txt", chunk_count=None)  # not indexed
+    await db_session.commit()
+
+    by_type = await list_documents(db_session, _COL_ID, DocumentListQuery(file_type=".pdf"))
+    assert by_type["total"] == 1 and by_type["items"][0]["document_id"] == "doc_pdf"
+
+    indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=True))
+    assert indexed["total"] == 1 and indexed["items"][0]["document_id"] == "doc_pdf"
+
+    not_indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=False))
+    assert not_indexed["total"] == 1 and not_indexed["items"][0]["document_id"] == "doc_txt"
+
+
+async def test_list_documents_filters_by_backend_model_and_size(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_s3", storage_backend="minio", embedding_model="gemini", file_size=5000)
+    await _add_doc(db_session, "doc_local", storage_backend="local", embedding_model="ollama", file_size=100)
+    await db_session.commit()
+
+    s3 = await list_documents(db_session, _COL_ID, DocumentListQuery(storage_backend="minio"))
+    assert s3["total"] == 1 and s3["items"][0]["document_id"] == "doc_s3"
+
+    ollama = await list_documents(db_session, _COL_ID, DocumentListQuery(embedding_model="ollama"))
+    assert ollama["total"] == 1 and ollama["items"][0]["document_id"] == "doc_local"
+
+    big = await list_documents(db_session, _COL_ID, DocumentListQuery(min_size=1000))
+    assert big["total"] == 1 and big["items"][0]["document_id"] == "doc_s3"
+
+    small = await list_documents(db_session, _COL_ID, DocumentListQuery(max_size=1000))
+    assert small["total"] == 1 and small["items"][0]["document_id"] == "doc_local"
+
+
+async def test_list_documents_filters_by_created_date_range(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_jan", created_at="2024-01-15T00:00:00")
+    await _add_doc(db_session, "doc_mar", created_at="2024-03-15T00:00:00")
+    await db_session.commit()
+
+    res = await list_documents(
+        db_session, _COL_ID, DocumentListQuery(created_after="2024-02-01", created_before="2024-04-01")
+    )
+    assert res["total"] == 1
+    assert res["items"][0]["document_id"] == "doc_mar"
+
+
+async def test_list_documents_created_before_is_inclusive_of_the_day(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_day", created_at="2024-03-15T14:30:00")
+    await db_session.commit()
+
+    # A date-only upper bound covers the whole day (service expands it to end-of-day), so a doc
+    # created mid-day on the bound date is still matched.
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(created_before="2024-03-15"))
+    assert res["total"] == 1
+    assert res["items"][0]["document_id"] == "doc_day"
+
+
+async def test_list_documents_indexed_filter_treats_zero_chunks_as_not_indexed(db_session) -> None:
+    # A done doc with 0 chunks displays as not-indexed (bool(0) is False); the filter must agree.
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_zero", chunk_count=0)
+    await db_session.commit()
+
+    assert (await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=True)))["total"] == 0
+    not_indexed = await list_documents(db_session, _COL_ID, DocumentListQuery(indexed=False))
+    assert not_indexed["total"] == 1
+    assert not_indexed["items"][0]["document_id"] == "doc_zero"
+
+
+async def test_list_documents_filename_filter_escapes_wildcards(db_session) -> None:
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_underscore", filename="a_b.txt")
+    await _add_doc(db_session, "doc_axb", filename="axb.txt")
+    await db_session.commit()
+
+    # "a_b" must match the literal underscore only, not "_" as a single-char LIKE wildcard.
+    res = await list_documents(db_session, _COL_ID, DocumentListQuery(filename="a_b"))
+    assert [d["document_id"] for d in res["items"]] == ["doc_underscore"]
 
 
 class _FakeS3Storage:
@@ -241,6 +406,66 @@ async def test_ingest_records_default_storage_backend(db_session, monkeypatch) -
         )
     ).fetchone()
     assert row.storage_backend == "local"
+
+
+async def test_reprocess_document_creates_fresh_pending_job(db_session, monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest",
+        lambda *a: calls.append(a) or "task-r",
+    )
+    await _seed(db_session)  # doc f.txt with one job (status done)
+
+    result = await reprocess_document(db_session, _COL_ID, _DOC_ID)
+
+    assert result["status"] == "pending"
+    assert result["document_id"] == _DOC_ID
+    # a fresh job was dispatched against the stored key (nothing re-uploaded)
+    assert calls == [(result["job_id"], f"{_COL_ID}/{_DOC_ID}.txt", _COL_ID, _DOC_ID, ".txt")]
+    jobs = (
+        await db_session.execute(select(job_t).where(job_t.c.document_id == _DOC_ID))
+    ).fetchall()
+    assert len(jobs) == 2  # the original attempt is kept in history; the retry is added
+    assert {j.status for j in jobs} == {"done", "pending"}
+
+
+async def test_reprocess_missing_document_raises_404(db_session) -> None:
+    await _seed(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await reprocess_document(db_session, _COL_ID, "doc_ghost")
+    assert exc.value.status_code == 404
+
+
+async def test_reprocess_deleting_document_raises_409(db_session, monkeypatch) -> None:
+    monkeypatch.setattr("api.services.documents.task_producer.enqueue_delete", lambda *_: None)
+    await _seed(db_session)
+    await delete_document(db_session, _COL_ID, _DOC_ID)  # marks the doc status='deleting'
+    with pytest.raises(HTTPException) as exc:
+        await reprocess_document(db_session, _COL_ID, _DOC_ID)
+    assert exc.value.status_code == 409
+
+
+async def test_reprocess_is_noop_when_already_in_flight(db_session, monkeypatch) -> None:
+    # A double-click (or a stale "failed" button) must not mint a second job for the same document —
+    # _claim_job dedups by job_id, so a new id would let a multi-process worker double-embed.
+    calls: list = []
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest",
+        lambda *a: calls.append(a) or "task-r",
+    )
+    await _seed_collection(db_session)
+    await _add_doc(db_session, "doc_active", job_status="pending")  # already queued
+    await db_session.commit()
+
+    result = await reprocess_document(db_session, _COL_ID, "doc_active")
+
+    assert result["job_id"] == "job_doc_active"  # the EXISTING job, not a fresh one
+    assert result["status"] == "pending"
+    assert calls == []  # no duplicate task enqueued
+    jobs = (
+        await db_session.execute(select(job_t).where(job_t.c.document_id == "doc_active"))
+    ).fetchall()
+    assert len(jobs) == 1  # no duplicate job row created
 
 
 async def test_delete_enqueue_failure_rolls_back_tombstone(db_session, monkeypatch) -> None:

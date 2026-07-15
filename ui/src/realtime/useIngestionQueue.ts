@@ -8,20 +8,15 @@
  * most recent chunk labels — capped, so a 1400-chunk PDF can't grow unbounded.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useRef, useState } from 'react'
+import { qk } from '../api/hooks'
 import { carryProgress } from './carryProgress'
 import { useChannel } from './useChannel'
 import type { IngestPhase } from './useIngestionProgress'
 
 /** Cap on the live per-file chunk list — newest kept, older dropped. */
 const RECENT_CHUNKS_CAP = 50
-
-/** A processing item that emits no progress for this long is treated as stalled. A
- *  silent worker kill/crash can't emit a `failed` event, so the queue would otherwise
- *  show it frozen mid-chunk forever. Only applied to the frequently-emitting phases
- *  (embedding/storing) so an opaque docling parse isn't flagged. Generous: a single
- *  CPU batch is bounded well under this by the embed adapter's per-request timeout. */
-const STALL_MS = 180_000
 
 export interface QueueChunk {
   index: number
@@ -32,6 +27,7 @@ interface QueueEvent {
   document_id: string
   collection_id: string
   collection_name: string
+  workspace_id: string | null // for the queue's "open in collection" link
   filename: string
   phase: IngestPhase
   current: number | null
@@ -46,63 +42,57 @@ interface QueueEvent {
 export interface QueueItem extends Omit<QueueEvent, 'chunks'> {
   recentChunks: QueueChunk[]
   seq: number // arrival order, for a stable sort
-  stalled: boolean // processing but no progress for STALL_MS (likely a silent kill)
 }
 
-interface Stored extends Omit<QueueEvent, 'chunks'> {
-  recentChunks: QueueChunk[]
-  seq: number
-  lastAt: number // ms of the last event for this doc — drives stall detection
-}
+// A stuck job (silent worker kill) is recovered by the worker's beat sweep — it re-enqueues a
+// heartbeat-less `processing` job automatically — so the UI no longer guesses at stalls or asks the
+// user to re-ingest. QueueItem === Stored now that there's no stall bookkeeping to strip.
+type Stored = QueueItem
 
 export function useIngestionQueue(): { items: QueueItem[]; status: string } {
   const [byId, setById] = useState<Record<string, Stored>>({})
   const seqRef = useRef(0)
-  const [, setTick] = useState(0)
+  const seenRef = useRef<Set<string>>(new Set())
+  const queryClient = useQueryClient()
 
-  const onMessage = useCallback((msg: QueueEvent) => {
-    setById((prev) => {
-      const existing = prev[msg.document_id]
-      const recentChunks = msg.chunks
-        ? [...(existing?.recentChunks ?? []), ...msg.chunks].slice(-RECENT_CHUNKS_CAP)
-        : (existing?.recentChunks ?? [])
-      const { chunks: _drop, ...rest } = msg
-      return {
-        ...prev,
-        [msg.document_id]: {
-          ...rest,
-          // A paused event (e.g. rate_limited) may omit progress; keep the last known
-          // counts so the card still shows where it stopped (e.g. 128/1436).
-          ...carryProgress(msg, existing),
-          recentChunks,
-          seq: existing?.seq ?? ++seqRef.current,
-          lastAt: Date.now(),
-        },
+  const onMessage = useCallback(
+    (msg: QueueEvent) => {
+      const isNew = !seenRef.current.has(msg.document_id)
+      if (isNew) seenRef.current.add(msg.document_id)
+      setById((prev) => {
+        const existing = prev[msg.document_id]
+        const recentChunks = msg.chunks
+          ? [...(existing?.recentChunks ?? []), ...msg.chunks].slice(-RECENT_CHUNKS_CAP)
+          : (existing?.recentChunks ?? [])
+        const { chunks: _drop, ...rest } = msg
+        return {
+          ...prev,
+          [msg.document_id]: {
+            ...rest,
+            // A paused event (e.g. rate_limited) may omit progress; keep the last known
+            // counts so the card still shows where it stopped (e.g. 128/1436).
+            ...carryProgress(msg, existing),
+            recentChunks,
+            seq: existing?.seq ?? ++seqRef.current,
+          },
+        }
+      })
+      // Keep the paginated job history (useJobs) in step with the live socket: refresh when a
+      // job first appears (a fresh enqueue) or reaches a terminal state (final row + chunk count).
+      // The on-connect snapshot replays each recent doc once; React Query collapses that burst.
+      if (isNew || msg.status === 'done' || msg.status === 'failed') {
+        void queryClient.invalidateQueries({ queryKey: qk.jobs })
       }
-    })
-  }, [])
+    },
+    [queryClient],
+  )
 
   const { status } = useChannel<QueueEvent>('ingestion-queue', onMessage)
 
-  // Re-evaluate stall as wall-clock advances, even when no events arrive.
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 5000)
-    return () => clearInterval(id)
-  }, [])
-
-  const now = Date.now()
-  const items: QueueItem[] = Object.values(byId)
-    .map(({ lastAt, ...it }) => ({
-      ...it,
-      stalled:
-        it.status === 'processing' &&
-        (it.phase === 'embedding' || it.phase === 'storing') &&
-        now - lastAt > STALL_MS,
-    }))
-    // Still-in-queue (processing or rate-limited/retrying) first, then most-recent.
-    .sort((a, b) => {
-      const active = (s: string) => (s === 'processing' || s === 'rate_limited' ? 0 : 1)
-      return active(a.status) - active(b.status) || b.seq - a.seq
-    })
+  // Still-in-queue (processing or rate-limited/retrying) first, then most-recent.
+  const items: QueueItem[] = Object.values(byId).sort((a, b) => {
+    const active = (s: string) => (s === 'processing' || s === 'rate_limited' ? 0 : 1)
+    return active(a.status) - active(b.status) || b.seq - a.seq
+  })
   return { items, status }
 }
