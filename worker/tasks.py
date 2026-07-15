@@ -13,7 +13,6 @@ import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
@@ -23,7 +22,6 @@ from sqlalchemy import select, update
 from api.constants import EMBEDDING_PAUSE_KEY
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from api.services import realtime
-from api.sql_compat import dialect_insert
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import (
@@ -241,92 +239,6 @@ def _apply_effective_tags(
 
 
 # ---------------------------------------------------------------------------
-# AI auto-tagging at ingestion (D6 follow-up)
-# ---------------------------------------------------------------------------
-
-
-def _normalize_tag(name: str) -> str:
-    """Lowercase, trim, and collapse whitespace — matches the API's tag rule."""
-    return " ".join(name.strip().lower().split())
-
-
-def _get_or_create_tag(session: Any, workspace_id: str, name: str) -> str:
-    """Return the id of the workspace tag named ``name``, creating it if absent."""
-    session.execute(
-        dialect_insert(session.bind, tags)
-        .values(
-            id=f"tag_{uuid4().hex[:12]}",
-            workspace_id=workspace_id,
-            name=name,
-            color=None,
-            created_at=_now(),
-        )
-        .on_conflict_do_nothing()
-    )
-    row = session.execute(
-        select(tags.c.id).where(tags.c.workspace_id == workspace_id, tags.c.name == name)
-    ).fetchone()
-    return str(row[0])
-
-
-def _auto_tag_document(
-    session_factory: Any,
-    collection_id: str,
-    document_id: str,
-    chunks: list[Chunk],
-    config: Any,
-) -> None:
-    """Auto-apply high-confidence AI tags to a freshly ingested document.
-
-    Runs the configured suggester over the document text and assigns every
-    suggestion scoring at least ``tagging.suggester.min_confidence``, creating
-    workspace tags by name as needed. Best-effort: any suggester/LLM failure is
-    logged and never fails ingestion. Called before effective-tag folding so the
-    new tags also reach chunk metadata (and thus tag-filtered search).
-    """
-    tagging = config.tagging
-    if not getattr(tagging, "auto_tag_on_ingest", False):
-        return
-    text = "\n".join(c.text for c in chunks).strip()
-    if not text:
-        return
-    # Don't re-suggest tags the document already has (own or inherited).
-    with session_factory() as session:
-        existing = _effective_document_tags(session, collection_id, document_id)
-    try:
-        from api.adapters.tagging import get_tag_suggester
-
-        suggestions = get_tag_suggester(tagging).suggest(text, existing)
-    except Exception as exc:
-        logger.warning("auto-tag failed", document_id=document_id, error=str(exc))
-        return
-
-    keep = [s for s in suggestions if s.confidence >= tagging.suggester.min_confidence]
-    if not keep:
-        return
-    with session_factory() as session:
-        ws_row = session.execute(
-            select(collections.c.workspace_id).where(collections.c.id == collection_id)
-        ).fetchone()
-        if not ws_row:
-            return
-        applied: list[str] = []
-        for suggestion in keep:
-            name = _normalize_tag(suggestion.name)
-            if not name:
-                continue
-            tag_id = _get_or_create_tag(session, ws_row[0], name)
-            session.execute(
-                dialect_insert(session.bind, document_tags)
-                .values(document_id=document_id, tag_id=tag_id)
-                .on_conflict_do_nothing()
-            )
-            applied.append(name)
-        session.commit()
-    logger.info("auto-tagged document", document_id=document_id, tags=applied)
-
-
-# ---------------------------------------------------------------------------
 # Pipeline core (dependency-injected so it is unit-testable without infra)
 # ---------------------------------------------------------------------------
 
@@ -424,7 +336,7 @@ def _embed_and_store(
     re-parse yield the same ids, so anything present was embedded by a prior,
     interrupted run) — unless the embedding model changed, in which case the
     stored vectors are stale and all chunks are re-embedded (the per-batch upsert
-    overwrites them by id). Auto-tagging runs once, on a fresh (non-resumed) run.
+    overwrites them by id).
     """
     # Resume set: chunks already embedded with the CURRENT model. Only the rest are
     # (re-)embedded, so an interrupted run continues where it left off and a model
@@ -436,8 +348,6 @@ def _embed_and_store(
     )
 
     _apply_effective_tags(session_factory, collection_id, document_id, chunks)
-    if not existing_ids:  # fresh run only — auto-tagging is doc-level/expensive
-        _auto_tag_document(session_factory, collection_id, document_id, chunks, config)
 
     pending = [c for c in chunks if c.id not in existing_ids]
     total = len(chunks)

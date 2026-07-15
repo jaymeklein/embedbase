@@ -63,7 +63,6 @@ SECRET_PATHS: tuple[tuple[str, ...], ...] = (
     ("embedding", "api_key"),
     ("vector_store", "password"),
     ("reranker", "api_key"),
-    ("tagging", "suggester", "api_key"),
 )
 SECRET_MASK = "__SECRET_SET__"
 
@@ -344,16 +343,15 @@ def get_accelerator_status() -> dict[str, Any]:
 
 
 def list_ollama_models(base_url: str | None = None) -> list[str]:
-    """List models installed on the Ollama server for the config UI's model picker.
+    """List models installed on the Ollama server for the config UI's model pickers.
 
-    Uses ``base_url`` when given (the value the user is editing), else the live
-    config's suggester base URL. Raises 502 if Ollama cannot be reached.
+    Uses ``base_url`` when given (the value the user is editing); blank falls back to
+    Ollama's default host. Raises 502 if Ollama cannot be reached.
     """
-    from api.adapters.tagging.llm import list_ollama_models as _list
+    from api.adapters.llm_chat import list_ollama_models as _list
 
-    resolved = base_url or _require_config().tagging.suggester.base_url
     try:
-        return _list(resolved)
+        return _list(base_url)
     except Exception as exc:  # unreachable server / bad response
         raise HTTPException(502, f"Could not reach Ollama: {exc}") from exc
 

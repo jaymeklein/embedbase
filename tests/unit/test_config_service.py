@@ -72,27 +72,6 @@ def test_get_masked_config_blanks_unset_vector_store_password():
     assert data["vector_store"]["password"] == ""  # unset -> blank
 
 
-def test_get_masked_config_masks_tagging_suggester_api_key():
-    from api.models.config import TaggingConfig, TagSuggesterConfig
-
-    dependencies.set_app_config(
-        AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(api_key="or-secret")))
-    )
-    data = cs.get_masked_config()
-    assert data["tagging"]["suggester"]["api_key"] == cs.SECRET_MASK
-    assert data["tagging"]["suggester"]["provider"] == "ollama"  # non-secret intact
-
-
-def test_merge_secrets_preserves_masked_tagging_api_key():
-    from api.models.config import TaggingConfig, TagSuggesterConfig
-
-    current = AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(api_key="real-or-key")))
-    incoming = current.model_dump()
-    incoming["tagging"]["suggester"]["api_key"] = cs.SECRET_MASK
-    merged = cs._merge_secrets(incoming, current)
-    assert merged["tagging"]["suggester"]["api_key"] == "real-or-key"
-
-
 def test_get_masked_config_masks_reranker_api_key():
     dependencies.set_app_config(
         AppConfig(
@@ -304,26 +283,23 @@ def test_apply_config_preserves_masked_secret(tmp_path, monkeypatch):
 
 def test_list_ollama_models_uses_explicit_base_url(monkeypatch):
     monkeypatch.setattr(
-        "api.adapters.tagging.llm.list_ollama_models", lambda url: [f"model@{url}"]
+        "api.adapters.llm_chat.list_ollama_models", lambda url: [f"model@{url}"]
     )
     assert cs.list_ollama_models("http://x:11434") == ["model@http://x:11434"]
 
 
-def test_list_ollama_models_falls_back_to_configured_base_url(monkeypatch):
-    from api.models.config import TaggingConfig, TagSuggesterConfig
-
-    dependencies.set_app_config(
-        AppConfig(tagging=TaggingConfig(suggester=TagSuggesterConfig(base_url="http://cfg:11434")))
-    )
-    monkeypatch.setattr("api.adapters.tagging.llm.list_ollama_models", lambda url: [str(url)])
-    assert cs.list_ollama_models() == ["http://cfg:11434"]
+def test_list_ollama_models_without_base_url_defers_to_the_adapter(monkeypatch):
+    # No base URL resolves to Ollama's default host inside the adapter, so the
+    # wrapper forwards None rather than reading one out of the live config.
+    monkeypatch.setattr("api.adapters.llm_chat.list_ollama_models", lambda url: [repr(url)])
+    assert cs.list_ollama_models() == ["None"]
 
 
 def test_list_ollama_models_unreachable_raises_502(monkeypatch):
     def _boom(_url):
         raise RuntimeError("connection refused")
 
-    monkeypatch.setattr("api.adapters.tagging.llm.list_ollama_models", _boom)
+    monkeypatch.setattr("api.adapters.llm_chat.list_ollama_models", _boom)
     with pytest.raises(HTTPException) as exc:
         cs.list_ollama_models("http://x:11434")
     assert exc.value.status_code == 502

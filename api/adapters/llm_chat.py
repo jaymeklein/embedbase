@@ -1,4 +1,4 @@
-"""Shared chat-completion transport for LLM-backed adapters (tag suggester, reranker).
+"""Shared chat-completion transport for LLM-backed adapters (the reranker).
 
 One place for the three chat wire-formats so a new LLM-driven stage reuses the transport
 instead of copying it:
@@ -12,8 +12,11 @@ Each provider contributes two small pure functions — one that **builds** its r
 **parses** its reply — paired in ``_PROVIDERS``. ``chat_complete`` stays provider-agnostic: it looks
 the pair up, builds, POSTs **once**, and parses. Request-building, the HTTP call, and reply-parsing
 are therefore separated instead of interleaved, and a new backend is a new pair plus one registry
-entry — the transport itself never changes. (That is also why giving the tag suggester a Gemini
-backend later is a config/UI change, not new transport code.)
+entry — the transport itself never changes. (That is also why giving an LLM-backed stage another
+provider later is a config/UI change, not new transport code.)
+
+Also home to :func:`list_ollama_models` — the ``/api/tags`` probe behind the config UI's model
+pickers — which shares this module's ``OLLAMA_DEFAULT_URL`` with the chat path.
 """
 
 from __future__ import annotations
@@ -174,8 +177,8 @@ def chat_complete(
         base_url: Provider base URL; ``None`` uses the provider default.
         api_key: Bearer / API key (ignored by ``ollama``).
         prompt: The user message.
-        temperature: Sent only when not ``None`` — so existing callers that omit it keep the
-            provider's own default (e.g. the tag suggester), while the reranker can pin ``0``.
+        temperature: Sent only when not ``None`` — so a caller that omits it keeps the
+            provider's own default, while the reranker can pin ``0``.
         response_schema: When set, request provider-native **structured output** — the reply is
             constrained to JSON matching this JSON Schema. Maps to ``response_format`` (OpenAI),
             ``format`` (Ollama), and ``responseSchema`` + ``responseMimeType`` (Gemini), so a caller
@@ -197,3 +200,19 @@ def chat_complete(
     call = _Call(model, base_url, api_key or "", prompt, temperature, response_schema)
     request = build(call)
     return parse(post_json(request.url, request.payload, request.headers, timeout))
+
+
+# --- ollama model listing ----------------------------------------------------------------------
+def list_ollama_models(base_url: str | None) -> list[str]:
+    """Return the names of models installed on the Ollama server, sorted.
+
+    Queries Ollama's ``/api/tags`` endpoint (the default host when ``base_url``
+    is blank). Raises ``httpx.HTTPError`` if the server is unreachable.
+    """
+    import httpx
+
+    url = f"{base_url or OLLAMA_DEFAULT_URL}/api/tags"
+    response = httpx.get(url, timeout=10.0)
+    response.raise_for_status()
+    models = response.json().get("models", [])
+    return sorted(str(m["name"]) for m in models if isinstance(m, dict) and "name" in m)
