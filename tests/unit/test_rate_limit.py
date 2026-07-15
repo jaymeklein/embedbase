@@ -10,22 +10,24 @@ import time
 
 import httpx
 import pytest
-from sqlalchemy import create_engine, insert
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from api.adapters.embeddings.errors import RateLimitError, raise_for_status
 from api.tables import job_records, metadata
 from tests.unit.fakes import FakeRedis
-from worker import tasks
+from worker import config_reload, tasks
 from worker.tasks import (
+    _embedding_paused_seconds,
     _is_rate_limit,
-    _mark_retry_pending,
-    _pending_job_ids,
+    _pause_embedding,
     _retry_delay_seconds,
-    _retry_pending_key,
     _RpmLimiter,
+    clear_embedding_pause,
+    requeue_orphaned_pending,
     requeue_rate_limited,
+    requeue_stuck_processing,
 )
 
 # --------------------------------------------------------------------------- #
@@ -113,28 +115,19 @@ def test_retry_delay_capped():
 # --------------------------------------------------------------------------- #
 
 
-def test_retry_pending_marker_roundtrip(monkeypatch):
-    fake = FakeRedis()
-    monkeypatch.setattr(tasks, "_redis", lambda: fake)
-    assert _pending_job_ids(fake, ["job1"]) == set()
-    _mark_retry_pending("job1", 120)
-    assert _pending_job_ids(fake, ["job1"]) == {"job1"}  # marker read back via the batch MGET
-    assert fake.ttls[_retry_pending_key("job1")] == 150  # delay + 30s buffer
-
-
 def _db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'rl.db'}", future=True, poolclass=NullPool)
     metadata.create_all(engine)
     return sessionmaker(engine, class_=Session, expire_on_commit=False)
 
 
-def _seed_rate_limited(factory, job_id="job_rl", doc="doc_rl", col="col_rl"):
+def _seed_job(factory, job_id="job_rl", doc="doc_rl", col="col_rl", status="rate_limited", updated="t"):
     with factory() as s:
         s.execute(
             insert(job_records).values(
                 job_id=job_id, document_id=doc, collection_id=col,
-                filename="a.pdf", file_type=".pdf", status="rate_limited",
-                created_at="t", updated_at="t",
+                filename="a.pdf", file_type=".pdf", status=status,
+                created_at="t", updated_at=updated,
             )
         )
         s.commit()
@@ -142,11 +135,9 @@ def _seed_rate_limited(factory, job_id="job_rl", doc="doc_rl", col="col_rl"):
 
 def test_requeue_reenqueues_rate_limited_job(tmp_path, monkeypatch):
     factory = _db(tmp_path)
-    _seed_rate_limited(factory)
+    _seed_job(factory)
     calls: list = []
-    fake = FakeRedis()  # no pending marker → the job is treated as orphaned/resumable
     monkeypatch.setattr(tasks, "SessionLocal", factory)
-    monkeypatch.setattr(tasks, "_redis", lambda: fake)
     monkeypatch.setattr(tasks.ingest_document, "delay", lambda *a: calls.append(a))
 
     assert requeue_rate_limited() == 1
@@ -154,19 +145,77 @@ def test_requeue_reenqueues_rate_limited_job(tmp_path, monkeypatch):
     assert calls == [("job_rl", "col_rl/doc_rl.pdf", "col_rl", "doc_rl", ".pdf")]
 
 
-def test_requeue_respects_pending_marker(tmp_path, monkeypatch):
+def test_requeue_stuck_processing_resumes_only_stale_heartbeat(tmp_path, monkeypatch):
+    """A crashed/restarted worker leaves a job 'processing' with no heartbeat — resume it
+    automatically. A job with a LIVE heartbeat is actively being worked and must be left alone."""
     factory = _db(tmp_path)
-    _seed_rate_limited(factory)
+    _seed_job(factory, "job_live", "doc_live", "col_l", status="processing")
+    _seed_job(factory, "job_stale", "doc_stale", "col_s", status="processing")
     calls: list = []
     fake = FakeRedis()
-    fake.set(_retry_pending_key("job_rl"), "1")  # its countdown retry is still scheduled
+    fake.set(tasks._heartbeat_key("job_live"), "1")  # live → actively progressing
     monkeypatch.setattr(tasks, "SessionLocal", factory)
     monkeypatch.setattr(tasks, "_redis", lambda: fake)
-    monkeypatch.setattr(tasks.ingest_document, "delay", lambda *a: calls.append(a))
+    monkeypatch.setattr(tasks.ingest_document, "delay", lambda *a: calls.append(a[0]))
 
-    assert requeue_rate_limited() == 0  # default respect_pending → skipped (not orphaned)
-    assert requeue_rate_limited(respect_pending=False) == 1  # config-change resume ignores it
-    assert len(calls) == 1
+    assert requeue_stuck_processing() == 1  # only the heartbeat-less one
+    assert calls == ["job_stale"]
+
+
+def test_requeue_rotates_batch_via_updated_at_bump(tmp_path, monkeypatch):
+    """A re-enqueue bumps updated_at so the oldest-first sweep rotates to a DIFFERENT batch next
+    tick — instead of re-piling the same not-yet-claimed rows onto the broker while the worker is
+    busy (the amplification that would partly reintroduce the storm)."""
+    factory = _db(tmp_path)
+    _seed_job(factory, "job_old", "doc_o", "col_o", updated="2020-01-01")
+    _seed_job(factory, "job_new", "doc_n", "col_n", updated="2020-06-01")
+    calls: list = []
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "_now", lambda: "2020-12-31")  # bump target → newest
+    monkeypatch.setattr(tasks.ingest_document, "delay", lambda *a: calls.append(a[0]))
+
+    assert requeue_rate_limited(limit=1) == 1  # oldest first
+    assert calls == ["job_old"]  # and its updated_at is now 2020-12-31 (newest)
+    assert requeue_rate_limited(limit=1) == 1  # next sweep picks the other one, not job_old again
+    assert calls == ["job_old", "job_new"]
+
+
+def test_requeue_orphaned_pending_reenqueues(tmp_path, monkeypatch):
+    """A pending job whose task was lost (broker purge / worker restart) has no other resume path,
+    so the beat re-enqueues it — a queued file is never silently dropped."""
+    factory = _db(tmp_path)
+    _seed_job(factory, "job_p", "doc_p", "col_p", status="pending")
+    calls: list = []
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks.ingest_document, "delay", lambda *a: calls.append(a[0]))
+
+    assert requeue_orphaned_pending() == 1
+    assert calls == ["job_p"]
+
+
+def test_ingest_document_rate_limit_pauses_and_does_not_strand(tmp_path, monkeypatch):
+    """The rate-limit path must pause + mark 'rate_limited' + return cleanly — NOT self.retry, whose
+    max_retries cap raises MaxRetriesExceeded and would strand the doc. Regression guard for that."""
+    factory = _db(tmp_path)
+    _seed_job(factory, "job_x", "doc_x", "col_x", status="processing")
+    fake = FakeRedis()
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+    monkeypatch.setattr(tasks, "_redis", lambda: fake)
+
+    def _raise_rate_limit(*_a):
+        raise RateLimitError('{"retryDelay": "40s"}')
+
+    monkeypatch.setattr(tasks, "_run_ingestion", _raise_rate_limit)
+
+    # Runs the real task body eagerly; a strand would surface as MaxRetriesExceeded out of .get().
+    result = tasks.ingest_document.apply(args=["job_x", "k", "col_x", "doc_x", ".pdf"]).get()
+    assert result is None  # acked cleanly, no exception escaped
+    assert _embedding_paused_seconds() == 42  # global backoff armed (retryDelay 40 + 2s past-edge)
+    with factory() as s:
+        row = s.execute(
+            select(job_records.c.status).where(job_records.c.job_id == "job_x")
+        ).fetchone()
+    assert row.status == "rate_limited"  # left resume-able for the beat sweep
 
 
 # --------------------------------------------------------------------------- #
@@ -211,3 +260,51 @@ def test_gemini_adapter_raises_rate_limit_on_429(monkeypatch):
     monkeypatch.setattr(httpx, "post", lambda *a, **k: _http_response(429))
     with pytest.raises(RateLimitError):
         GeminiAdapter("model", "key").embed_batch(["x"])
+
+
+# --------------------------------------------------------------------------- #
+# Global embedding-quota circuit breaker (pause) — the storm guard             #
+# --------------------------------------------------------------------------- #
+
+
+def test_embedding_pause_roundtrip(monkeypatch):
+    fake = FakeRedis()
+    monkeypatch.setattr(tasks, "_redis", lambda: fake)
+    assert _embedding_paused_seconds() == 0  # not paused → 0 (fail-open default too)
+    _pause_embedding(120)
+    assert _embedding_paused_seconds() == 120  # reads back the pause key's TTL
+    assert fake.ttls[tasks._PAUSE_KEY] == 120
+    clear_embedding_pause()
+    assert _embedding_paused_seconds() == 0  # lifted
+
+
+def test_embedding_paused_seconds_fails_open_on_redis_error(monkeypatch):
+    class _Boom:
+        def ttl(self, _key):
+            raise RuntimeError("redis down")
+
+    monkeypatch.setattr(tasks, "_redis", lambda: _Boom())
+    # A redis blip must not wedge ingestion shut — read as not-paused so work still flows.
+    assert _embedding_paused_seconds() == 0
+
+
+def test_beat_sweep_skips_while_paused(monkeypatch):
+    """The 5-min sweep must not re-enqueue jobs into a paused worker (that would just make them
+    re-defer, churning the queue). While paused it returns 0 without touching requeue."""
+    called: list = []
+    monkeypatch.setattr(tasks, "_embedding_paused_seconds", lambda: 42)
+    monkeypatch.setattr(tasks, "requeue_rate_limited", lambda *a, **k: called.append(1) or 99)
+    assert tasks.retry_rate_limited_ingests.apply().get() == 0
+    assert called == []  # requeue never invoked while paused
+
+
+def test_config_resume_lifts_pause_and_requeues(monkeypatch):
+    """A config change (new key / raised limit) resets the quota: it must LIFT the pause and
+    re-enqueue the rate-limited jobs so they resume on the fresh quota."""
+    cleared: list = []
+    requeued: list = []
+    monkeypatch.setattr(tasks, "clear_embedding_pause", lambda: cleared.append(1))
+    monkeypatch.setattr(tasks, "requeue_rate_limited", lambda *a, **k: requeued.append((a, k)) or 0)
+    config_reload._resume_rate_limited()
+    assert cleared == [1]  # pause lifted first
+    assert requeued == [((), {})]  # then a plain re-enqueue of the rate-limited backlog

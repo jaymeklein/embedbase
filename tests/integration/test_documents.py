@@ -121,9 +121,9 @@ async def test_list_documents_shows_uploaded(client):
             f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH
         )
     ).json()
-    assert len(docs) == 1
-    assert docs[0]["document_id"] == up["document_id"]
-    assert docs[0]["status"] == "pending"
+    assert docs["total"] == 1
+    assert docs["items"][0]["document_id"] == up["document_id"]
+    assert docs["items"][0]["status"] == "pending"
 
 
 async def test_list_documents_reports_indexed_flag(client):
@@ -142,9 +142,32 @@ async def test_list_documents_reports_indexed_flag(client):
         await s.execute(update(doc_t).where(doc_t.c.id == a).values(chunk_count=1))
         await s.commit()
 
-    by_id = {d["document_id"]: d for d in (await client.get(base, headers=AUTH)).json()}
+    by_id = {d["document_id"]: d for d in (await client.get(base, headers=AUTH)).json()["items"]}
     assert by_id[a]["indexed"] is True
     assert by_id[b]["indexed"] is False
+
+
+async def test_list_documents_endpoint_binds_query_params(client):
+    """The listing endpoint builds its ``DocumentListQuery`` straight from the query string:
+    pagination, a filename filter, and the limit bounds all go through FastAPI's model binding —
+    the refactor's one real risk surface, since every other test calls the service directly."""
+    ws_id, col_id = await _setup(client)
+    base = f"/workspaces/{ws_id}/collections/{col_id}/documents"
+    for name in ("alpha.txt", "beta.txt", "gamma.txt"):
+        await client.post(base, files=_txt(name), headers=AUTH)
+
+    # limit/offset coerce from the query string and page the results: 2 of 3.
+    page = (await client.get(f"{base}?limit=2&offset=0", headers=AUTH)).json()
+    assert page["total"] == 3 and len(page["items"]) == 2
+    assert (page["limit"], page["offset"]) == (2, 0)
+
+    # a filename substring filter binds and applies.
+    filtered = (await client.get(f"{base}?filename=alpha", headers=AUTH)).json()
+    assert filtered["total"] == 1 and filtered["items"][0]["filename"] == "alpha.txt"
+
+    # the Field(ge=1, le=200) bounds survive the model refactor -> 422, never a silent clamp.
+    assert (await client.get(f"{base}?limit=0", headers=AUTH)).status_code == 422
+    assert (await client.get(f"{base}?limit=201", headers=AUTH)).status_code == 422
 
 
 async def test_document_status_returns_job(client):
@@ -198,7 +221,7 @@ async def test_delete_document(client):
             f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH
         )
     ).json()
-    assert after == []
+    assert after["total"] == 0 and after["items"] == []
 
 
 async def test_delete_unknown_document_returns_404(client):
@@ -207,6 +230,69 @@ async def test_delete_unknown_document_returns_404(client):
         f"/workspaces/{ws_id}/collections/{col_id}/documents/doc_nope", headers=AUTH
     )
     assert r.status_code == 404
+
+
+# ── reprocess ─────────────────────────────────────────────────────────────────
+
+async def test_reprocess_document_reenqueues(client):
+    from sqlalchemy import update
+
+    from api.tables import job_records as job_t
+
+    ws_id, col_id = await _setup(client)
+    up = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()
+    doc_id = up["document_id"]
+    # Simulate the upload's ingest having failed (the real reprocess case; a still-pending job no-ops).
+    async with client.session_factory() as s:
+        await s.execute(update(job_t).where(job_t.c.document_id == doc_id).values(status="failed"))
+        await s.commit()
+
+    r = await client.post(f"/documents/{doc_id}/reprocess", headers=AUTH)
+    assert r.status_code == 202
+    body = r.json()
+    assert body["status"] == "pending"
+    assert body["document_id"] == doc_id
+    assert body["job_id"] != up["job_id"]  # a fresh retry attempt, not the original failed job
+
+    docs = (
+        await client.get(f"/workspaces/{ws_id}/collections/{col_id}/documents", headers=AUTH)
+    ).json()
+    assert docs["total"] == 1  # still one document; its latest job is the pending retry
+    assert docs["items"][0]["status"] == "pending"
+
+
+async def test_reprocess_in_flight_document_is_noop(client):
+    """Reprocessing a document whose latest attempt is still pending/processing returns that job
+    instead of minting a duplicate — the idempotency guard against double-clicks."""
+    ws_id, col_id = await _setup(client)
+    up = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()  # its job is 'pending' straight after upload
+
+    body = (await client.post(f"/documents/{up['document_id']}/reprocess", headers=AUTH)).json()
+    assert body["job_id"] == up["job_id"]  # the in-flight job, not a fresh one
+    assert body["status"] == "pending"
+
+
+async def test_reprocess_unknown_document_returns_404(client):
+    r = await client.post("/documents/doc_nope/reprocess", headers=AUTH)
+    assert r.status_code == 404
+
+
+async def test_reprocess_requires_api_key(client):
+    ws_id, col_id = await _setup(client)
+    doc_id = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()["document_id"]
+    assert (await client.post(f"/documents/{doc_id}/reprocess")).status_code == 401
 
 
 # ── collection-scoped keys ────────────────────────────────────────────────────

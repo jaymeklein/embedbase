@@ -84,7 +84,7 @@ services:
       - DOCLING_ARTIFACTS_PATH=${DOCLING_ARTIFACTS_PATH:-}
     # -B runs Celery's embedded beat in-process (fires the temporary-document purge
     # sweep). Safe with this single --concurrency=1 worker; see worker/celery_app.py.
-    command: watchfiles "celery -A worker.celery_app worker -B --loglevel=info --concurrency=1" /app/worker
+    command: watchfiles "celery -A worker.celery_app worker -B --loglevel=info --concurrency=1" /app/worker /app/api
     volumes:
       - embedbase_data:/data
       - ./data/store:/store

@@ -15,7 +15,7 @@ from uuid import uuid4
 import structlog
 from fastapi import HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import and_, delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.parsers import DOCLING_EXTENSIONS, supported_extensions
@@ -24,8 +24,11 @@ from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.dependencies import get_app_config
 from api.models.config import ParserConfig, StorageConfig
+from api.models.document import DocumentListQuery
 from api.services import tasks as task_producer
 from api.services.auth import Principal
+from api.services.document_filters import build_specs, latest_status_subquery
+from api.services.filters import to_conditions
 from api.services.storage import get_storage
 
 logger = structlog.get_logger()
@@ -127,6 +130,32 @@ async def _persist_and_enqueue(
             expires_at=expires_at, created_at=now, updated_at=now,
         )
     )
+    await _create_pending_job_and_enqueue(
+        db, col_id=col_id, doc_id=doc_id, job_id=job_id,
+        filename=filename, ext=ext, file_path=file_path,
+    )
+    return {
+        "job_id": job_id, "document_id": doc_id, "collection_id": col_id,
+        "filename": filename, "file_type": ext, "file_size": size, "status": "pending",
+    }
+
+
+async def _create_pending_job_and_enqueue(
+    db: AsyncSession,
+    *,
+    col_id: str,
+    doc_id: str,
+    job_id: str,
+    filename: str,
+    ext: str,
+    file_path: str,
+) -> None:
+    """Insert a ``pending`` job row for ``doc_id`` and dispatch the ingest task, recording the
+    celery task id back onto the row. Shared by the initial upload (:func:`_persist_and_enqueue`)
+    and the reprocess-after-failure path (:func:`reprocess_document`). Commits the session, so any
+    caller's still-uncommitted document insert lands with it.
+    """
+    now = _now()
     await db.execute(
         insert(job_t).values(
             job_id=job_id, document_id=doc_id, collection_id=col_id, filename=filename,
@@ -134,7 +163,6 @@ async def _persist_and_enqueue(
         )
     )
     await db.commit()
-
     task_id = task_producer.enqueue_ingest(job_id, file_path, col_id, doc_id, ext)
     if task_id:
         await db.execute(
@@ -142,9 +170,52 @@ async def _persist_and_enqueue(
         )
         await db.commit()
 
+
+async def reprocess_document(db: AsyncSession, col_id: str, doc_id: str) -> dict:
+    """Re-enqueue a document's ingestion — the manual retry for a failed (or otherwise stuck) file.
+
+    A fresh ``pending`` job row is created (the prior failed attempt stays in the queue history) and
+    an ingest task dispatched; the resume-aware pipeline re-embeds from where a prior run stopped, or
+    from scratch. The document's stored bytes are reused — nothing is re-uploaded — so a file whose
+    bytes are genuinely gone simply fails again with a clear error rather than being lost.
+    """
+    row = (
+        await db.execute(
+            select(doc_t.c.filename, doc_t.c.file_type, doc_t.c.status).where(
+                doc_t.c.id == doc_id, doc_t.c.collection_id == col_id
+            )
+        )
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    if row.status == "deleting":
+        raise HTTPException(409, "Document is being deleted; cannot reprocess")
+    # Don't pile a duplicate onto a document that's already queued or running — that attempt will
+    # finish, or the beat sweep resumes it. Minting a second job_id here would defeat _claim_job's
+    # dedup (it keys on job_id) and, under a multi-process worker, embed the document twice. Return
+    # the in-flight job instead (idempotent against a double-click or a stale "failed" button).
+    latest = (
+        await db.execute(
+            select(job_t.c.job_id, job_t.c.status)
+            .where(job_t.c.document_id == doc_id)
+            .order_by(job_t.c.created_at.desc())
+            .limit(1)
+        )
+    ).fetchone()
+    if latest is not None and latest.status in ("pending", "processing", "rate_limited"):
+        return {
+            "job_id": latest.job_id, "document_id": doc_id, "collection_id": col_id,
+            "filename": row.filename, "file_type": row.file_type, "status": latest.status,
+        }
+    job_id = f"job_{uuid4().hex[:12]}"
+    await _create_pending_job_and_enqueue(
+        db, col_id=col_id, doc_id=doc_id, job_id=job_id,
+        filename=row.filename, ext=row.file_type,
+        file_path=document_key(col_id, doc_id, row.file_type),
+    )
     return {
         "job_id": job_id, "document_id": doc_id, "collection_id": col_id,
-        "filename": filename, "file_type": ext, "file_size": size, "status": "pending",
+        "filename": row.filename, "file_type": row.file_type, "status": "pending",
     }
 
 
@@ -220,64 +291,60 @@ async def ingest_local_path(
     )
 
 
-def _dedupe_by_document(mappings: Any) -> list[dict]:
-    """Keep one row per ``document_id`` — the first seen (latest job, per ordering)."""
-    seen: set[str] = set()
-    rows: list[dict] = []
-    for mapping in mappings:
-        row = dict(mapping)
-        if row["document_id"] in seen:
-            continue
-        seen.add(row["document_id"])
-        rows.append(row)
-    return rows
+async def list_documents(db: AsyncSession, col_id: str, query: DocumentListQuery) -> dict:
+    """Return one filtered, paginated page of active documents in ``col_id``.
 
-
-async def list_documents(
-    db: AsyncSession,
-    col_id: str,
-    tags: list[str] | None = None,
-) -> list[dict]:
-    """Return active documents in ``col_id`` with status, tags, and optional filter.
-
-    Args:
-        db: Active async database session.
-        col_id: Collection whose documents to list.
-        tags: Optional tag names; only documents carrying *all* of them are
-            returned (AND filter).
+    Each document appears once, carrying its *latest* job ``status`` (a scalar-subquery pick of
+    the most recent ``job_records`` row — a document accrues several as it re-ingests/retries),
+    its tags, and an ``indexed`` flag (true once chunks are stored). Newest-first. Pagination and
+    every (optional, AND-combined) filter come from ``query`` — see :class:`DocumentListQuery`.
 
     Returns:
-        One mapping per active document including its ``status``, ``tags``, and an
-        ``indexed`` bool (true once the document has stored/FTS-searchable chunks).
+        ``{"items": [...], "total": N, "limit": L, "offset": O}`` — ``total`` is the full match
+        count (for the pager); ``items`` is the requested page, each a mapping with ``status``,
+        ``tags``, and ``indexed``.
     """
-    from api.services.tags import attach_tags, matching_entity_ids
+    from api.services.tags import attach_tags
 
-    stmt = (
-        select(
-            doc_t.c.id.label("document_id"),
-            doc_t.c.filename,
-            doc_t.c.file_type,
-            doc_t.c.file_size,
-            doc_t.c.chunk_count,
-            doc_t.c.embedding_model,
-            doc_t.c.created_at,
-            doc_t.c.updated_at,
-            job_t.c.status,
+    latest_status = latest_status_subquery()
+
+    # Base scope (collection + not soft-deleted), then each active filter as a spec. A new filter
+    # is a new FilterSpec in api/services/document_filters.py, not another branch here.
+    conds = [
+        doc_t.c.collection_id == col_id,
+        doc_t.c.status.is_(None),
+        *await to_conditions(build_specs(query), db),
+    ]
+    where = and_(*conds)
+
+    total = (await db.execute(select(func.count()).select_from(doc_t).where(where))).scalar_one()
+    rows = (
+        await db.execute(
+            select(
+                doc_t.c.id.label("document_id"),
+                doc_t.c.filename,
+                doc_t.c.file_type,
+                doc_t.c.file_size,
+                doc_t.c.chunk_count,
+                doc_t.c.embedding_model,
+                doc_t.c.storage_backend,
+                doc_t.c.created_at,
+                doc_t.c.updated_at,
+                latest_status.label("status"),
+            )
+            .where(where)
+            # id as a stable tiebreaker so rows sharing a created_at can't shuffle across pages.
+            .order_by(doc_t.c.created_at.desc(), doc_t.c.id.desc())
+            .limit(query.limit)
+            .offset(query.offset)
         )
-        .select_from(doc_t.outerjoin(job_t, job_t.c.document_id == doc_t.c.id))
-        .where(doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
-        # A document can have several job rows (re-ingest, retries); order so the
-        # latest job is first, then keep one row per document below.
-        .order_by(doc_t.c.created_at.desc(), job_t.c.created_at.desc())
-    )
-    if tags:
-        stmt = stmt.where(doc_t.c.id.in_(await matching_entity_ids("document", tags, db)))
-    rows = _dedupe_by_document(r._mapping for r in (await db.execute(stmt)).fetchall())
-    rows = await attach_tags("document", rows, "document_id", db)
-    for row in rows:
+    ).fetchall()
+    items = [dict(r._mapping) for r in rows]
+    items = await attach_tags("document", items, "document_id", db)
+    for row in items:
         # FTS-indexed once chunks are stored; chunk_count is set when ingestion finishes.
         row["indexed"] = bool(row.get("chunk_count"))
-    return rows
+    return {"items": items, "total": total, "limit": query.limit, "offset": query.offset}
 
 
 async def get_document_status(

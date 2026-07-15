@@ -103,6 +103,14 @@ class FakeRedis:
         self.store.pop(key, None)
         self.ttls.pop(key, None)
 
+    def ttl(self, key: str) -> int:
+        """Redis TTL semantics: -2 if the key is absent, -1 if it has no expire, else seconds left.
+        The stored TTL is fixed (doesn't tick down) — fine for deterministic tests."""
+        if key not in self.store:
+            return -2
+        seconds = self.ttls.get(key)
+        return seconds if seconds is not None else -1
+
 
 class FakeUpload:
     """Minimal stand-in for starlette's UploadFile (``.size`` + async ``.read``)."""
