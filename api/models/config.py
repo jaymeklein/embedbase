@@ -142,27 +142,6 @@ class MCPConfig(BaseModel):
     max_results: int = 20
 
 
-class TagSuggesterConfig(BaseModel):
-    # Tag suggestion is LLM-only (no local/keyword backend); tagging is otherwise
-    # manual. "llm" is the only supported value.
-    backend: str = "llm"
-    provider: str = "ollama"  # llm provider: "ollama" | "openai_compat"
-    model: str = "llama3"
-    base_url: str | None = None
-    api_key: str | None = None
-    max_tags: int = 8
-    # Minimum confidence (0-1) a suggestion must meet to be auto-applied at
-    # ingestion. Suggestions below this are dropped.
-    min_confidence: float = 0.8
-
-
-class TaggingConfig(BaseModel):
-    suggester: TagSuggesterConfig = TagSuggesterConfig()
-    # When true, the worker runs the suggester over each document at ingestion
-    # and auto-applies tags scoring at least ``suggester.min_confidence``.
-    auto_tag_on_ingest: bool = False
-
-
 class LocalBackendConfig(BaseModel):
     """Files on the local/shared disk under ``settings.upload_dir`` (the default)."""
 
@@ -213,7 +192,6 @@ class AppConfig(BaseModel):
     parsers: ParserConfig = ParserConfig()
     search: SearchConfig = SearchConfig()
     mcp: MCPConfig = MCPConfig()
-    tagging: TaggingConfig = TaggingConfig()
     storage: StorageConfig = StorageConfig()
     # Upload size cap (app-domain, editable via the config page). Distinct from
     # deploy/bootstrap config, which stays in .env.
