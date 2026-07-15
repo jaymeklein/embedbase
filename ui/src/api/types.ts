@@ -95,17 +95,6 @@ export interface TagItems {
   documents: { id: string; filename: string; collection_id: string }[]
 }
 
-/** One AI-proposed tag with a confidence in `[0, 1]`. Ephemeral until applied. */
-export interface TagSuggestion {
-  name: string
-  confidence: number
-}
-
-/** `POST .../suggest-tags` — ephemeral candidates for review (nothing persisted). */
-export interface SuggestTagsResponse {
-  suggestions: TagSuggestion[]
-}
-
 // ── Graph ─────────────────────────────────────────────────────────────────────
 
 /** A graph node: a file (document) or a tag hub. Mirrors `api/schemas/graph.py`. */
@@ -393,22 +382,6 @@ export interface Health {
 
 // ── Config (mirrors api/models/config.py; secrets masked by GET) ─────────────
 
-/** The tag-suggester config — LLM-only (Ollama / OpenAI-compatible). */
-export interface TagSuggesterConfig {
-  backend: string // always "llm" (tag suggestion is LLM-only)
-  provider: string // "ollama" | "openai_compat"
-  model: string
-  base_url: string | null
-  api_key: string | null // masked on GET as SECRET_MASK; write-only
-  max_tags: number
-  min_confidence: number
-}
-
-export interface TaggingConfig {
-  suggester: TagSuggesterConfig
-  auto_tag_on_ingest: boolean
-}
-
 /** The embedding-model config. Changing provider/model changes vector dimensions. */
 export interface EmbeddingConfig {
   provider: string // "ollama" | "sentence_transformers" | "openai_compat" | "gemini"
@@ -491,7 +464,6 @@ export interface AppConfig {
   reranker: RerankerConfig
   search: SearchConfig
   parsers: ParserConfig
-  tagging: TaggingConfig
   storage: StorageConfig
   [section: string]: unknown
 }

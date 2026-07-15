@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Trash2 } from 'lucide-react'
 import {
-  useApplyTagsByName,
   useAssignDocumentTag,
-  useAutoTagAvailability,
   useCollection,
   useConfig,
   useCreateTag,
@@ -13,7 +11,6 @@ import {
   useDocuments,
   useIndexDocument,
   useReprocessDocument,
-  useSuggestDocumentTags,
   useUnassignDocumentTag,
   useUploadDocument,
   useWorkspace,
@@ -24,7 +21,6 @@ import {
   useIngestionProgress,
   type IngestionProgress,
 } from '../realtime/useIngestionProgress'
-import { SuggestTagsModal } from '../components/tags/SuggestTagsModal'
 import { TagChip } from '../components/tags/TagChip'
 import { collectTags, TagFilterBar } from '../components/tags/TagFilterBar'
 import { TagPicker } from '../components/tags/TagPicker'
@@ -85,12 +81,8 @@ export default function Documents() {
   const toast = useToast()
   const uploadMut = useUploadDocument(wsId, colId)
   const deleteMut = useDeleteDocument(wsId, colId)
-  // This page fetches config (below) for the storage-retention gate; auto-tag
-  // availability then reads it from the same cache without its own request.
-  const { available: autoTagAvailable } = useAutoTagAvailability(false)
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
-  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null)
   // Temporary-upload toggle. Only offered when retention is enabled (>0 hours);
   // with retention off the server ignores the flag, so a control would be a no-op.
   // Fetch config here (not lazily) so the toggle shows on a direct page load, not only
@@ -148,18 +140,7 @@ export default function Documents() {
       }
     }
     if (valid.length === 0) return
-    // No LLM tag provider on/reachable → confirm before ingesting untagged.
-    if (autoTagAvailable === false) {
-      setPendingFiles(valid)
-      return
-    }
     void uploadFiles(valid)
-  }
-
-  const confirmUntaggedUpload = () => {
-    const files = pendingFiles
-    setPendingFiles(null)
-    if (files) void uploadFiles(files)
   }
 
   const handleDelete = () => {
@@ -229,20 +210,6 @@ export default function Documents() {
       />
 
       <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} loading={isLoading} />
-
-      <ConfirmDialog
-        open={pendingFiles !== null}
-        title="No tag provider available"
-        message={`No LLM tag provider is on, so ${
-          pendingFiles?.length === 1 ? 'this file' : 'these files'
-        } won't get auto-generated tags. Ingest and index ${
-          pendingFiles?.length === 1 ? 'it' : 'them'
-        } anyway? You can tag manually or re-index later.`}
-        confirmLabel="Ingest anyway"
-        loading={uploading}
-        onConfirm={confirmUntaggedUpload}
-        onClose={() => setPendingFiles(null)}
-      />
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -387,29 +354,6 @@ function DocumentRow({
   const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
   const onErr = (e: Error) => toast.error(e.message)
 
-  const suggestMut = useSuggestDocumentTags(wsId, colId, doc.document_id)
-  const applyTags = useApplyTagsByName(wsId)
-  const [suggestOpen, setSuggestOpen] = useState(false)
-  const [applying, setApplying] = useState(false)
-
-  // Suggesting reads the document's indexed text, which only exists once ingestion
-  // finishes. While it's still being inserted there's nothing to tag, so block it.
-  const ingested = doc.status === 'done'
-  const openSuggest = () => {
-    setSuggestOpen(true)
-    suggestMut.mutate()
-  }
-  const handleApply = (names: string[]) => {
-    setApplying(true)
-    applyTags(names, (tagId) => assignMut.mutateAsync({ docId: doc.document_id, tagId }))
-      .then(() => {
-        toast.success(`Applied ${names.length} tag${names.length === 1 ? '' : 's'}.`)
-        setSuggestOpen(false)
-      })
-      .catch((e) => onErr(e as Error))
-      .finally(() => setApplying(false))
-  }
-
   const handleCreate = (name: string) =>
     createMut.mutate(
       { name },
@@ -550,30 +494,7 @@ function DocumentRow({
           }
           onCreate={handleCreate}
         />
-        <button
-          type="button"
-          onClick={openSuggest}
-          disabled={!ingested}
-          title={ingested ? 'Suggest tags from this document' : 'Available once ingestion finishes'}
-          className={`inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-xs transition-colors ${
-            ingested
-              ? 'border-border text-ink-muted hover:border-accent hover:text-ink'
-              : 'cursor-not-allowed border-border/60 text-ink-faint opacity-60'
-          }`}
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Suggest
-        </button>
       </div>
-      <SuggestTagsModal
-        open={suggestOpen}
-        onClose={() => setSuggestOpen(false)}
-        suggestions={suggestMut.data?.suggestions ?? []}
-        loading={suggestMut.isPending}
-        error={suggestMut.error?.message}
-        applying={applying}
-        onApply={handleApply}
-      />
       {failed && showError && (
         <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
       )}
