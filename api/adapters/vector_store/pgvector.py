@@ -478,24 +478,6 @@ class PgvectorAdapter:
             return {}
         return self._runner.run(self._bm25_scores(collection_id, query, chunk_ids))
 
-    async def _iter_document_chunks(
-        self, collection_id: str, document_id: str
-    ) -> list[tuple[str, str, str]]:
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, text FROM chunks "
-                "WHERE collection_id = $1 AND metadata->>'document_id' = $2",
-                collection_id, document_id,
-            )
-        return [(row["id"], document_id, row["text"] or "") for row in rows]
-
-    def iter_document_chunks(
-        self, collection_id: str, document_id: str
-    ) -> list[tuple[str, str, str]]:
-        """Return ``(chunk_id, document_id, text)`` triples for a document's chunks."""
-        return self._runner.run(self._iter_document_chunks(collection_id, document_id))
-
     async def _chunks_by_ids(
         self, collection_id: str, chunk_ids: list[str]
     ) -> list[SearchResult]:
@@ -550,18 +532,6 @@ class PgvectorAdapter:
         return self._runner.run(
             self._document_chunk_ids_at_model(collection_id, document_id, model)
         )
-
-    async def _collection_texts(self, collection_id: str) -> list[str]:
-        pool = await self._get_pool()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT text FROM chunks WHERE collection_id = $1", collection_id
-            )
-        return [row["text"] or "" for row in rows]
-
-    def collection_texts(self, collection_id: str) -> list[str]:
-        """Return the stored text of every chunk in a collection (tag suggestion)."""
-        return self._runner.run(self._collection_texts(collection_id))
 
     # -- tag sync -----------------------------------------------------------
 

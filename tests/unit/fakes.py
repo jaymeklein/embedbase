@@ -58,15 +58,6 @@ class FakeStore:
             if c.metadata.document_id == document_id and self._models.get(c.id) == model
         }
 
-    def iter_document_chunks(self, collection_id: str, document_id: str) -> list:
-        # (chunk_id, document_id, text) triples for the resume/skip check.
-        return [
-            (c.id, c.metadata.document_id, c.text)
-            for _cid, chunks, _vec in self.upserts
-            for c in chunks
-            if c.metadata.document_id == document_id
-        ]
-
 
 class FakeRedis:
     """In-memory Redis double for the worker paths — heartbeat/claim, BM25 counters, the
