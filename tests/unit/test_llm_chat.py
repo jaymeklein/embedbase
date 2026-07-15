@@ -2,13 +2,14 @@
 
 Covers the per-provider wire formats (Ollama / OpenAI-compatible / native Gemini), the
 opt-in ``temperature`` (omitted by default so existing callers keep their provider default),
-and the ``post_json`` HTTP primitive. No network — ``post_json`` / ``httpx.post`` are patched.
+the ``post_json`` HTTP primitive, and the ``list_ollama_models`` probe behind the config UI's
+model pickers. No network — ``post_json`` / ``httpx.*`` are patched.
 """
 
 import pytest
 
 from api.adapters import llm_chat
-from api.adapters.llm_chat import chat_complete, post_json
+from api.adapters.llm_chat import chat_complete, list_ollama_models, post_json
 
 
 def _capture_post(monkeypatch, reply):
@@ -141,3 +142,44 @@ def test_post_json_invokes_httpx(monkeypatch):
     assert captured["timeout"] == 30.0
     assert captured["json"] == {"a": 1}
     assert captured["headers"] == {"H": "v"}
+
+
+# ── list_ollama_models ──────────────────────────────────────────────────────────
+
+
+def test_list_ollama_models_sorts_names_and_uses_base_url(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "llama3.1"}, {"name": "gemma2"}, {"bad": 1}]}
+
+    def _get(url, **_kwargs):
+        captured["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", _get)
+    assert list_ollama_models("http://ollama:11434") == ["gemma2", "llama3.1"]
+    assert captured["url"] == "http://ollama:11434/api/tags"
+
+
+def test_list_ollama_models_blank_url_uses_default(monkeypatch):
+    class _Resp:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": []}
+
+    captured = {}
+
+    def _get(url, **_kwargs):
+        captured["url"] = url
+        return _Resp()
+
+    monkeypatch.setattr("httpx.get", _get)
+    assert list_ollama_models(None) == []
+    assert captured["url"] == f"{llm_chat.OLLAMA_DEFAULT_URL}/api/tags"

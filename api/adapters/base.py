@@ -2,7 +2,6 @@ from typing import Protocol, runtime_checkable
 
 from api.models.chunk import Chunk
 from api.models.search import SearchResult
-from api.models.tagging import TagSuggestion
 
 
 @runtime_checkable
@@ -43,15 +42,3 @@ class Reranker(Protocol):
     """
 
     def rerank(self, query: str, results: list[SearchResult]) -> list[SearchResult]: ...
-
-
-@runtime_checkable
-class TagSuggester(Protocol):
-    """Proposes topical tags for a body of text.
-
-    Implementations are swapped via ``config.yaml`` (``tagging.suggester``)
-    with no router changes. ``suggest`` is synchronous (like EmbeddingAdapter)
-    and is driven from a worker thread by the service layer.
-    """
-
-    def suggest(self, text: str, existing_tags: list[str]) -> list[TagSuggestion]: ...

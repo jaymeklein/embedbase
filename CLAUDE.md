@@ -59,9 +59,9 @@ Skipping step 1 or step 4 is the exact failure mode this document prevents.
 - **SRP** — one reason to change per unit. Parsing ≠ chunking ≠ embedding ≠ storing;
   keep them separate, mirroring `api/services/` and `api/adapters/`.
 - **OCP** — extend by adding, not by editing callers. A new embedding / reranker /
-  parser / tagging backend is **a new file under `api/adapters/<kind>/` plus one
-  branch in that kind's `get_*()` factory** — callers depend on the factory, never
-  on a concrete class.
+  parser backend is **a new file under `api/adapters/<kind>/` plus one branch in
+  that kind's `get_*()` factory** — callers depend on the factory, never on a
+  concrete class.
 - **LSP** — a new adapter honours its Protocol's full contract, including graceful
   degradation (below).
 - **ISP** — keep the Protocols in [`api/adapters/base.py`](api/adapters/base.py)
@@ -75,7 +75,7 @@ Skipping step 1 or step 4 is the exact failure mode this document prevents.
 
 ## Architecture conventions (so "follow the pattern" is concrete)
 
-- **Adapters** (`api/adapters/{embeddings,parsers,reranker,tagging,vector_store}`):
+- **Adapters** (`api/adapters/{embeddings,parsers,reranker,vector_store}`):
   a `runtime_checkable` `Protocol` in `base.py`, one provider per file, resolved by a
   `get_*(config)` factory that dispatches on `config.provider` with **lazy imports
   inside each branch** and **raises `ValueError` on an unknown provider**. A disabled
