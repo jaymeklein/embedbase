@@ -9,7 +9,7 @@
  */
 
 import { useQueryClient } from '@tanstack/react-query'
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { qk } from '../api/hooks'
 import { carryProgress } from './carryProgress'
 import { useChannel } from './useChannel'
@@ -17,6 +17,17 @@ import type { IngestPhase } from './useIngestionProgress'
 
 /** Cap on the live per-file chunk list — newest kept, older dropped. */
 const RECENT_CHUNKS_CAP = 50
+
+/**
+ * Debounce window for the jobs list + stats refresh (below). Two things fire a burst of
+ * qualifying events: every (re)connect replays the backend's last-hour snapshot, and a bulk
+ * ingest settles many documents in quick succession. Invalidating per event would refetch the
+ * whole (large) job list + stats once per event; under a flaky socket those stack faster than
+ * they resolve and exhaust the browser's connection pool (net::ERR_INSUFFICIENT_RESOURCES).
+ * Coalescing the burst into a single refetch after a brief quiet window keeps the list live
+ * (sub-second) while the 5s stats poll (useJobStats) keeps the header counts current meanwhile.
+ */
+const REFRESH_DEBOUNCE_MS = 400
 
 export interface QueueChunk {
   index: number
@@ -55,6 +66,19 @@ export function useIngestionQueue(): { items: QueueItem[]; status: string } {
   const seenRef = useRef<Set<string>>(new Set())
   const queryClient = useQueryClient()
 
+  // Coalesce a burst of settle/snapshot events into one list+stats refetch (see
+  // REFRESH_DEBOUNCE_MS). Each qualifying event resets the timer, so the refetch runs once the
+  // burst goes quiet rather than once per event.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout>>()
+  const scheduleJobsRefresh = useCallback(() => {
+    clearTimeout(refreshTimer.current)
+    refreshTimer.current = setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: qk.jobs })
+    }, REFRESH_DEBOUNCE_MS)
+  }, [queryClient])
+  // Drop a pending refresh on unmount so it can't fire (and refetch) after teardown.
+  useEffect(() => () => clearTimeout(refreshTimer.current), [])
+
   const onMessage = useCallback(
     (msg: QueueEvent) => {
       const isNew = !seenRef.current.has(msg.document_id)
@@ -79,12 +103,13 @@ export function useIngestionQueue(): { items: QueueItem[]; status: string } {
       })
       // Keep the paginated job history (useJobs) in step with the live socket: refresh when a
       // job first appears (a fresh enqueue) or reaches a terminal state (final row + chunk count).
-      // The on-connect snapshot replays each recent doc once; React Query collapses that burst.
+      // Debounced (scheduleJobsRefresh) so the on-connect snapshot replay and bulk-settle bursts
+      // collapse into a single refetch instead of one per event.
       if (isNew || msg.status === 'done' || msg.status === 'failed') {
-        void queryClient.invalidateQueries({ queryKey: qk.jobs })
+        scheduleJobsRefresh()
       }
     },
-    [queryClient],
+    [scheduleJobsRefresh],
   )
 
   const { status } = useChannel<QueueEvent>('ingestion-queue', onMessage)
