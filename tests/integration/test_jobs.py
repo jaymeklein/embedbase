@@ -101,3 +101,58 @@ async def test_jobs_stats_reports_counts_and_pause(client):
 
 async def test_jobs_stats_requires_api_key(client):
     assert (await client.get("/ingestion/jobs/stats")).status_code == 401
+
+
+# ── bulk retry (POST /ingestion/jobs/retry-failed) ──────────────────────────────
+
+async def _mark_failed(client, doc_id):
+    """Force a document's job to 'failed' (uploads start pending), the real retry precondition."""
+    from sqlalchemy import update
+
+    from api.tables import job_records as job_t
+
+    async with client.session_factory() as s:
+        await s.execute(update(job_t).where(job_t.c.document_id == doc_id).values(status="failed"))
+        await s.commit()
+
+
+async def test_retry_failed_reenqueues_only_failed_documents(client):
+    ws_id, col_id = await _setup(client)
+    bad = await _upload(client, ws_id, col_id, name="broken.txt")
+    await _upload(client, ws_id, col_id, name="fine.txt")  # stays pending
+    await _mark_failed(client, bad["document_id"])
+
+    r = await client.post("/ingestion/jobs/retry-failed", headers=AUTH)
+    assert r.status_code == 202
+    assert r.json() == {"retried": 1}  # only the failed document
+
+    # The failed document now carries a fresh pending attempt beside its failed history.
+    rows = (await client.get("/ingestion/jobs", headers=AUTH)).json()["items"]
+    statuses = sorted(j["status"] for j in rows if j["document_id"] == bad["document_id"])
+    assert statuses == ["failed", "pending"]
+
+
+async def test_retry_failed_respects_listing_filters(client):
+    ws_id, col_id = await _setup(client)
+    alpha = await _upload(client, ws_id, col_id, name="alpha.txt")
+    beta = await _upload(client, ws_id, col_id, name="beta.txt")
+    await _mark_failed(client, alpha["document_id"])
+    await _mark_failed(client, beta["document_id"])
+
+    # Only the failed document whose filename matches the filter is retried.
+    r = await client.post("/ingestion/jobs/retry-failed?filename=alpha", headers=AUTH)
+    assert r.status_code == 202
+    assert r.json() == {"retried": 1}
+
+
+async def test_retry_failed_is_zero_when_nothing_failed(client):
+    ws_id, col_id = await _setup(client)
+    await _upload(client, ws_id, col_id)  # pending, not failed
+
+    r = await client.post("/ingestion/jobs/retry-failed", headers=AUTH)
+    assert r.status_code == 202
+    assert r.json() == {"retried": 0}
+
+
+async def test_retry_failed_requires_api_key(client):
+    assert (await client.post("/ingestion/jobs/retry-failed")).status_code == 401
