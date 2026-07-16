@@ -293,6 +293,12 @@ export const api = {
   listJobs: (query: JobQuery = {}) =>
     request<JobListResponse>(`/ingestion/jobs${toQueryString(query)}`),
   jobStats: () => request<JobStats>('/ingestion/jobs/stats'),
+  /** Re-enqueue every currently-failed document matching `query`'s filters (status is forced to
+   *  failed server-side). Returns how many documents were re-enqueued. */
+  retryFailedJobs: (query: JobQuery = {}) =>
+    request<{ retried: number }>(`/ingestion/jobs/retry-failed${toQueryString(query)}`, {
+      method: 'POST',
+    }),
 
   // ── Graph ─────────────────────────────────────────────────────────────────
   graph: (wsId: string, colId: string | null, linkTypes: string[] = ['tags']) => {
