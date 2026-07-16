@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from api.adapters.embeddings.errors import RateLimitError
+from api.models.config import EmbeddingConfig
 from api.services import config_reload as cr
 from tests.unit.fake_redis import FakeRedis
 from worker import config_reload as wcr
@@ -64,8 +67,17 @@ class _FakeEmbed:
     dimensions = 384
 
 
+class _RateLimitedEmbed:
+    """Embedding adapter whose dimension probe hits the provider rate limit (HTTP 429)."""
+
+    @property
+    def dimensions(self) -> int:
+        raise RateLimitError("embedding provider HTTP 429: quota exceeded")
+
+
 class _FakeStore:
-    pass
+    def __init__(self, dimensions: int = 384) -> None:
+        self.dimensions = dimensions
 
 
 class _FakeConfig:
@@ -81,7 +93,7 @@ def test_redis_client_builds_a_client(monkeypatch):
 
 def test_reload_adapters_clears_cache_and_rebuilds(monkeypatch):
     calls: list[str] = []
-    monkeypatch.setattr(tasks, "reload_adapters", lambda: calls.append("reload"))
+    monkeypatch.setattr(tasks, "reload_adapters", lambda _prior: calls.append("reload"))
     wcr._reload_adapters()
     assert calls == ["reload"]
 
@@ -111,6 +123,78 @@ def test_reload_adapters_rebuilds_singletons(monkeypatch):
 
     assert isinstance(tasks._embedder_singleton, _FakeEmbed)
     assert isinstance(tasks._vector_store_singleton, _FakeStore)
+
+
+def test_reload_adapters_reuses_store_dim_when_rate_limited_and_shape_unchanged(monkeypatch):
+    # Mirrors the API apply: a 429 dimension probe during an unchanged-model reload (e.g. a raised
+    # max_rpm) must reuse the still-live store's size, not raise — a raise would error-ack and force
+    # the API to roll the whole config change back.
+    before = EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k", max_rpm=50)
+    after = EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k", max_rpm=90)
+    monkeypatch.setattr(tasks, "get_config", lambda: SimpleNamespace(embedding=after, vector_store=object()))
+    monkeypatch.setattr("api.adapters.embeddings.get_embedding_adapter", lambda _c: _RateLimitedEmbed())
+    monkeypatch.setattr("api.adapters.vector_store.get_vector_store", lambda _c, d: _FakeStore(d))
+    tasks._embedder_singleton = None
+    tasks._vector_store_singleton = _FakeStore(dimensions=768)  # still-live store carries the size
+
+    tasks.reload_adapters(before)  # must not raise on the 429
+
+    assert tasks._vector_store_singleton.dimensions == 768  # rebuilt store reused the known size
+
+
+def test_reload_adapters_defers_store_on_rate_limit_when_store_not_built(monkeypatch):
+    # The reported 409: a worker whose store singleton isn't built yet (continuously throttled since
+    # its last restart) gets an unchanged-model reload (a raised max_rpm). It has no prior dimension
+    # to reuse, but a 429 must NOT roll the save back — so it adopts the new embedder and defers the
+    # store to a lazy rebuild rather than raising (which would error-ack and force a rollback).
+    before = EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k", max_rpm=50)
+    after = EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k", max_rpm=90)
+    monkeypatch.setattr(tasks, "get_config", lambda: SimpleNamespace(embedding=after, vector_store=object()))
+    monkeypatch.setattr("api.adapters.embeddings.get_embedding_adapter", lambda _c: _RateLimitedEmbed())
+    monkeypatch.setattr("api.adapters.vector_store.get_vector_store", lambda _c, d: _FakeStore(d))
+    tasks._embedder_singleton = None
+    tasks._vector_store_singleton = None  # never built (throttled since restart)
+
+    tasks.reload_adapters(before)  # must NOT raise on the 429
+
+    assert isinstance(tasks._embedder_singleton, _RateLimitedEmbed)  # new config's embedder adopted
+    assert tasks._vector_store_singleton is None  # store deferred for lazy rebuild
+
+
+def test_reload_adapters_defers_store_on_rate_limit_when_model_changed(monkeypatch):
+    # A model change while throttled can't reuse the prior size (it was for the old model), but a 429
+    # still must not roll the save back — defer the store to a lazy rebuild, which re-probes the new
+    # model's size once the provider is reachable.
+    before = EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k")
+    after = EmbeddingConfig(provider="gemini", model="gemini-embedding-99", api_key="k")
+    monkeypatch.setattr(tasks, "get_config", lambda: SimpleNamespace(embedding=after, vector_store=object()))
+    monkeypatch.setattr("api.adapters.embeddings.get_embedding_adapter", lambda _c: _RateLimitedEmbed())
+    monkeypatch.setattr("api.adapters.vector_store.get_vector_store", lambda _c, d: _FakeStore(d))
+    tasks._embedder_singleton = None
+    tasks._vector_store_singleton = _FakeStore(dimensions=768)
+
+    tasks.reload_adapters(before)  # must NOT raise
+
+    assert tasks._vector_store_singleton is None  # deferred; the stale 768 is not kept for a new model
+
+
+def test_reload_adapters_propagates_non_rate_limit_error(monkeypatch):
+    # Only a *rate limit* defers. A genuine build failure (a bad model / key — not a 429) must still
+    # propagate, so the listener error-acks and the API rolls back rather than silently accepting it.
+    class _BrokenEmbed:
+        @property
+        def dimensions(self) -> int:
+            raise ValueError("model 'ghost' not found")
+
+    after = EmbeddingConfig(provider="gemini", model="ghost", api_key="k")
+    monkeypatch.setattr(tasks, "get_config", lambda: SimpleNamespace(embedding=after, vector_store=object()))
+    monkeypatch.setattr("api.adapters.embeddings.get_embedding_adapter", lambda _c: _BrokenEmbed())
+    monkeypatch.setattr("api.adapters.vector_store.get_vector_store", lambda _c, d: _FakeStore(d))
+    tasks._embedder_singleton = None
+    tasks._vector_store_singleton = _FakeStore(dimensions=768)
+
+    with pytest.raises(ValueError):
+        tasks.reload_adapters(EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k"))
 
 
 @pytest.fixture(autouse=True)
