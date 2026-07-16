@@ -1,12 +1,13 @@
-"""Unit tests for the ingestion-job listing service (pagination + filters)."""
+"""Unit tests for the ingestion-job listing service (pagination + filters) and its bulk retry."""
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 
 from api.db import collections as col_t
+from api.db import documents as doc_t
 from api.db import job_records as job_t
 from api.db import workspaces as ws_t
 from api.models.document import JobListQuery
-from api.services.jobs import list_jobs
+from api.services.jobs import list_jobs, reprocess_failed_documents
 
 _NOW = "2024-01-01T00:00:00"
 _WS_ID = "ws_jobs_test"
@@ -201,6 +202,90 @@ async def test_job_status_counts(db_session) -> None:
 
     counts = await job_status_counts(db_session)
     assert counts == {"done": 1, "rate_limited": 2}  # statuses with no rows are absent
+
+
+# ── bulk retry (reprocess_failed_documents) ─────────────────────────────────────
+
+# reprocess_document reads the documents row (not just job_records), so the retry tests seed both.
+async def _add_document(
+    db_session,
+    doc_id: str,
+    *,
+    collection_id: str = _COL_ID,
+    filename: str = "x.pdf",
+    file_type: str = ".pdf",
+) -> None:
+    await db_session.execute(
+        insert(doc_t).values(
+            id=doc_id, collection_id=collection_id, filename=filename, file_type=file_type,
+            file_size=100, chunk_count=None, status=None, created_at=_NOW, updated_at=_NOW,
+        )
+    )
+
+
+def _stub_enqueue(monkeypatch) -> list:
+    """Capture reprocess enqueues so tests can assert which documents were re-dispatched."""
+    calls: list = []
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest",
+        lambda *a: calls.append(a) or "task-x",
+    )
+    return calls
+
+
+async def test_reprocess_failed_documents_retries_only_currently_failed(db_session, monkeypatch) -> None:
+    calls = _stub_enqueue(monkeypatch)
+    await _seed_collection(db_session)
+    # doc_fail: latest attempt failed → retry it.
+    await _add_document(db_session, "doc_fail")
+    await _add_job(db_session, "job_fail", document_id="doc_fail", status="failed")
+    # doc_done: latest attempt succeeded → leave it.
+    await _add_document(db_session, "doc_done")
+    await _add_job(db_session, "job_done", document_id="doc_done", status="done")
+    # doc_recovered: failed once, then a NEWER attempt succeeded → not currently failed, leave it.
+    await _add_document(db_session, "doc_recovered")
+    await _add_job(db_session, "job_r1", document_id="doc_recovered", status="failed", created_at="2024-01-01T00:00:00")
+    await _add_job(db_session, "job_r2", document_id="doc_recovered", status="done", created_at="2024-02-01T00:00:00")
+    await db_session.commit()
+
+    result = await reprocess_failed_documents(db_session, JobListQuery())
+
+    assert result == {"retried": 1}  # only doc_fail
+    assert [c[3] for c in calls] == ["doc_fail"]  # enqueue_ingest(job_id, path, col, doc_id, ext)
+    # doc_fail now has a fresh pending attempt alongside its failed history; the others are untouched.
+    fail_jobs = (await db_session.execute(select(job_t.c.status).where(job_t.c.document_id == "doc_fail"))).scalars().all()
+    assert sorted(fail_jobs) == ["failed", "pending"]
+    recovered = (await db_session.execute(select(job_t.c.status).where(job_t.c.document_id == "doc_recovered"))).scalars().all()
+    assert sorted(recovered) == ["done", "failed"]  # no new attempt added
+
+
+async def test_reprocess_failed_documents_respects_listing_filters(db_session, monkeypatch) -> None:
+    calls = _stub_enqueue(monkeypatch)
+    await _seed_collection(db_session)
+    await _add_document(db_session, "doc_report", filename="Report-2024.pdf")
+    await _add_job(db_session, "job_report", document_id="doc_report", filename="Report-2024.pdf", status="failed")
+    await _add_document(db_session, "doc_notes", filename="notes.md", file_type=".md")
+    await _add_job(db_session, "job_notes", document_id="doc_notes", filename="notes.md", file_type=".md", status="failed")
+    await db_session.commit()
+
+    result = await reprocess_failed_documents(db_session, JobListQuery(filename="report"))
+
+    assert result == {"retried": 1}  # only the failed doc matching the filename filter
+    assert [c[3] for c in calls] == ["doc_report"]
+
+
+async def test_reprocess_failed_documents_overrides_caller_status_filter(db_session, monkeypatch) -> None:
+    # The page may carry any status filter; "retry all failed" always targets failures regardless.
+    calls = _stub_enqueue(monkeypatch)
+    await _seed_collection(db_session)
+    await _add_document(db_session, "doc_fail")
+    await _add_job(db_session, "job_fail", document_id="doc_fail", status="failed")
+    await db_session.commit()
+
+    result = await reprocess_failed_documents(db_session, JobListQuery(status="done"))
+
+    assert result == {"retried": 1}  # status='done' is ignored; the failed doc is still retried
+    assert [c[3] for c in calls] == ["doc_fail"]
 
 
 def test_embedding_pause_seconds_reads_ttl_best_effort() -> None:
