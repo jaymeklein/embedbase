@@ -181,6 +181,17 @@ class PgvectorAdapter:
         self._runner = _AsyncRunner()
         self._lock = asyncio.Lock()
 
+    @property
+    def dimensions(self) -> int:
+        """The fixed vector size this store was built for (its ``embedding vector(N)`` column).
+
+        A construction-time constant — set once at boot / config-apply — so it is always available
+        without calling the embedding provider. That makes it the reliable source for sizing a
+        rebuilt store when the embedding model is unchanged (see
+        ``config_service._embedding_dimensions``), where probing the provider could hit a rate limit.
+        """
+        return self._dimensions
+
     # -- connection / schema bootstrap --------------------------------------
 
     async def _bootstrap_schema(self) -> None:
