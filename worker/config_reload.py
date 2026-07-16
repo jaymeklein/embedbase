@@ -47,7 +47,7 @@ def _reload_adapters() -> bool:
 
     before = get_config().embedding  # snapshot before the cache is cleared
     get_config.cache_clear()
-    tasks.reload_adapters()
+    tasks.reload_adapters(before)  # pass the prior embedding so a 429 can reuse the live dimension
     return get_config().embedding != before
 
 
