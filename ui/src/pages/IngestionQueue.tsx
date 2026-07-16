@@ -7,12 +7,23 @@ import {
   FolderOpen,
   ListChecks,
   Loader2,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   X,
   XCircle,
 } from 'lucide-react'
-import { Badge, Card, EmptyState, QueryError, Skeleton, StatusBadge, useToast } from '../components/ui'
+import {
+  Badge,
+  Button,
+  Card,
+  ConfirmDialog,
+  EmptyState,
+  QueryError,
+  Skeleton,
+  StatusBadge,
+  useToast,
+} from '../components/ui'
 import type { BadgeStatus } from '../components/ui'
 import { Pager } from '../components/Pager'
 import {
@@ -23,7 +34,7 @@ import {
 } from '../components/filters'
 import { cn } from '../lib/cn'
 import { timeAgo } from '../lib/format'
-import { useJobs, useJobStats, useReprocessDocument } from '../api/hooks'
+import { useJobs, useJobStats, useReprocessDocument, useRetryFailedJobs } from '../api/hooks'
 import type { JobQuery, JobSummary } from '../api/types'
 import { useIngestionQueue, type QueueItem } from '../realtime/useIngestionQueue'
 
@@ -46,10 +57,29 @@ export default function IngestionQueue() {
   const { data, isLoading, isError, error, refetch } = useJobs(query)
   const { items: liveItems, status: conn } = useIngestionQueue()
   const { data: stats } = useJobStats()
+  const retryMut = useRetryFailedJobs()
+  const toast = useToast()
+  const [confirmRetry, setConfirmRetry] = useState(false)
 
   const jobs = data?.items ?? []
   const total = data?.total ?? 0
   const hasFilters = Object.values(filters).some((v) => v != null && v !== '')
+  const failedCount = stats?.counts?.failed ?? 0
+
+  // Bulk retry respects the active filters (the endpoint forces status=failed itself).
+  const retryAllFailed = () => {
+    retryMut.mutate(filters, {
+      onSuccess: ({ retried }) => {
+        toast.success(
+          retried > 0
+            ? `Re-enqueued ${retried} failed document${retried === 1 ? '' : 's'}.`
+            : 'No failed documents matched the current filters.',
+        )
+        setConfirmRetry(false)
+      },
+      onError: (e) => toast.error(e.message),
+    })
+  }
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
   // A shrinking total (jobs ageing out / filtered) can strand `page` past the end — clamp it so
   // the pager and empty state stay coherent instead of showing an out-of-range window.
@@ -74,6 +104,9 @@ export default function IngestionQueue() {
         connected={conn === 'open'}
         counts={stats?.counts ?? {}}
         pausedSeconds={stats?.paused_seconds ?? 0}
+        hasFailures={failedCount > 0}
+        retrying={retryMut.isPending}
+        onRetryAll={() => setConfirmRetry(true)}
       />
       <JobFilters value={filters} onChange={setFilters} />
       <QueueBody
@@ -86,6 +119,20 @@ export default function IngestionQueue() {
         onRetry={() => void refetch()}
       />
       <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} loading={isLoading} />
+
+      <ConfirmDialog
+        open={confirmRetry}
+        title="Retry failed documents"
+        message={
+          hasFilters
+            ? 'Re-run ingestion for every failed document matching the current filters? Each is re-queued from where it left off.'
+            : 'Re-run ingestion for every failed document in the queue? Each is re-queued from where it left off.'
+        }
+        confirmLabel="Retry failed"
+        loading={retryMut.isPending}
+        onConfirm={retryAllFailed}
+        onClose={() => setConfirmRetry(false)}
+      />
     </div>
   )
 }
@@ -103,10 +150,16 @@ function Header({
   connected,
   counts,
   pausedSeconds,
+  hasFailures,
+  retrying,
+  onRetryAll,
 }: {
   connected: boolean
   counts: Record<string, number>
   pausedSeconds: number
+  hasFailures: boolean
+  retrying: boolean
+  onRetryAll: () => void
 }) {
   const processing = counts.processing ?? 0
   const pending = counts.pending ?? 0
@@ -116,7 +169,7 @@ function Header({
   if (pending > 0) parts.push(`${pending} queued`)
   if (waiting > 0) parts.push(`${waiting} waiting on rate limit`)
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between gap-3">
       <div>
         <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
           <ListChecks className="h-6 w-6 text-accent" />
@@ -133,10 +186,20 @@ function Header({
           )}
         </p>
       </div>
-      <span className="flex items-center gap-1.5 text-xs text-ink-faint">
-        <span className={cn('h-2 w-2 rounded-full', connected ? 'bg-ok' : 'bg-ink-faint/50')} />
-        {connected ? 'Live' : 'Connecting…'}
-      </span>
+      <div className="flex shrink-0 items-center gap-3">
+        {/* Shown only when the queue holds failures. The action re-queues every currently-failed
+            document matching the active filters (see retryAllFailed). */}
+        {hasFailures && (
+          <Button variant="secondary" size="sm" onClick={onRetryAll} disabled={retrying}>
+            <RotateCcw className={cn('h-4 w-4', retrying && 'animate-spin')} />
+            {retrying ? 'Retrying…' : 'Retry all failed'}
+          </Button>
+        )}
+        <span className="flex items-center gap-1.5 text-xs text-ink-faint">
+          <span className={cn('h-2 w-2 rounded-full', connected ? 'bg-ok' : 'bg-ink-faint/50')} />
+          {connected ? 'Live' : 'Connecting…'}
+        </span>
+      </div>
     </div>
   )
 }

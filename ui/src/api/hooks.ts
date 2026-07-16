@@ -405,6 +405,19 @@ export function useReprocessDocument(wsId?: string, colId?: string) {
   })
 }
 
+/**
+ * Bulk "retry all errors" for the ingestion queue: re-enqueue every currently-failed document
+ * matching the given listing filters. Refreshes the queue (`qk.jobs` prefix → list + stats) so
+ * the fresh pending rows surface.
+ */
+export function useRetryFailedJobs() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (query: JobQuery = {}) => api.retryFailedJobs(query),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.jobs }),
+  })
+}
+
 // ── BM25 indexing ───────────────────────────────────────────────────────────
 
 /** BM25 index coverage grouped by workspace → collection. */

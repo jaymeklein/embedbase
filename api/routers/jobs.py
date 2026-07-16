@@ -56,3 +56,19 @@ async def job_stats(
         # concurrent request, not just this one.
         "paused_seconds": await asyncio.to_thread(jobs_svc.embedding_pause_seconds, redis_client),
     }
+
+
+@router.post("/ingestion/jobs/retry-failed", status_code=202)
+async def retry_failed_jobs(
+    query: Annotated[JobListQuery, Query()],
+    _principal: object = Depends(require_master),
+    db: AsyncSession = Depends(get_db),
+):
+    """Re-enqueue every currently-failed document matching the given filters — the queue's bulk
+    "retry all errors". Targets documents whose *latest* ingestion attempt failed; the ``status``
+    filter is ignored (forced to failed) while the other filters (filename, file_type, collection,
+    created range) scope the set exactly like the listing. Idempotent per document.
+
+    Returns ``{"retried": n}`` — how many documents were re-enqueued.
+    """
+    return await jobs_svc.reprocess_failed_documents(db, query)
