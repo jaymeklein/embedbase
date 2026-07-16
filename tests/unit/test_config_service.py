@@ -7,6 +7,7 @@ import yaml
 from fastapi import HTTPException
 
 from api import dependencies
+from api.adapters.embeddings.errors import RateLimitError
 from api.models.config import AppConfig, EmbeddingConfig, RerankerConfig, VectorStoreConfig
 from api.services import config_reload as cr
 from api.services import config_service as cs
@@ -17,8 +18,17 @@ class _FakeEmbed:
     dimensions = 384
 
 
+class _RateLimitedEmbed:
+    """Embedding adapter whose dimension probe hits the provider's rate limit (HTTP 429)."""
+
+    @property
+    def dimensions(self) -> int:
+        raise RateLimitError("embedding provider HTTP 429: quota exceeded")
+
+
 class _FakeStore:
-    pass
+    def __init__(self, dimensions: int = 384) -> None:
+        self.dimensions = dimensions
 
 
 @pytest.fixture(autouse=True)
@@ -279,6 +289,54 @@ def test_apply_config_preserves_masked_secret(tmp_path, monkeypatch):
     payload = AppConfig(embedding=EmbeddingConfig(api_key=cs.SECRET_MASK))
     cs.apply_config(payload)
     assert dependencies.get_app_config().embedding.api_key == "keep-me"
+
+
+def test_apply_config_survives_rate_limited_probe_when_model_unchanged(tmp_path, monkeypatch):
+    # A throttled provider (HTTP 429) during the dimension probe must not fail a save that doesn't
+    # change the model: the dimension can't have changed, so the probe's 429 is caught and the live
+    # store's known size (768) is reused. This is the reported bug — editing max-requests/min was
+    # rejected because the probe hit Gemini's daily quota.
+    #
+    # The live embedding *adapter* is left unset (None) on purpose: it mirrors the real breakage,
+    # where a boot whose warm-up probe was itself rate-limited swallows the error and never registers
+    # an adapter. The reused size therefore comes from the live *store*, which always carries one.
+    live = AppConfig(embedding=EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k"))
+    dependencies.set_app_config(live)
+    dependencies.set_vector_store(_FakeStore(dimensions=768))  # live store carries the known size
+    monkeypatch.setattr(cs, "resolve_embedding", lambda _c: _RateLimitedEmbed())
+    monkeypatch.setattr(cs, "resolve_store", lambda _c, dims: _FakeStore(dims))
+    monkeypatch.setattr(cs, "_config_path", lambda: tmp_path / "config.yaml")
+
+    payload = AppConfig(
+        embedding=EmbeddingConfig(
+            provider="gemini", model="gemini-embedding-2", api_key=cs.SECRET_MASK, max_rpm=90
+        )
+    )
+    result = cs.apply_config(payload)  # must not raise on the 429
+
+    assert result["status"] == "applied"
+    assert dependencies.get_app_config().embedding.max_rpm == 90  # the throttle edit landed
+    assert dependencies.get_vector_store().dimensions == 768  # rebuilt store reused the known size
+
+
+def test_apply_config_returns_503_when_model_change_probe_is_rate_limited(tmp_path, monkeypatch):
+    # Changing the model *while* the provider is throttled: the live store's size is for the OLD
+    # model, so the new model's dimension genuinely can't be reused — it must be probed, and that
+    # probe is rate-limited. Surface a transient 503 ("try again"), not a misleading 422.
+    live = AppConfig(embedding=EmbeddingConfig(provider="gemini", model="gemini-embedding-2", api_key="k"))
+    dependencies.set_app_config(live)
+    dependencies.set_vector_store(_FakeStore(dimensions=768))
+    monkeypatch.setattr(cs, "resolve_embedding", lambda _c: _RateLimitedEmbed())
+    monkeypatch.setattr(cs, "resolve_store", lambda _c, dims: _FakeStore(dims))
+    monkeypatch.setattr(cs, "_config_path", lambda: tmp_path / "config.yaml")
+
+    payload = AppConfig(
+        embedding=EmbeddingConfig(provider="gemini", model="gemini-embedding-99", api_key=cs.SECRET_MASK)
+    )
+    with pytest.raises(HTTPException) as exc:
+        cs.apply_config(payload)
+    assert exc.value.status_code == 503
+    assert "rate-limited" in exc.value.detail
 
 
 def test_list_ollama_models_uses_explicit_base_url(monkeypatch):
