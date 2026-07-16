@@ -1,15 +1,17 @@
-"""Business logic for the ingestion-queue (job history) listing.
+"""Business logic for the ingestion-queue (job history) listing and its bulk retry.
 
 ``api/routers/jobs.py`` stays routing-only; this owns the paginated, filtered read over the
 ``job_records`` table — the durable ingestion history that the live ``ingestion-queue`` WebSocket
 only shows the recent tail of. Each row is joined to its collection name so a global, cross-workspace
-queue view can label where a job came from.
+queue view can label where a job came from. :func:`reprocess_failed_documents` is the queue's
+bulk "retry all errors" action, scoped by the same filters as the listing.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +19,7 @@ from api.constants import EMBEDDING_PAUSE_KEY
 from api.db import collections as col_t
 from api.db import job_records as job_t
 from api.models.document import JobListQuery
+from api.services.documents import reprocess_document
 from api.services.filters import to_conditions
 from api.services.job_filters import build_specs
 
@@ -108,3 +111,53 @@ def embedding_pause_seconds(redis_client: Any) -> int:
     except Exception:
         return 0
     return ttl if ttl > 0 else 0
+
+
+async def reprocess_failed_documents(db: AsyncSession, query: JobListQuery) -> dict[str, int]:
+    """Re-enqueue every currently-failed document that matches the queue listing's filters.
+
+    "Currently failed" means the document's *most recent* ingestion attempt failed — not merely
+    that it has some failed attempt in its history (a document that failed once and later succeeded
+    is not retried). The filters (filename, file_type, collection, created range) are the same ones
+    ``list_jobs`` accepts, reused via :func:`~api.services.job_filters.build_specs`; the status
+    filter is forced to ``"failed"`` because the action is inherently about errors, so the page's
+    own status selection is overridden rather than intersected.
+
+    Each match is re-enqueued through :func:`api.services.documents.reprocess_document`, which is
+    idempotent (an already in-flight document is left alone) and creates a fresh ``pending`` job.
+    Best-effort: a document deleted or mid-delete since it was listed is skipped, not fatal.
+
+    Returns:
+        ``{"retried": n}`` — the number of documents re-enqueued.
+    """
+    # Override the caller's status filter: "retry all failed" always targets failures.
+    failed_query = query.model_copy(update={"status": "failed"})
+    conds = await to_conditions(build_specs(failed_query), db)
+    # "This attempt is the document's newest" — the portable MAX(created_at) form of
+    # document_filters.latest_status_subquery (no window functions; the unit/integration suites
+    # run on SQLite). Combined with the forced status='failed', it keeps only rows that are both
+    # the latest attempt AND failed, i.e. documents currently in a failed state.
+    j2 = job_t.alias()
+    latest_created = (
+        select(func.max(j2.c.created_at))
+        .where(j2.c.document_id == job_t.c.document_id)
+        .scalar_subquery()
+    )
+    src = job_t.outerjoin(col_t, job_t.c.collection_id == col_t.c.id)
+    rows = (
+        await db.execute(
+            select(job_t.c.document_id, job_t.c.collection_id)
+            .select_from(src)
+            .where(*conds, job_t.c.created_at == latest_created)
+            .distinct()  # one row per document even on a created_at tie
+        )
+    ).fetchall()
+
+    retried = 0
+    for doc_id, col_id in rows:
+        try:
+            await reprocess_document(db, col_id, doc_id)
+        except HTTPException:
+            continue  # vanished / mid-delete since we listed it — skip, keep going
+        retried += 1
+    return {"retried": retried}
