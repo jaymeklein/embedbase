@@ -118,22 +118,45 @@ def _redis() -> Any:
     return _redis_singleton
 
 
-def reload_adapters() -> None:
+def reload_adapters(prior_embedding: Any = None) -> None:
     """Rebuild the embedder + vector-store singletons from the current config.
 
-    Called by the config hot-reload listener after ``get_config.cache_clear()`` so
-    a live config change takes effect without restarting the worker. Building here
-    (rather than nulling the singletons for lazy rebuild) surfaces a bad config
-    immediately, so the listener can ack an error and the API can roll back.
+    Called by the config hot-reload listener after ``get_config.cache_clear()`` so a live config
+    change takes effect without restarting the worker. Building here (rather than nulling the
+    singletons for lazy rebuild) surfaces a bad config immediately, so the listener can ack an error
+    and the API can roll back.
+
+    A provider rate limit (HTTP 429) is the exception: it is transient, not a bad config, and must
+    never roll a config save back. ``prior_embedding`` (the embedding config from *before* this
+    reload, passed by the listener) lets the store keep its size when the model is unchanged — the
+    dimension can't have changed, so :func:`resolve_dimensions` reuses the live store's size. When
+    even that isn't possible (this worker hasn't built a store yet, or the model itself changed), the
+    store is *deferred*: the new embedder is still adopted (so a rotated key / raised ``max_rpm``
+    takes effect) and the store is nulled for a lazy rebuild on next use, when the provider should be
+    reachable. Ingestion already pauses + retries on 429, so a deferred store is safe. Any *other*
+    build failure (a bad model / key — not a 429) still propagates, so the API rolls back.
     """
     global _embedder_singleton, _vector_store_singleton
-    from api.adapters.embeddings import get_embedding_adapter
+    from api.adapters.embeddings import get_embedding_adapter, resolve_dimensions
+    from api.adapters.embeddings.errors import RateLimitError
     from api.adapters.vector_store import get_vector_store
 
     config = get_config()
+    prior_store = _vector_store_singleton  # still the previous store; its size is the 429 fallback
     embedder = get_embedding_adapter(config.embedding)
+    try:
+        dimensions = resolve_dimensions(
+            embedder,
+            config.embedding,
+            prior_embedding,
+            prior_store.dimensions if prior_store is not None else None,
+        )
+    except RateLimitError:
+        _embedder_singleton = embedder
+        _vector_store_singleton = None  # defer: lazy rebuild re-probes when the provider is reachable
+        return
     _embedder_singleton = embedder
-    _vector_store_singleton = get_vector_store(config.vector_store, embedder.dimensions)
+    _vector_store_singleton = get_vector_store(config.vector_store, dimensions)
 
 
 # ---------------------------------------------------------------------------

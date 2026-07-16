@@ -30,6 +30,8 @@ import yaml
 from fastapi import HTTPException
 
 from api.adapters.embeddings import get_embedding_adapter as resolve_embedding
+from api.adapters.embeddings import resolve_dimensions
+from api.adapters.embeddings.errors import RateLimitError
 from api.adapters.reranker import get_reranker as resolve_reranker
 from api.adapters.vector_store import get_vector_store as resolve_store
 from api.dependencies import (
@@ -165,7 +167,18 @@ def _build_adapters(config: AppConfig) -> tuple[Any, Any, Any]:
     unrelated ones (e.g. rotating the embedding API key).
     """
     embed = resolve_embedding(config.embedding)
-    store = resolve_store(config.vector_store, embed.dimensions)
+    live_store = get_vector_store()
+    live_config = get_app_config()
+    # Size the store tolerantly: a rate-limited (429) dimension probe reuses the still-live store's
+    # known size when the embedding model is unchanged, so an unrelated edit (e.g. raising max_rpm to
+    # relieve the 429) isn't rejected. Only a model change that can't be probed re-raises -> 503 below.
+    dimensions = resolve_dimensions(
+        embed,
+        config.embedding,
+        live_config.embedding if live_config is not None else None,
+        live_store.dimensions if live_store is not None else None,
+    )
+    store = resolve_store(config.vector_store, dimensions)
     reranker = _build_reranker_optional(config.reranker)
     return embed, store, reranker
 
@@ -245,6 +258,13 @@ def _validate_and_build(merged: dict[str, Any]) -> tuple[Any, Any, Any, AppConfi
         embed, store, reranker = _build_adapters(new_config)
     except HTTPException:
         raise
+    except RateLimitError as exc:
+        # The provider throttled the dimension probe and the model changed, so the live size
+        # couldn't be reused. A transient limit, not an invalid config — tell the client to retry
+        # rather than rejecting a valid change (503, not 422).
+        raise HTTPException(
+            503, f"Embedding provider is rate-limited; try again shortly: {exc}"
+        ) from exc
     except Exception as exc:  # invalid config or unbuildable adapter
         raise HTTPException(422, f"Invalid configuration: {exc}") from exc
     return embed, store, reranker, new_config
