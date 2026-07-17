@@ -406,15 +406,21 @@ export function useReprocessDocument(wsId?: string, colId?: string) {
 }
 
 /**
- * Bulk "retry all errors" for the ingestion queue: re-enqueue every currently-failed document
- * matching the given listing filters. Refreshes the queue (`qk.jobs` prefix → list + stats) so
- * the fresh pending rows surface.
+ * Bulk "retry all errors": re-enqueue every currently-failed document matching the given listing
+ * filters — the queue's page-wide retry, and (via `collection_id`) the indexing page's per-row one.
+ * Refreshes the queue (`qk.jobs` prefix → list + stats) so the fresh pending rows surface, and the
+ * index overview, which counts those documents as unindexed until their chunks land.
  */
 export function useRetryFailedJobs() {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (query: JobQuery = {}) => api.retryFailedJobs(query),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.jobs }),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.jobs }),
+        queryClient.invalidateQueries({ queryKey: qk.indexStatus }),
+      ])
+    },
   })
 }
 
@@ -456,16 +462,6 @@ export function useIndexDocument(wsId: string, colId: string) {
   const invalidate = useInvalidateIndex(wsId, colId)
   return useMutation({
     mutationFn: (docId: string) => api.indexDocument(wsId, colId, docId),
-    onSuccess: invalidate,
-  })
-}
-
-/** Enqueue a BM25 (re)index of an entire collection. */
-export function useIndexCollection() {
-  const invalidate = useInvalidateIndex()
-  return useMutation({
-    mutationFn: ({ wsId, colId }: { wsId: string; colId: string }) =>
-      api.indexCollection(wsId, colId),
     onSuccess: invalidate,
   })
 }

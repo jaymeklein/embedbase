@@ -145,6 +145,35 @@ async def test_retry_failed_respects_listing_filters(client):
     assert r.json() == {"retried": 1}
 
 
+async def test_retry_failed_scopes_to_one_collection_by_id(client):
+    """collection_id must retry exactly one collection — the indexing page's per-row retry.
+
+    Both collections here are named so the ``collection`` *substring* filter would match both
+    ("Leis" is a prefix of "Leis Antigas"); only the exact id keeps the sibling out of it.
+    """
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=AUTH)).json()["id"]
+    mk = lambda name: client.post(  # noqa: E731
+        f"/workspaces/{ws_id}/collections", json={"name": name}, headers=AUTH
+    )
+    target = (await mk("Leis")).json()["id"]
+    sibling = (await mk("Leis Antigas")).json()["id"]
+    here = await _upload(client, ws_id, target, name="a.txt")
+    there = await _upload(client, ws_id, sibling, name="b.txt")
+    await _mark_failed(client, here["document_id"])
+    await _mark_failed(client, there["document_id"])
+
+    r = await client.post(f"/ingestion/jobs/retry-failed?collection_id={target}", headers=AUTH)
+    assert r.status_code == 202
+    assert r.json() == {"retried": 1}  # the sibling's failure is untouched
+
+    rows = (await client.get("/ingestion/jobs", headers=AUTH)).json()["items"]
+    assert sorted(j["status"] for j in rows if j["document_id"] == here["document_id"]) == [
+        "failed",
+        "pending",
+    ]
+    assert [j["status"] for j in rows if j["document_id"] == there["document_id"]] == ["failed"]
+
+
 async def test_retry_failed_is_zero_when_nothing_failed(client):
     ws_id, col_id = await _setup(client)
     await _upload(client, ws_id, col_id)  # pending, not failed
