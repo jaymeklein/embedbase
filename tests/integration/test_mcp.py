@@ -257,7 +257,9 @@ async def _ok_app(scope, receive, send):
 
 def _guarded(rpm: int) -> MCPAuthRateLimitMiddleware:
     return MCPAuthRateLimitMiddleware(
-        _ok_app, authenticate=lambda k: k == "secret", rate_limiter=TokenBucketRateLimiter(rpm)
+        _ok_app,
+        authenticate=lambda k: k == "secret",
+        rate_limiter=TokenBucketRateLimiter(lambda: rpm),
     )
 
 

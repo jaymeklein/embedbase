@@ -2,6 +2,9 @@
 
 import warnings
 
+import pytest
+from pydantic import ValidationError
+
 from api.constants import POSTGRES_PORT
 from api.models.config import AppConfig
 
@@ -17,6 +20,20 @@ def test_defaults_are_populated():
     assert cfg.chunking.sliding_window.overlap_tokens == 64
     assert cfg.search.hybrid_default_alpha == 0.7
     assert cfg.mcp.rate_limit_rpm == 60
+
+
+@pytest.mark.parametrize("rpm", [0, -60])
+def test_mcp_rate_limit_rejects_values_below_one(rpm):
+    """The MCP limiter re-reads rate_limit_rpm per request, so a 0/negative value would brick the
+    endpoint the instant it is saved — 0 denies everything, and a negative rate accrues token debt
+    that outlives the correction (the bucket is never rebuilt). Reject it at the boundary: a bad
+    PUT /config is a 422 instead of a live lockout."""
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"mcp": {"rate_limit_rpm": rpm}})
+
+
+def test_mcp_rate_limit_accepts_one():
+    assert AppConfig.model_validate({"mcp": {"rate_limit_rpm": 1}}).mcp.rate_limit_rpm == 1
 
 
 def test_nested_override_applies():
