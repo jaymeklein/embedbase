@@ -138,7 +138,12 @@ class ParserConfig(BaseModel):
 
 class MCPConfig(BaseModel):
     enabled: bool = True
-    rate_limit_rpm: int = 60
+    # Per-key requests/min on the mounted /mcp endpoint. The limiter re-reads this on every
+    # request (see api/services/mcp/rate_limit.py), so a nonsense value bites the moment it is
+    # saved rather than at the next restart: 0 denies every request, and a negative rate accrues
+    # token debt that outlives the correction, since the bucket is never rebuilt. Bounded here,
+    # at the config boundary, so the limiter's hot path needs no clamp — a bad PUT is a clean 422.
+    rate_limit_rpm: Annotated[int, Field(ge=1)] = 60
     max_results: int = 20
 
 
