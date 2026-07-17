@@ -10,6 +10,7 @@ import {
 import type {
   AppConfig,
   EmbeddingConfig,
+  MCPConfig,
   RerankerConfig,
   SearchConfig,
 } from '../../api/types'
@@ -35,6 +36,7 @@ export function ConfigPanel() {
       <SearchForm config={data} />
       <ParserForm config={data} />
       <StorageForm config={data} />
+      <MCPForm config={data} />
     </div>
   )
 }
@@ -266,7 +268,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
         <p className="text-[13px] text-ink-muted">
           The embedding model turns documents into vectors. <strong>Changing the provider,
-          model, or output dimensions changes the vector size</strong> — existing collections
+            model, or output dimensions changes the vector size</strong> — existing collections
           must be re-indexed or search will break. Changing only an API key is safe.
         </p>
       </div>
@@ -634,6 +636,75 @@ function SearchForm({ config }: { config: AppConfig }) {
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
           {update.isPending ? 'Saving…' : 'Save search config'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * MCP server config. The one editable knob is the per-key request rate limit on the mounted
+ * `/api/mcp` endpoint (the 61st request in a minute → 429 by default). Applies live, like the
+ * sections above: the limiter reads `mcp.rate_limit_rpm` from the live config on every request,
+ * so a save binds from the next MCP call. `enabled` and `max_results` round-trip untouched.
+ */
+function MCPForm({ config }: { config: AppConfig }) {
+  const toast = useToast()
+  const update = useUpdateConfig()
+  const mcp = config.mcp
+
+  const [rpm, setRpm] = useState(String(mcp.rate_limit_rpm))
+
+  const save = () => {
+    // The backend takes a strict int >= 1 and 422s anything else. Blank (or unparseable) reverts
+    // to the saved value; everything else is rounded and floored at 1. Test the entry for blank
+    // up front rather than leaning on `Number(x) || fallback` — `Number('0')` is falsy, so that
+    // idiom would divert 0 to the fallback and never floor it.
+    const entered = rpm.trim()
+    const parsed = Math.round(Number(entered))
+    const rateLimitRpm =
+      entered === '' || !Number.isFinite(parsed) ? mcp.rate_limit_rpm : Math.max(1, parsed)
+    const next: MCPConfig = { ...mcp, rate_limit_rpm: rateLimitRpm }
+    setRpm(String(rateLimitRpm)) // show what was actually saved, not the raw entry
+    update.mutate(
+      { ...config, mcp: next },
+      {
+        onSuccess: () => toast.success('MCP config saved. Services are reloading.'),
+        onError: (e) => toast.error(e.message),
+      },
+    )
+  }
+
+  return (
+    <Card className="flex flex-col gap-5 p-5">
+      <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
+        <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
+        <p className="text-[13px] text-ink-muted">
+          The MCP endpoint (<code>/api/mcp</code>) throttles each API key to this many requests per
+          minute; the next request in the same minute returns <code>429</code>. Each key gets its own
+          budget, and the new limit <strong>applies to the next MCP request</strong>
+        </p>
+      </div>
+
+      <Section title="MCP server">
+        <Field
+          label="Rate limit (requests / min per key)"
+          htmlFor="mcp-rpm"
+          hint="per API key on /api/mcp; the next request in the same minute returns 429"
+        >
+          <Input
+            id="mcp-rpm"
+            type="number"
+            min="1"
+            value={rpm}
+            onChange={(e) => setRpm(e.target.value)}
+          />
+        </Field>
+      </Section>
+
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={update.isPending}>
+          {update.isPending ? 'Saving…' : 'Save MCP config'}
         </Button>
       </div>
     </Card>

@@ -91,13 +91,15 @@ class MCPAuthRateLimitMiddleware:
 
 
 def build_mcp_middleware(
-    app: ASGIApp, *, rate_limit_rpm: int, master_key: str | None = None
+    app: ASGIApp, *, rate_limit_rpm: Callable[[], int], master_key: str | None = None
 ) -> MCPAuthRateLimitMiddleware:
     """Wire the MCP middleware from config + the configured master key.
 
     Args:
         app: The MCP ASGI app to protect.
-        rate_limit_rpm: Requests-per-minute ceiling per API key.
+        rate_limit_rpm: Returns the requests-per-minute ceiling per API key. Resolved
+            per request (not captured here), so a config change applies to the next
+            request — this middleware is built once at mount and never rebuilt.
         master_key: Override the accepted key (defaults to ``settings.master_api_key``).
 
     Returns:
