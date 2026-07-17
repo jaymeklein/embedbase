@@ -2887,6 +2887,7 @@ components:
           default: true
         rate_limit_rpm:
           type: integer
+          minimum: 1.0
           title: Rate Limit Rpm
           default: 60
         max_results:
