@@ -14,5 +14,5 @@ from api.services.mcp.server import mount_app
 
 
 def mount_mcp(app: FastAPI, mcp_config: MCPConfig) -> None:
-    """Mount the MCP SSE app onto ``app`` (delegated to the service layer)."""
+    """Mount the MCP streamable-HTTP app onto ``app`` (delegated to the service layer)."""
     mount_app(app, mcp_config)
