@@ -275,6 +275,8 @@ export interface JobQuery {
   filename?: string
   file_type?: string
   collection?: string
+  /** Exact collection id — scopes an action to one collection, unlike the `collection` substring. */
+  collection_id?: string
   created_after?: string
   created_before?: string
 }
