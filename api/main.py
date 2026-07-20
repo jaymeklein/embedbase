@@ -239,7 +239,7 @@ def create_app() -> FastAPI:
     # are registered so their routes exist to filter).
     _register_reference(app)
 
-    # MCP server (Delivery 4) — a mounted SSE ASGI sub-app, not a normal router.
+    # MCP server (Delivery 4) — a mounted streamable-HTTP ASGI sub-app, not a normal router.
     # Mount last so its /mcp prefix never shadows the REST routes above.
     mcp.mount_mcp(app, _load_app_config().mcp)
 
