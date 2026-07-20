@@ -24,6 +24,7 @@ from starlette.types import ASGIApp
 from api.db import AsyncSessionLocal
 from api.dependencies import (
     get_embedding_adapter,
+    get_mcp_config,
     get_reranker,
     get_search_config,
     get_vector_store,
@@ -137,8 +138,13 @@ def build_mcp_server(*, max_results: int = 20) -> FastMCP:
 def build_mcp_asgi_app(config: MCPConfig) -> tuple[ASGIApp, FastMCP]:
     """Build the streamable-HTTP ASGI app for ``/mcp``, guarded by auth + limits.
 
+    The rate limit is wired as a *live read* of the ``mcp`` config rather than the
+    ``config`` snapshot passed here: this app is built once at startup and never
+    rebuilt, so capturing the value would freeze it until the next restart. Reading
+    it per request means a config save applies to the very next MCP call.
+
     Args:
-        config: The resolved ``mcp`` config section (rate limit + result cap).
+        config: The resolved ``mcp`` config section, for the startup-time result cap.
 
     Returns:
         ``(asgi_app, server)`` — the auth/rate-limit-wrapped streamable-HTTP app,
@@ -147,7 +153,9 @@ def build_mcp_asgi_app(config: MCPConfig) -> tuple[ASGIApp, FastMCP]:
     """
     server = build_mcp_server(max_results=config.max_results)
     http_app = server.streamable_http_app()
-    guarded = build_mcp_middleware(http_app, rate_limit_rpm=config.rate_limit_rpm)
+    guarded = build_mcp_middleware(
+        http_app, rate_limit_rpm=lambda: get_mcp_config().rate_limit_rpm
+    )
     return guarded, server
 
 
