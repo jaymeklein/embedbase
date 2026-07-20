@@ -32,9 +32,10 @@ ui/dist/
 .DS_Store
 Thumbs.db
 
-# AI assistant local session data. CLAUDE.md is intentionally committed — it is the
-# repo's working agreement / coding standard, enforced for everyone (see the file).
-.claude/*
+# AI assistant data. CLAUDE.md and .claude/{rules,skills}/ are intentionally committed —
+# they are the repo's working agreement, standards, and shared skills, enforced for everyone
+# and carried with the project wherever it's cloned. Only personal/local settings stay out.
 .vscode/launch.json
 .vscode/settings.json
 .playwright-mcp/
+.claude/settings.local.json
