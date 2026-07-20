@@ -310,8 +310,10 @@ on Windows):
 }
 ```
 
-Authenticate with your `MASTER_API_KEY`. Each key is limited to 60 requests/min
-(configurable via `mcp.rate_limit_rpm`); the 61st in a minute returns `429`.
+Authenticate with your `MASTER_API_KEY`. Each key is limited to 60 requests/min;
+the 61st in a minute returns `429`. Change it in **Settings → Config → MCP
+server** — the new limit applies to the next MCP request, no restart. (Setting
+`mcp.rate_limit_rpm` in `config.yaml` works too, but is only read at startup.)
 
 **Tools:** `list_workspaces`, `search_documents` (`query`, `collection_ids[]`,
 `top_k`, `hybrid`, `filters`), `ingest_document` (container-local path),
