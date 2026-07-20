@@ -30,7 +30,7 @@
 ## Features
 
 - **Hybrid search** — semantic (pgvector) fused with BM25 keyword ranking (ParadeDB `pg_search`) in a single SQL round-trip.
-- **Two APIs** — a REST API (`/docs` for OpenAPI) and an MCP server over SSE for Claude Desktop, Cursor, and Zed.
+- **Two APIs** — a REST API (`/docs` for OpenAPI) and an MCP server over streamable HTTP for Claude Desktop, Cursor, and Zed.
 - **Pluggable embeddings** — Ollama, sentence-transformers, any OpenAI-compatible endpoint, or Google Gemini.
 - **Pluggable storage** — uploaded files live on local disk by default, or on any number of S3-compatible backends (self-hosted MinIO, AWS S3, …).
 - **Document parsing** — PDF (fast PyMuPDF or OCR-capable docling), Markdown, and plain text out of the box; DOCX/PPTX when the docling backend is enabled — with optional NVIDIA GPU acceleration.
@@ -41,7 +41,7 @@
 ```mermaid
 flowchart LR
     Browser --> Nginx["Nginx UI · :3000"]
-    Nginx --> API["API · :8000<br/>REST + MCP/SSE"]
+    Nginx --> API["API · :8000<br/>REST + MCP/HTTP"]
     API --> Redis[("Redis<br/>broker + pub/sub")]
     API --> DB[("ParadeDB<br/>pgvector + BM25")]
     API --> Store["Object storage<br/>local / S3 / MinIO"]
@@ -289,8 +289,8 @@ EmbedBase exposes an MCP server over **streamable HTTP** at
 endpoint carries the `/api` prefix; note the trailing slash). Claude Desktop
 bridges to a *remote* HTTP server via
 [`mcp-remote`](https://www.npmjs.com/package/mcp-remote). Add to
-`~/.config/claude/claude_desktop_config.json` (or `%APPDATA%\Claude\claude_desktop_config.json`
-on Windows):
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or
+`%APPDATA%\Claude\claude_desktop_config.json` (Windows):
 
 ```json
 {
@@ -340,7 +340,7 @@ Host ports are configurable in `.env` (change them if the defaults conflict; run
 | Port | Service | `.env` var | Notes |
 |---|---|---|---|
 | `3000` | Nginx / UI | `UI_PORT` | Primary entrypoint. |
-| `8000` | API | `API_PORT` | REST + MCP/SSE. Remove this mapping on shared networks (Nginx is the only ingress). |
+| `8000` | API | `API_PORT` | REST + MCP/HTTP. Remove this mapping on shared networks (Nginx is the only ingress). |
 | `5432` | ParadeDB | `POSTGRES_HOST_PORT` | Bound to `127.0.0.1` for a local DB GUI; never exposed on the LAN. |
 | `9000` / `9001` | MinIO API / console | `MINIO_PORT` / `MINIO_CONSOLE_PORT` | Only with `docker-compose.minio.yml`. |
 
