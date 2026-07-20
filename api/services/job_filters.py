@@ -41,6 +41,18 @@ class CollectionSpec(FilterSpec):
         return ilike_contains(col_t.c.name, self.value) if self.value else None
 
 
+class CollectionIdSpec(FilterSpec):
+    """Exact collection id, straight off the job row (no join, no fuzziness).
+
+    The sibling of :class:`CollectionSpec` for callers that must scope to exactly one
+    collection — a bulk retry driven from the indexing page, say. The name substring
+    cannot do that: "leis" also matches "leis-antigas".
+    """
+
+    async def to_condition(self, db: AsyncSession) -> Any | None:
+        return job_t.c.collection_id == self.value if self.value else None
+
+
 class CreatedAfterSpec(FilterSpec):
     async def to_condition(self, db: AsyncSession) -> Any | None:
         return job_t.c.created_at >= self.value if self.value else None
@@ -59,6 +71,7 @@ def build_specs(query: JobListQuery) -> list[FilterSpec]:
         FilenameSpec(query.filename),
         FileTypeSpec(query.file_type),
         CollectionSpec(query.collection),
+        CollectionIdSpec(query.collection_id),
         CreatedAfterSpec(query.created_after),
         CreatedBeforeSpec(query.created_before),
     ]
