@@ -118,7 +118,14 @@ export default function IngestionQueue() {
         message={error?.message}
         onRetry={() => void refetch()}
       />
-      <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} loading={isLoading} />
+      <Pager
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPage={setPage}
+        loading={isLoading}
+        sticky
+      />
 
       <ConfirmDialog
         open={confirmRetry}
