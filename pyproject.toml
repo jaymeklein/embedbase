@@ -15,6 +15,8 @@ dependencies = [
     "uvicorn[standard]>=0.29.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
+    # Backs pydantic's EmailStr (user email validation); pydantic v2 needs v2+.
+    "email-validator>=2.0.0",
     "aiosqlite>=0.20.0",
     "psycopg[binary]>=3.1.0",
     "python-multipart>=0.0.9",
