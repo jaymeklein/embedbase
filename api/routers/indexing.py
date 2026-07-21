@@ -6,13 +6,14 @@ lives in api/services/indexing.py.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
 from api.models.indexing import IndexEnqueueResponse, IndexStatusResponse
 from api.services import documents as doc_svc
 from api.services import indexing as index_svc
+from api.services import permissions
 from api.services.auth import Principal, require_auth, require_master
 
 router = APIRouter(tags=["indexing"])
@@ -39,8 +40,7 @@ async def index_collection(
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of every active document in a collection."""
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    await permissions.authorize_collection(db, principal, col_id, "write")
     return index_svc.enqueue_collection(col_id)
 
 
@@ -57,6 +57,6 @@ async def index_document(
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of a single document."""
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    # Single-document op → authorize the document (honors document-level grants).
+    await permissions.authorize_document(db, principal, doc_id, "write")
     return index_svc.enqueue_document(doc_id, col_id)
