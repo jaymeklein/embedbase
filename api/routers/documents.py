@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
 from api.models.document import DocumentListQuery
 from api.services import documents as doc_svc
+from api.services import permissions
 from api.services.auth import Principal, require_auth
 
 router = APIRouter(tags=["documents"])
@@ -56,8 +57,7 @@ async def list_documents(
     inclusive. See :class:`DocumentListQuery` for the full set of query parameters.
     """
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    await permissions.authorize_collection(db, principal, col_id, "read")
     return await doc_svc.list_documents(db, col_id, query)
 
 
@@ -71,8 +71,9 @@ async def get_document_status(
 ):
     """Return the latest ingestion job status for a document."""
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    # Single-document op → authorize the document (honors document-level grants),
+    # matching the flat routes; the collection subtree is covered by an ancestor grant.
+    await permissions.authorize_document(db, principal, doc_id, "read")
     return await doc_svc.get_document_status(db, col_id, doc_id)
 
 
@@ -88,8 +89,7 @@ async def delete_document(
 ):
     """Delete a document and enqueue async vector-store cleanup."""
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    await permissions.authorize_document(db, principal, doc_id, "write")
     await doc_svc.delete_document(db, col_id, doc_id)
 
 
@@ -126,9 +126,8 @@ async def delete_document_flat(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a document by ID without the nested workspace/collection path."""
+    await permissions.authorize_document(db, principal, doc_id, "write")
     col_id = await doc_svc.resolve_document_collection(db, doc_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
     await doc_svc.delete_document(db, col_id, doc_id)
 
 
@@ -140,7 +139,6 @@ async def reprocess_document_flat(
 ):
     """Re-enqueue a document's ingestion — the manual retry for a failed file. Reuses the stored
     bytes (nothing is re-uploaded) and surfaces a fresh pending job in the queue."""
+    await permissions.authorize_document(db, principal, doc_id, "write")
     col_id = await doc_svc.resolve_document_collection(db, doc_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
     return await doc_svc.reprocess_document(db, col_id, doc_id)

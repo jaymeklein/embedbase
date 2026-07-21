@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
-from api.services import realtime
+from api.services import permissions, realtime
 from api.services.auth import authenticate_api_key
 from api.settings import settings
 
@@ -45,17 +45,18 @@ async def realtime_ws(
 ) -> None:
     await websocket.accept()
 
-    # A collection-scoped topic is authorized against that collection; any other
-    # topic requires the master key.
+    # A collection-scoped topic is authorized (read) against that collection; any
+    # other topic requires the master key.
     collection_id = topic.split(":", 1)[1] if topic.startswith("ingestion:") else None
     try:
-        principal = await authenticate_api_key(key, db, collection_id=collection_id)
+        principal = await authenticate_api_key(key, db)
+        if collection_id is not None:
+            await permissions.authorize_collection(db, principal, collection_id, "read")
+        elif not principal.is_master:
+            raise HTTPException(403, "Master API key required")
     except HTTPException as exc:
         code = _WS_UNAUTHORIZED if exc.status_code == 401 else _WS_FORBIDDEN
         await websocket.close(code=code)
-        return
-    if collection_id is None and not principal.is_master:
-        await websocket.close(code=_WS_FORBIDDEN)
         return
 
     channel = realtime.channel(topic)
