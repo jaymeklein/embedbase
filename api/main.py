@@ -31,6 +31,7 @@ from api.routers import (
     mcp,
     search,
     tags,
+    users,
     workspaces,
     ws,
 )
@@ -233,6 +234,7 @@ def create_app() -> FastAPI:
     app.include_router(indexing.router)
     app.include_router(jobs.router)
     app.include_router(config.router)
+    app.include_router(users.router)
     app.include_router(ws.router)
 
     # Standalone OpenAPI reference of just the integration endpoints (after routers

@@ -20,14 +20,15 @@ delegating call** to a service. No business logic, no raw SQL, no schema declara
 |--------|------|------|----------------|
 | `health` | `/healthz`, `/metrics` | none | liveness snapshot |
 | `workspaces` | `/workspaces` | router `require_master` | workspace CRUD |
-| `collections` | `/workspaces/{ws}/collections` | router `require_master` | collection CRUD + API-key mgmt |
-| `documents` | nested + flat `/documents…` | per-route `require_auth` + `can_access` | upload / list / status / delete / download / reprocess |
+| `collections` | `/workspaces/{ws}/collections` | router `require_master` | collection CRUD |
+| `documents` | nested + flat `/documents…` | per-route `require_auth` + `permissions.authorize_*` | upload / list / status / delete / download / reprocess |
 | `tags` | `/workspaces/{ws}` | router `require_master` | tag CRUD, merge, assignment |
 | `graph` | `/workspaces/{ws}` | router `require_master` | tag-correlation graph |
-| `search` | `POST /search` | per-route `require_master` | multi-collection hybrid search |
+| `search` | `POST /search` | per-route `require_auth` + grant filter | multi-collection hybrid search |
 | `indexing` | `/indexing/…` | mixed master/auth | BM25 (re)index status + enqueue |
 | `jobs` | `/ingestion/jobs…` | `require_master` | ingestion-queue list, stats, retry-failed |
 | `config` | `/config` | router `require_master` | live config GET/PUT, ollama-models, reload-status |
+| `users` | `/users` | router `require_master` | user CRUD, activate/deactivate, keys, permission grants |
 | `ws` | `WS /ws` | `?key=` query param | Redis pub/sub → WebSocket (ingestion progress) |
 | `mcp` | mounted `/mcp` | in middleware | MCP ASGI sub-app, mounted **last** ([`mcp.md`](mcp.md)) |
 
