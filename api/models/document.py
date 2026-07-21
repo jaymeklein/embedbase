@@ -76,5 +76,9 @@ class JobListQuery(BaseModel):
     filename: str | None = None  # case-insensitive substring
     file_type: str | None = None
     collection: str | None = None  # case-insensitive substring on the collection name
+    # Exact collection id. Distinct from ``collection`` on purpose: the name substring is the
+    # queue's human filter, but an action scoped to *one* collection (the indexing page's retry)
+    # must not sweep a sibling whose name merely contains the same text.
+    collection_id: str | None = None
     created_after: str | None = None
     created_before: str | None = None

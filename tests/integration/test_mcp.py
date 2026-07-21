@@ -381,7 +381,9 @@ async def _resolve_secret(raw_key: str) -> Principal:
 
 def _guarded(rpm: int) -> MCPAuthRateLimitMiddleware:
     return MCPAuthRateLimitMiddleware(
-        _ok_app, resolve_principal=_resolve_secret, rate_limiter=TokenBucketRateLimiter(rpm)
+        _ok_app,
+        resolve_principal=_resolve_secret,
+        rate_limiter=TokenBucketRateLimiter(lambda: rpm),
     )
 
 
@@ -404,7 +406,7 @@ async def test_inactive_user_key_is_forbidden():
         raise HTTPException(403, "User is inactive")
 
     mw = MCPAuthRateLimitMiddleware(
-        _ok_app, resolve_principal=_resolve_inactive, rate_limiter=TokenBucketRateLimiter(60)
+        _ok_app, resolve_principal=_resolve_inactive, rate_limiter=TokenBucketRateLimiter(lambda: 60)
     )
     async with AsyncClient(transport=ASGITransport(app=mw), base_url="http://mcp") as ac:
         r = await ac.get("/sse", headers={"X-API-Key": "some-user-key"})

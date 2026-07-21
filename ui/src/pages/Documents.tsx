@@ -209,7 +209,14 @@ export default function Documents() {
         onDelete={setDeleteTarget}
       />
 
-      <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} loading={isLoading} />
+      <Pager
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={total}
+        onPage={setPage}
+        loading={isLoading}
+        sticky
+      />
 
       <ConfirmDialog
         open={deleteTarget !== null}

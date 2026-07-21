@@ -113,9 +113,12 @@ A typical flow inside a session:
 
 - Every request must carry the master key (`Authorization: Bearer …` or
   `X-API-Key: …`). A missing or wrong key returns **401**.
-- Requests are rate-limited per key — **60 requests/min** by default
-  (`mcp.rate_limit_rpm` in `config.yaml`). The 61st within a minute returns
-  **429**.
+- Requests are rate-limited per key — **60 requests/min** by default. The 61st
+  within a minute returns **429**. Raise the ceiling in **Settings → Config →
+  MCP server**: the limiter re-reads the limit on every request, so a save binds
+  on the next call with no restart. Editing `mcp.rate_limit_rpm` in `config.yaml`
+  by hand works too, but nothing re-reads the file at runtime — that route only
+  takes effect when the API restarts.
 
 ## Remote / LAN access
 
@@ -139,7 +142,7 @@ own machine, keep `MASTER_API_KEY` strong and set
 | `✗ Failed to connect`, `404 Not Found` | Wrong path — used `/mcp/` or dropped the `/api` prefix | Use `http://localhost:8000/api/mcp/` (API port, `/api` prefix, trailing slash), or `http://<console>/api/mcp/`. |
 | Registered as `sse` / old `/api/mcp/sse` URL | Stale SSE registration | Remove and re-add with `--transport http` and the `/api/mcp/` URL (below). |
 | `401 Missing or invalid API key` | Key not sent or wrong | Check the `Authorization`/`X-API-Key` header matches `MASTER_API_KEY`. |
-| `429 Rate limit exceeded` | > 60 req/min on one key | Back off, or raise `mcp.rate_limit_rpm` in `config.yaml`. |
+| `429 Rate limit exceeded` | > 60 req/min on one key | Back off, or raise the limit in Settings → Config → MCP server (applies immediately). |
 | Connection refused | Stack not up / wrong port | `docker compose ps`; confirm the API port and `curl /healthz`. |
 | `search_documents` errors / 500 | Embedding provider down | Start Ollama (`ollama serve`) and `ollama pull embeddinggemma`. |
 

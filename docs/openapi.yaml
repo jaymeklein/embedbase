@@ -2084,6 +2084,14 @@ paths:
           - type: string
           - type: 'null'
           title: Collection
+      - name: collection_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Collection Id
       - name: created_after
         in: query
         required: false
@@ -2243,6 +2251,14 @@ paths:
           - type: string
           - type: 'null'
           title: Collection
+      - name: collection_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Collection Id
       - name: created_after
         in: query
         required: false
@@ -2887,6 +2903,7 @@ components:
           default: true
         rate_limit_rpm:
           type: integer
+          minimum: 1.0
           title: Rate Limit Rpm
           default: 60
         max_results:
