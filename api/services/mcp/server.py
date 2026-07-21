@@ -30,6 +30,7 @@ from api.dependencies import (
 )
 from api.models.config import MCPConfig
 from api.services.mcp import tools
+from api.services.mcp.context import current_principal
 from api.services.mcp.middleware import build_mcp_middleware
 
 
@@ -47,7 +48,7 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
     async def list_workspaces() -> dict[str, Any]:
         """List all workspaces with their collections and document counts."""
         async with AsyncSessionLocal() as db:
-            return await tools.list_workspaces(db=db)
+            return await tools.list_workspaces(db=db, principal=current_principal())
 
     @server.tool()
     async def search_documents(
@@ -77,6 +78,7 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
                 expand_neighbors=search_config.effective_expand_neighbors,
                 expand_char_budget=search_config.expand_char_budget,
                 db=db,
+                principal=current_principal(),
                 embedder=embedder,
                 vector_store=vector_store,
                 reranker=get_reranker(),  # optional — None skips the rerank stage
@@ -94,20 +96,24 @@ def _register_tools(server: FastMCP, *, max_results: int) -> None:
         async with AsyncSessionLocal() as db:
             return await tools.ingest_document(
                 collection_id=collection_id, file_path=file_path,
-                temporary=temporary, db=db,
+                temporary=temporary, db=db, principal=current_principal(),
             )
 
     @server.tool()
     async def list_documents(collection_id: str) -> dict[str, Any]:
         """List the documents in a collection with their ingestion status."""
         async with AsyncSessionLocal() as db:
-            return await tools.list_documents(collection_id=collection_id, db=db)
+            return await tools.list_documents(
+                collection_id=collection_id, db=db, principal=current_principal()
+            )
 
     @server.tool()
     async def delete_document(document_id: str) -> dict[str, Any]:
         """Delete a document and enqueue async vector + BM25 cleanup."""
         async with AsyncSessionLocal() as db:
-            return await tools.delete_document(document_id=document_id, db=db)
+            return await tools.delete_document(
+                document_id=document_id, db=db, principal=current_principal()
+            )
 
 
 def build_mcp_server(*, max_results: int = 20) -> FastMCP:
@@ -127,6 +133,10 @@ def build_mcp_server(*, max_results: int = 20) -> FastMCP:
         A ready-to-serve :class:`FastMCP` instance.
     """
     server = FastMCP("embedbase", stateless_http=True, json_response=True)
+    # NB: per-request auth relies on ``stateless_http=True`` — each request spawns its
+    # own handler task, so the middleware's ContextVar principal (context.py) is bound
+    # per request. Under stateful sessions the handler task is per-session, which would
+    # pin the first caller's principal to every later call. Do not flip this flag.
     # Serve at the mount root so the external endpoint is a clean ``/api/mcp``
     # (this app is mounted at ``/mcp`` and the app carries root_path ``/api``).
     server.settings.streamable_http_path = "/"
