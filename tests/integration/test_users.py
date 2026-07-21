@@ -35,6 +35,28 @@ async def test_create_user_duplicate_email_returns_409(master_client):
     assert r.status_code == 409
 
 
+async def test_create_user_rejects_invalid_email(master_client):
+    r = await master_client.post("/users", json={"email": "not-an-email"})
+    assert r.status_code == 422
+
+
+async def test_update_user_rejects_invalid_email(master_client):
+    uid = (await _make_user(master_client, "good@example.com"))["id"]
+    r = await master_client.patch(f"/users/{uid}", json={"email": "bad"})
+    assert r.status_code == 422
+
+
+async def test_create_user_canonicalizes_email(master_client):
+    data = await _make_user(master_client, "MixedCase@Example.COM")
+    assert data["email"] == "mixedcase@example.com"
+
+
+async def test_duplicate_email_is_case_insensitive(master_client):
+    await _make_user(master_client, "Case@Example.com")
+    r = await master_client.post("/users", json={"email": "case@example.com"})
+    assert r.status_code == 409
+
+
 async def test_list_users_returns_created(master_client):
     await _make_user(master_client, "u1@example.com")
     await _make_user(master_client, "u2@example.com")

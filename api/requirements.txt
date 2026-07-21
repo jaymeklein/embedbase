@@ -8,6 +8,8 @@ fastapi>=0.136.0,<0.138.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
 pydantic-settings>=2.2.0
+# Backs pydantic's EmailStr (user email validation); pydantic v2 needs v2+.
+email-validator>=2.0.0
 # SQLAlchemy 2.0 async (aiosqlite is the async driver for SQLite; psycopg (v3)
 # drives Postgres in both sync and async mode — same package, one DATABASE_URL).
 sqlalchemy[asyncio]>=2.0.0
