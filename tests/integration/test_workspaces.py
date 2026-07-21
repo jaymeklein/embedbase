@@ -204,15 +204,9 @@ async def test_no_auth_delete_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_collection_key_on_workspace_route_returns_403(client):
-    """A collection-scoped key must be rejected (403) on management routes."""
-    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
-    col_id = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
-    ).json()["id"]
-    raw_key = (
-        await client.post(f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH)
-    ).json()["raw_key"]
+async def test_user_key_on_workspace_route_returns_403(client, make_user_key):
+    """A user key must be rejected (403) on the master-only workspace routes."""
+    _, raw_key = await make_user_key()
 
     r = await client.post(
         "/workspaces",

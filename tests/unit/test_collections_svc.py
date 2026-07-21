@@ -1,13 +1,11 @@
-"""Tests for collection and API key creation services."""
+"""Tests for the collection creation service."""
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import insert, select
+from sqlalchemy import insert
 
-from api.db import api_keys as keys_t
-from api.db import collections as col_t
 from api.db import workspaces as ws_t
-from api.services.collections import create_collection, mint_api_key
+from api.services.collections import create_collection
 
 
 async def _seed_workspace(db_session) -> str:
@@ -26,25 +24,6 @@ async def _seed_workspace(db_session) -> str:
     )
     await db_session.commit()
     return ws_id
-
-
-async def _seed_collection(db_session, ws_id: str) -> str:
-    """Create a test collection and return its ID."""
-    col_id = "col_test"
-    await db_session.execute(
-        insert(col_t).values(
-            id=col_id,
-            workspace_id=ws_id,
-            name="Test Collection",
-            description="",
-            color="",
-            icon="",
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
-        )
-    )
-    await db_session.commit()
-    return col_id
 
 
 async def test_create_collection_success(db_session) -> None:
@@ -90,26 +69,3 @@ async def test_create_collection_duplicate_name_raises_409(db_session) -> None:
         )
     assert exc.value.status_code == 409
     assert "already exists" in exc.value.detail
-
-
-async def test_mint_api_key_success(db_session) -> None:
-    ws_id = await _seed_workspace(db_session)
-    col_id = await _seed_collection(db_session, ws_id)
-    result = await mint_api_key(
-        collection_id=col_id,
-        label="test-key",
-        db=db_session,
-    )
-    assert result["collection_id"] == col_id
-    assert result["label"] == "test-key"
-    assert result["raw_key"].startswith("eb_")
-    assert len(result["key_prefix"]) == 8
-    assert result["id"] is not None
-    assert "created_at" in result
-    row = (
-        await db_session.execute(
-            select(keys_t.c.key_hash).where(keys_t.c.id == result["id"])
-        )
-    ).fetchone()
-    assert row is not None
-    assert row.key_hash is not None
