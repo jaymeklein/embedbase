@@ -2,10 +2,16 @@
 
 Each function is a thin, framework-agnostic wrapper over an existing service, so
 the same logic is exercised by both the ``FastMCP`` server
-(:mod:`api.services.mcp.server`) and the integration tests — no SSE transport is
-needed to test a tool. The server layer is responsible for resolving the
-``db``/``embedder``/``vector_store``/``redis_client`` dependencies and passing
-them in as keyword arguments.
+(:mod:`api.services.mcp.server`) and the integration tests — no transport is
+needed to test a tool. The server layer resolves the
+``db``/``embedder``/``vector_store``/``principal`` dependencies and passes them in
+as keyword arguments.
+
+Every tool receives the authenticated ``principal`` and enforces that caller's
+grants (via :mod:`api.services.permissions`) before touching data: reads require a
+``read`` grant on the collection (or an ancestor), writes require ``write``, and
+``list_workspaces`` is filtered to what the caller may read. The master principal
+passes every check.
 """
 
 from __future__ import annotations
@@ -21,14 +27,10 @@ from api.constants import DEFAULT_EXPAND_CHAR_BUDGET
 from api.models.document import DocumentListQuery
 from api.models.search import SearchRequest, SearchResponse
 from api.services import documents as doc_svc
+from api.services import permissions
 from api.services import workspaces as ws_svc
 from api.services.auth import Principal
 from api.services.search import multi_collection_search
-
-# MCP authenticates with the master key (see api.services.mcp.middleware), so the
-# tools run with full access. The principal is still threaded through so the
-# collection-scoping checks stay honest and unit-testable.
-MASTER_PRINCIPAL = Principal(is_master=True)
 
 _TOP_K_FLOOR = 1
 
@@ -59,9 +61,11 @@ def _saturation_notice(
     )
 
 
-async def list_workspaces(*, db: AsyncSession) -> dict[str, Any]:
-    """Return the workspace tree with per-collection and per-workspace counts."""
-    return {"workspaces": await ws_svc.list_workspace_tree(db)}
+async def list_workspaces(*, db: AsyncSession, principal: Principal) -> dict[str, Any]:
+    """Return the workspace tree, filtered to what ``principal`` may read."""
+    tree = await ws_svc.list_workspace_tree(db)
+    tree = await permissions.filter_workspace_tree(db, principal, tree)
+    return {"workspaces": tree}
 
 
 async def search_documents(
@@ -75,11 +79,15 @@ async def search_documents(
     expand_neighbors: int = 0,
     expand_char_budget: int = DEFAULT_EXPAND_CHAR_BUDGET,
     db: AsyncSession,
+    principal: Principal,
     embedder: EmbeddingAdapter,
     vector_store: PgvectorAdapter,
     reranker: Reranker | None = None,
 ) -> dict[str, Any]:
     """Run a hybrid (semantic + BM25) search across one or more collections.
+
+    The requested ``collection_ids`` are narrowed to those ``principal`` may read;
+    searching only unauthorized collections raises ``403``.
 
     Args:
         query: Natural-language search string.
@@ -91,6 +99,7 @@ async def search_documents(
         expand_neighbors: A2 adjacency window pulled around each hit (0 = off).
         expand_char_budget: Soft cap on an assembled span's text.
         db: Active async database session.
+        principal: Authenticated caller whose read grants scope the search.
         embedder: Embedding adapter for the query vector.
         vector_store: Vector store to search (also does FTS/BM25 scoring).
         reranker: Optional cross-encoder reranker (None when disabled/not loaded).
@@ -98,11 +107,14 @@ async def search_documents(
     Returns:
         A JSON-serialisable ``SearchResponse`` dict with results and stats.
     """
+    allowed = await permissions.readable_collection_ids(db, principal, collection_ids)
+    if not allowed:
+        raise HTTPException(403, permissions.NO_READABLE_COLLECTIONS)
     bounded_top_k = max(_TOP_K_FLOOR, min(top_k, max_results))
     request = SearchRequest.model_validate(
         {
             "query": query,
-            "collection_ids": collection_ids,
+            "collection_ids": allowed,
             "top_k": bounded_top_k,
             "hybrid": hybrid,
             "filters": filters,
@@ -135,37 +147,45 @@ async def ingest_document(
     file_path: str,
     temporary: bool = False,
     db: AsyncSession,
-    principal: Principal = MASTER_PRINCIPAL,
+    principal: Principal,
 ) -> dict[str, Any]:
     """Enqueue a container-local file for ingestion into ``collection_id``.
 
-    Set ``temporary`` to auto-purge the document after ``storage.temp_retention_hours``
-    (a no-op when retention is 0).
+    **Master key only** — referencing an arbitrary server-side path is an operator
+    capability (it can read any file the server can reach), so a scoped user key is
+    rejected (enforced in the service). Scoped users upload bytes via the REST API
+    instead. Set ``temporary`` to auto-purge the document after
+    ``storage.temp_retention_hours`` (a no-op when retention is 0).
     """
     return await doc_svc.ingest_local_path(
         db, collection_id, file_path, principal, temporary=temporary
     )
 
 
-async def list_documents(*, collection_id: str, db: AsyncSession) -> dict[str, Any]:
+async def list_documents(
+    *, collection_id: str, db: AsyncSession, principal: Principal
+) -> dict[str, Any]:
     """List active documents (with ingestion status) in ``collection_id``.
 
-    Returns the newest up-to-200 documents plus ``total`` (the full count); when ``total`` exceeds
-    the returned set, narrow the collection or use the REST endpoint's pagination for the rest.
+    Requires a ``read`` grant on the collection. Returns the newest up-to-200
+    documents plus ``total`` (the full count); when ``total`` exceeds the returned
+    set, narrow the collection or use the REST endpoint's pagination for the rest.
     """
+    await permissions.authorize_collection(db, principal, collection_id, "read")
     page = await doc_svc.list_documents(db, collection_id, DocumentListQuery(limit=200))
     return {"documents": page["items"], "total": page["total"]}
 
 
 async def delete_document(
-    *,
-    document_id: str,
-    db: AsyncSession,
-    principal: Principal = MASTER_PRINCIPAL,
+    *, document_id: str, db: AsyncSession, principal: Principal
 ) -> dict[str, Any]:
-    """Soft-delete a document and enqueue async vector + BM25 cleanup."""
+    """Soft-delete a document and enqueue async vector + BM25 cleanup.
+
+    Requires a ``write`` grant on the document (or an ancestor collection/workspace).
+    """
+    # Authorize before resolving so an unpermitted caller can't tell "forbidden"
+    # (403) from "nonexistent" (404) — both are 403.
+    await permissions.authorize_document(db, principal, document_id, "write")
     collection_id = await doc_svc.resolve_document_collection(db, document_id)
-    if not principal.can_access(collection_id):
-        raise HTTPException(403, "API key not valid for this collection")
     await doc_svc.delete_document(db, collection_id, document_id)
     return {"document_id": document_id, "collection_id": collection_id, "status": "deleting"}
