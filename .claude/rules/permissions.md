@@ -1,60 +1,81 @@
 ---
 paths:
   - "api/services/auth.py"
+  - "api/services/permissions.py"
+  - "api/services/users.py"
   - "api/tables/api_keys.py"
-  - "api/services/collections.py"
+  - "api/tables/users.py"
+  - "api/tables/permissions.py"
+  - "api/routers/users.py"
   - "api/services/mcp/middleware.py"
   - "api/services/mcp/rate_limit.py"
-  - "api/routers/collections.py"
   - "api/routers/ws.py"
 ---
 
-# Permissions — API-key auth
+# Permissions — users, API keys, and grants
 
-**API keys only — no sessions/cookies/JWT.** The core is `api/services/auth.py`. Authorization is binary:
-**master vs single-collection** (no roles/RBAC/scopes).
+**API keys only — no sessions/cookies/JWT.** Two credentials: the **master key** (admin/bootstrap) and a
+**user key** (one per user). What a user key may reach is decided by **grants** (`read`/`write`) over the
+`workspace → collection → document` hierarchy. The auth core is `api/services/auth.py`; the single
+authorization authority is `api/services/permissions.py`.
 
-## Two credential types
+## Credentials
 - **Master key** — the one required secret `MASTER_API_KEY` (`api/settings.py`; app won't start without it).
-  Grants access to every workspace/collection. Matched with `secrets.compare_digest` (constant-time).
-- **Collection key** — an `eb_`-prefixed token scoped to exactly one collection. Stored in the `api_keys`
-  table as `key_prefix` (chars `raw[3:11]`, indexed) + **bcrypt** `key_hash`. Auth = narrow by prefix, then
-  `bcrypt.checkpw` the full key. The raw key and plaintext are **never** stored.
+  Bypasses every check (any workspace/collection/document; the whole management plane). Matched with
+  `secrets.compare_digest` (constant-time).
+- **User key** — an `eb_`-prefixed token owned by a **user** (`api_keys.user_id`, `UNIQUE(user_id)` → exactly
+  one key each). Stored as `key_prefix` (chars `raw[3:11]`, indexed) + **bcrypt** `key_hash`; auth narrows by
+  prefix then `bcrypt.checkpw`. The raw key is returned **once** at mint and never again. A key whose user is
+  **inactive** (`users.is_active = False`) is rejected with `403`.
 - Header: `X-API-Key` (preferred) or `Authorization: Bearer <key>`. WebSocket can't set headers → `?key=`
-  query param (`api/routers/ws.py`). Auth resolves to a frozen `Principal(is_master, collection_id, api_key_id)`.
+  query param (`api/routers/ws.py`). Auth resolves to a frozen `Principal(is_master, user_id, api_key_id)`.
 
-## Protecting a route
-Two FastAPI deps in `auth.py`:
-- `require_master` → `Principal`, 403 unless `is_master`.
-- `require_auth` → `Principal` (master **or** collection key); **does not** enforce collection scope.
+## Grants (`permissions` table)
+A grant gives one user a `level` (`read` | `write`) on one resource (`workspace` | `collection` | `document`).
+Grants are **hierarchical** and `write` implies `read`:
+- a **workspace** grant covers its collections and documents;
+- a **collection** grant covers its documents;
+- `read` = search / list / download; `write` = ingest / delete (and read).
 
-Patterns:
-- **Admin/management planes** → router-level gate: `APIRouter(..., dependencies=[Depends(require_master)])`
-  (collections, workspaces, tags, config, graph). This exists so a later-added endpoint can't be accidentally
-  unauthenticated.
-- **Collection-scoped route** → the canonical shape:
-  ```python
-  principal: Principal = Depends(require_auth)
-  await doc_svc.resolve_collection(db, col_id, ws_id)   # 404 if not in ws
-  if not principal.can_access(col_id):
-      raise HTTPException(403, "API key not valid for this collection")
-  ```
-  Forgetting the `can_access` check after `require_auth` leaves a collection key able to touch other
-  collections — the scope check is your responsibility per route.
-- Note: **search is master-only**; collection keys manage their own collection's documents but can't run search.
+`resource_id` is a plain string (no FK — polymorphic across three tables, like `job_records`); a grant left
+dangling by a deleted resource is harmless (uuids are never reissued).
 
-## Key lifecycle (`api/services/collections.py`)
-- **Mint**: `raw = "eb_" + secrets.token_urlsafe(32)`; store `key_prefix` + `bcrypt.hashpw(raw, gensalt(rounds=12))`.
-  The raw key is returned **once** and never retrievable again.
-- **List/mask**: metadata only — the query never selects `key_hash`; clients see only `key_prefix`.
-- **Revoke**: hard-deletes the row (immediate; no soft-delete/disabled flag).
+## Enforcing access — `api/services/permissions.py` is the only authority
+Routers and MCP tools call it and let it raise `403`; **never** re-implement the check inline:
+- `authorize_collection(db, principal, col_id, need)` / `authorize_document(db, principal, doc_id, need)` —
+  master passes; a user passes iff a `need`-satisfying grant exists on the resource **or an ancestor**.
+- `readable_collection_ids(db, principal, ids)` — narrows a candidate list (used by `/search` and the MCP
+  `search_documents`; 403 when none survive).
+- `filter_workspace_tree(db, principal, tree)` — prunes the MCP `list_workspaces` tree to readable nodes.
+
+Two FastAPI deps stay in `auth.py`: `require_master` (403 unless `is_master`) and `require_auth` (master or
+user key; records `last_used_at`). Patterns:
+- **Management planes** → router-level gate `APIRouter(..., dependencies=[Depends(require_master)])`
+  (workspaces, collections, tags, config, graph, **users**). Creating workspaces/collections/keys/grants is
+  **master-only** — users get the data plane, not the management plane.
+- **Data-plane route** → `require_auth` then `await permissions.authorize_*(db, principal, ..., need)`
+  (documents, indexing, search, the ws bridge). `/search` authorizes each requested collection for `read`.
+
+## Users management API (`api/routers/users.py`, `api/services/users.py` — master-only)
+CRUD users (create/list/get/update/delete), activate/deactivate (`is_active`), mint/rotate/revoke the user's
+one key (`POST|DELETE /users/{id}/key`; mint returns the raw key once, and **replaces** any existing key —
+that's rotation), and grant CRUD (`GET|POST /users/{id}/permissions`, `DELETE …/{grant_id}`, delegating to
+the permissions service). Key minting lives in `users.py` — the sole place keys are created.
+
+## MCP
+The MCP transport authenticates the caller's key (master or active user) in `api/services/mcp/middleware.py`
+and binds the resolved `Principal` for the request (`api/services/mcp/context.py`); each tool enforces that
+principal's grants (`api/services/mcp/tools.py`) and returns a tool error (403) when denied. **Exception:**
+`ingest_document` references an arbitrary container-local path (`documents.ingest_local_path`), so it is
+**master-only** — a scoped write grant must not become an arbitrary server-file read / cross-tenant copy.
+Over-limit → 429 (per-key token bucket). See [`mcp.md`](mcp.md).
 
 ## Hard rules / gotchas
-- **Never return or log `key_hash` or a raw key.** Hashing is fixed: bcrypt, `rounds=12`; prefix is only a
-  candidate filter — never authenticate on prefix alone. Auth errors are coarse (401 vs 403) — don't leak which part failed.
-- **MCP** runs as master: its transport is gated by `MCPAuthRateLimitMiddleware` (master key only + per-key
-  token-bucket rate limit → 429), and tools use `MASTER_PRINCIPAL` ([`mcp.md`](mcp.md)).
-- **Known gap**: `record_key_use` (updates `last_used_at`) is currently only called in tests — no router/dep
-  invokes it, so `last_used_at` is effectively never updated in the running app. Don't assume usage tracking works.
-- Config secrets are masked by a separate mechanism ([`configuration.md`](configuration.md)) — same
-  "never expose secrets" rule, different code path. Request-id logging is in `api/middleware.py` (not auth).
+- **Never return or log `key_hash` or a raw key.** Hashing is fixed: bcrypt, `rounds=12`; the prefix is only a
+  candidate filter — never authenticate on prefix alone. Auth errors are coarse (401 missing/invalid vs 403
+  inactive/unauthorized) — don't leak which part failed.
+- **One authority**: resource decisions go through `permissions.authorize_*` — don't add ad-hoc scope checks in
+  routers/tools. There is no `Principal.can_access` anymore.
+- `record_key_use` now runs in `require_auth` and the MCP middleware, so `last_used_at` is live (was a known gap).
+- Config secrets are masked separately ([`configuration.md`](configuration.md)) — same "never expose secrets"
+  rule, different code path.
