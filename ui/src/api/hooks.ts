@@ -16,18 +16,21 @@ import {
 } from '@tanstack/react-query'
 import { api } from './client'
 import type {
-  ApiKeyCreate,
   AppConfig,
   CollectionCreate,
   CollectionUpdate,
   DocumentQuery,
   DocumentSummary,
+  GrantCreate,
   JobQuery,
   SearchRequest,
   SearchResponse,
   TagCreate,
   TagMerge,
   TagUpdate,
+  UserCreate,
+  UserKeyCreate,
+  UserUpdate,
   WorkspaceCreate,
   WorkspaceUpdate,
 } from './types'
@@ -42,8 +45,9 @@ export const qk = {
     ['workspaces', wsId, 'collections', colId] as const,
   documents: (wsId: string, colId: string) =>
     ['workspaces', wsId, 'collections', colId, 'documents'] as const,
-  apiKeys: (wsId: string, colId: string) =>
-    ['workspaces', wsId, 'collections', colId, 'keys'] as const,
+  users: ['users'] as const,
+  user: (id: string) => ['users', id] as const,
+  permissions: (userId: string) => ['users', userId, 'permissions'] as const,
   config: ['config'] as const,
   jobs: ['jobs'] as const,
   jobStats: ['jobs', 'stats'] as const,
@@ -313,33 +317,90 @@ export function useDeleteCollection(wsId: string) {
   })
 }
 
-export function useApiKeys(wsId: string, colId: string) {
+// ── Users, keys & permissions ─────────────────────────────────────────────────
+
+export function useUsers() {
+  return useQuery({ queryKey: qk.users, queryFn: () => api.listUsers(), retry: false })
+}
+
+/** Refresh the user list (and one user's detail) after a write. */
+function useInvalidateUsers(): (id?: string) => Promise<void> {
+  const queryClient = useQueryClient()
+  return async (id?: string) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: qk.users }),
+      ...(id ? [queryClient.invalidateQueries({ queryKey: qk.user(id) })] : []),
+    ])
+  }
+}
+
+export function useCreateUser() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: (body: UserCreate) => api.createUser(body),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useUpdateUser() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UserUpdate }) => api.updateUser(id, body),
+    onSuccess: (_data, { id }) => invalidate(id),
+  })
+}
+
+export function useDeleteUser() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteUser(id),
+    onSuccess: () => invalidate(),
+  })
+}
+
+export function useMintUserKey() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UserKeyCreate }) => api.mintUserKey(id, body),
+    onSuccess: (_data, { id }) => invalidate(id),
+  })
+}
+
+export function useRevokeUserKey() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: (id: string) => api.revokeUserKey(id),
+    onSuccess: (_data, id) => invalidate(id),
+  })
+}
+
+export function usePermissions(userId: string, enabled = true) {
   return useQuery({
-    queryKey: qk.apiKeys(wsId, colId),
-    queryFn: () => api.listApiKeys(wsId, colId),
-    enabled: Boolean(wsId) && Boolean(colId),
+    queryKey: qk.permissions(userId),
+    queryFn: () => api.listPermissions(userId),
+    enabled: enabled && Boolean(userId),
     retry: false,
   })
 }
 
-/** Invalidate the key list for one collection after a mint/revoke. */
-function useInvalidateApiKeys(wsId: string, colId: string): () => Promise<void> {
+/** Refresh one user's grant list after a grant/revoke. */
+function useInvalidatePermissions(userId: string): () => Promise<void> {
   const queryClient = useQueryClient()
-  return () => queryClient.invalidateQueries({ queryKey: qk.apiKeys(wsId, colId) })
+  return () => queryClient.invalidateQueries({ queryKey: qk.permissions(userId) })
 }
 
-export function useMintApiKey(wsId: string, colId: string) {
-  const invalidate = useInvalidateApiKeys(wsId, colId)
+export function useGrantPermission(userId: string) {
+  const invalidate = useInvalidatePermissions(userId)
   return useMutation({
-    mutationFn: (body: ApiKeyCreate) => api.mintApiKey(wsId, colId, body),
+    mutationFn: (body: GrantCreate) => api.grantPermission(userId, body),
     onSuccess: invalidate,
   })
 }
 
-export function useRevokeApiKey(wsId: string, colId: string) {
-  const invalidate = useInvalidateApiKeys(wsId, colId)
+export function useRevokePermission(userId: string) {
+  const invalidate = useInvalidatePermissions(userId)
   return useMutation({
-    mutationFn: (keyId: string) => api.revokeApiKey(wsId, colId, keyId),
+    mutationFn: (grantId: string) => api.revokePermission(userId, grantId),
     onSuccess: invalidate,
   })
 }

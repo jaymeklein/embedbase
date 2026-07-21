@@ -122,29 +122,53 @@ export interface GraphResponse {
   max_heat: number
 }
 
-// ── API keys ────────────────────────────────────────────────────────────────
+// ── Users, keys & permissions ────────────────────────────────────────────────
 
-/** Key metadata as returned by `GET .../keys` — never includes the secret. */
-export interface ApiKey {
+/** Key metadata embedded on a user (never the secret); null when the user has no key. */
+export interface UserKeySummary {
   id: string
-  collection_id: string
   key_prefix: string
   label: string
   created_at: string
   last_used_at: string | null
 }
 
-/**
- * `POST .../keys` — the only response that carries the raw secret (`raw_key`).
- * It is shown once and cannot be retrieved again; never persist it.
- */
-export interface MintedApiKey {
+/** A user row (`GET /users`, `GET /users/{id}`) with its API-key summary. */
+export interface User {
   id: string
-  collection_id: string
+  email: string
+  name: string
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  api_key: UserKeySummary | null
+}
+
+/**
+ * `POST /users/{id}/key` — the only response that carries the raw secret (`raw_key`).
+ * Shown once and never retrievable again; never persist it. Minting replaces any
+ * existing key (rotation).
+ */
+export interface MintedUserKey {
+  id: string
+  user_id: string
   key_prefix: string
   label: string
   created_at: string
   raw_key: string
+}
+
+export type PermissionLevel = 'read' | 'write'
+export type ResourceType = 'workspace' | 'collection' | 'document'
+
+/** A grant row (`GET /users/{id}/permissions`) — one resource the user may access. */
+export interface Permission {
+  id: string
+  user_id: string
+  resource_type: ResourceType
+  resource_id: string
+  level: PermissionLevel
+  created_at: string
 }
 
 // ── Documents ───────────────────────────────────────────────────────────────
@@ -488,6 +512,20 @@ export interface CollectionCreate {
 
 export type CollectionUpdate = Partial<CollectionCreate>
 
-export interface ApiKeyCreate {
+export interface UserCreate {
+  email: string
+  name?: string
+  is_active?: boolean
+}
+
+export type UserUpdate = Partial<{ email: string; name: string; is_active: boolean }>
+
+export interface UserKeyCreate {
   label?: string
+}
+
+export interface GrantCreate {
+  resource_type: ResourceType
+  resource_id: string
+  level: PermissionLevel
 }
