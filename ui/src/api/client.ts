@@ -192,11 +192,6 @@ export const api = {
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents/${enc(docId)}/index`,
       { method: 'POST' },
     ),
-  indexCollection: (wsId: string, colId: string) =>
-    request<IndexEnqueueResponse>(
-      `/workspaces/${enc(wsId)}/collections/${enc(colId)}/index`,
-      { method: 'POST' },
-    ),
 
   // ── Users, keys & permissions ───────────────────────────────────────────────
   listUsers: () => request<User[]>('/users'),

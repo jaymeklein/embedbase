@@ -21,7 +21,7 @@ async def test_unset_filters_return_none_and_are_skipped() -> None:
 
 async def test_set_filters_return_a_condition() -> None:
     q = JobListQuery(
-        status="failed", filename="a", file_type=".pdf", collection="c",
+        status="failed", filename="a", file_type=".pdf", collection="c", collection_id="col_1",
         created_after="2024-01-01", created_before="2024-02-01",
     )
     for spec in build_specs(q):

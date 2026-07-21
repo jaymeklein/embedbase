@@ -299,6 +299,8 @@ export interface JobQuery {
   filename?: string
   file_type?: string
   collection?: string
+  /** Exact collection id — scopes an action to one collection, unlike the `collection` substring. */
+  collection_id?: string
   created_after?: string
   created_before?: string
 }
@@ -471,6 +473,18 @@ export interface StorageConfig {
   temp_retention_hours: number // 0 = temporary uploads never expire (feature off)
 }
 
+/**
+ * MCP transport config. `rate_limit_rpm` caps requests per minute per API key on the
+ * mounted `/api/mcp` endpoint; the limiter reads it from live config per request, so a
+ * save applies to the next MCP call. `enabled` needs a restart (it drives the mount) and
+ * `max_results` is read at startup; both round-trip untouched from the UI.
+ */
+export interface MCPConfig {
+  enabled: boolean
+  rate_limit_rpm: number
+  max_results: number
+}
+
 /** `GET /config/accelerator` — GPU suitability for the docling PDF backend. */
 export interface Accelerator {
   device: string // "cuda" | "cpu"
@@ -489,6 +503,7 @@ export interface AppConfig {
   search: SearchConfig
   parsers: ParserConfig
   storage: StorageConfig
+  mcp: MCPConfig
   [section: string]: unknown
 }
 

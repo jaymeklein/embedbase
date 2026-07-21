@@ -122,14 +122,16 @@ class MCPAuthRateLimitMiddleware:
 def build_mcp_middleware(
     app: ASGIApp,
     *,
-    rate_limit_rpm: int,
+    rate_limit_rpm: Callable[[], int],
     resolve_principal: PrincipalResolver | None = None,
 ) -> MCPAuthRateLimitMiddleware:
     """Wire the MCP middleware from config, with a DB-backed principal resolver.
 
     Args:
         app: The MCP ASGI app to protect.
-        rate_limit_rpm: Requests-per-minute ceiling per API key.
+        rate_limit_rpm: Returns the requests-per-minute ceiling per API key. Resolved
+            per request (not captured here), so a config change applies to the next
+            request — this middleware is built once at mount and never rebuilt.
         resolve_principal: Override the resolver (tests inject a fake); defaults to
             authenticating against the metadata DB.
 
