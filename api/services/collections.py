@@ -1,23 +1,21 @@
-"""Collection and API key persistence services.
+"""Collection persistence service.
 
-Owns every collection and API-key data operation so the router stays
-routing-only (Section 5).
+Owns every collection data operation so the router stays routing-only (Section 5).
+API keys are no longer collection-scoped — they belong to users
+(see :mod:`api.services.users`).
 """
 
 from __future__ import annotations
 
-import secrets
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-import bcrypt
 from fastapi import HTTPException
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.db import api_keys as keys_t
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.schemas.collections import CollectionUpdate
@@ -174,7 +172,7 @@ async def update_collection(
 
 
 async def delete_collection(ws_id: str, col_id: str, db: AsyncSession) -> None:
-    """Delete a collection; cascades to its keys, documents, and job records.
+    """Delete a collection; cascades to its documents and job records.
 
     Args:
         ws_id: Parent workspace ID.
@@ -186,113 +184,4 @@ async def delete_collection(ws_id: str, col_id: str, db: AsyncSession) -> None:
     """
     await require_collection(ws_id, col_id, db)
     await db.execute(delete(col_t).where(col_t.c.id == col_id))
-    await db.commit()
-
-
-async def mint_api_key(collection_id: str, label: str, db: AsyncSession) -> dict[str, str]:
-    """Mint and persist a new API key, returning the raw value once.
-
-    Generates a cryptographically random ``eb_``-prefixed token, stores only its
-    bcrypt hash, and returns the raw key a single time.
-
-    Args:
-        collection_id: Collection the key grants access to.
-        label: Human-readable label for the key.
-        db: Active async database session.
-
-    Returns:
-        Key metadata plus the one-time ``raw_key`` value.
-    """
-    raw_key = "eb_" + secrets.token_urlsafe(32)
-    key_prefix = raw_key[3:11]
-    key_hash = bcrypt.hashpw(raw_key.encode(), bcrypt.gensalt(rounds=12)).decode()
-    key_id = uuid4().hex
-    now = datetime.now(UTC).isoformat()
-    await db.execute(
-        insert(keys_t).values(
-            id=key_id,
-            collection_id=collection_id,
-            key_prefix=key_prefix,
-            key_hash=key_hash,
-            label=label,
-            created_at=now,
-        )
-    )
-    await db.commit()
-    return {
-        "id": key_id,
-        "collection_id": collection_id,
-        "key_prefix": key_prefix,
-        "label": label,
-        "created_at": now,
-        "raw_key": raw_key,
-    }
-
-
-async def create_api_key(
-    ws_id: str, col_id: str, label: str, db: AsyncSession
-) -> dict[str, str]:
-    """Validate the collection then mint a key for it.
-
-    Args:
-        ws_id: Parent workspace ID.
-        col_id: Collection the key grants access to.
-        label: Human-readable label for the key.
-        db: Active async database session.
-
-    Returns:
-        Key metadata plus the one-time ``raw_key`` value.
-
-    Raises:
-        HTTPException: 404 when the collection is absent from the workspace.
-    """
-    await require_collection(ws_id, col_id, db)
-    return await mint_api_key(collection_id=col_id, label=label, db=db)
-
-
-async def list_api_keys(col_id: str, db: AsyncSession) -> list[dict[str, Any]]:
-    """Return a collection's API keys (metadata only — never the hash or secret).
-
-    Args:
-        col_id: Collection whose keys to list.
-        db: Active async database session.
-
-    Returns:
-        One mapping per key with prefix, label, and usage timestamps.
-    """
-    stmt = (
-        select(
-            keys_t.c.id,
-            keys_t.c.collection_id,
-            keys_t.c.key_prefix,
-            keys_t.c.label,
-            keys_t.c.created_at,
-            keys_t.c.last_used_at,
-        )
-        .where(keys_t.c.collection_id == col_id)
-        .order_by(keys_t.c.created_at)
-    )
-    result = await db.execute(stmt)
-    return [dict(row._mapping) for row in result.fetchall()]
-
-
-async def revoke_api_key(col_id: str, key_id: str, db: AsyncSession) -> None:
-    """Delete an API key after confirming it belongs to the collection.
-
-    Args:
-        col_id: Collection the key should belong to.
-        key_id: API key ID to revoke.
-        db: Active async database session.
-
-    Raises:
-        HTTPException: 404 when the key is absent from the collection.
-    """
-    exists = (
-        await db.execute(
-            select(keys_t.c.id).where(keys_t.c.id == key_id, keys_t.c.collection_id == col_id)
-        )
-    ).fetchone()
-    if not exists:
-        raise HTTPException(404, f"API key {key_id!r} not found")
-    await db.execute(delete(keys_t).where(keys_t.c.id == key_id))
     await db.commit()
