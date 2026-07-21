@@ -1,14 +1,28 @@
 """Request schemas for the users + permissions management endpoints."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel, EmailStr
+
+
+def _canonical_email(email: str) -> str:
+    """Fold an address to one canonical form so uniqueness is case-insensitive.
+
+    ``EmailStr`` already lower-cases the domain; this also lower-cases the local part,
+    so ``Jane@Example.com`` and ``jane@example.com`` are stored — and rejected as
+    duplicates by the ``UNIQUE(email)`` check in the users service — as the same address.
+    """
+    return email.lower()
+
+
+# EmailStr validates + normalizes the domain; AfterValidator then folds case fully.
+CanonicalEmail = Annotated[EmailStr, AfterValidator(_canonical_email)]
 
 
 class UserCreate(BaseModel):
     """Body for POST /users."""
 
-    email: str
+    email: CanonicalEmail
     name: str = ""
     is_active: bool = True
 
@@ -16,7 +30,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     """Body for PATCH /users/{user_id} — only non-null fields are applied."""
 
-    email: str | None = None
+    email: CanonicalEmail | None = None
     name: str | None = None
     is_active: bool | None = None
 

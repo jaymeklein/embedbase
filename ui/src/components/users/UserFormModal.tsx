@@ -11,6 +11,9 @@ export interface UserFormValues {
 
 const DEFAULTS: UserFormValues = { email: '', name: '', is_active: true }
 
+/** Shape check for immediate feedback; the API re-validates authoritatively with email-validator. */
+const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+
 function valuesFrom(user: User | undefined): UserFormValues {
   if (!user) return DEFAULTS
   return { email: user.email, name: user.name ?? '', is_active: user.is_active }
@@ -43,11 +46,12 @@ export function UserFormModal({
 
   const editing = Boolean(user)
   const email = values.email.trim()
+  const emailValid = isValidEmail(email)
   const set = <K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) =>
     setValues((v) => ({ ...v, [key]: value }))
 
   const submit = () => {
-    if (!email) return
+    if (!emailValid) return
     onSubmit({ ...values, email, name: values.name.trim() })
   }
 
@@ -61,14 +65,18 @@ export function UserFormModal({
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={submit} loading={submitting} disabled={!email}>
+          <Button onClick={submit} loading={submitting} disabled={!emailValid}>
             {editing ? 'Save changes' : 'Create'}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Email" htmlFor="user-email">
+        <Field
+          label="Email"
+          htmlFor="user-email"
+          error={email && !emailValid ? 'Enter a valid email address.' : undefined}
+        >
           <Input
             id="user-email"
             autoFocus
