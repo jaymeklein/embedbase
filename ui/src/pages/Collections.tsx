@@ -1,6 +1,6 @@
 import { useMemo, useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronRight, FileText, KeyRound, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
+import { ChevronRight, FileText, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
 import {
   useAssignCollectionTag,
   useCollections,
@@ -30,7 +30,6 @@ import {
   CollectionFormModal,
   type CollectionFormValues,
 } from '../components/collections/CollectionFormModal'
-import { ApiKeysModal } from '../components/collections/ApiKeysModal'
 import { formatDate } from '../lib/format'
 
 /** Which dialog (if any) is currently open, plus the row it acts on. */
@@ -39,7 +38,6 @@ type Dialog =
   | { kind: 'create' }
   | { kind: 'edit'; col: Collection }
   | { kind: 'delete'; col: Collection }
-  | { kind: 'keys'; col: Collection }
 
 /** Reduce a full form submission to only the fields that actually changed. */
 function changedFields(col: Collection, values: CollectionFormValues): CollectionUpdate {
@@ -51,7 +49,7 @@ function changedFields(col: Collection, values: CollectionFormValues): Collectio
   return body
 }
 
-/** Collections within a workspace: list, create, edit, delete, and key management. */
+/** Collections within a workspace: list, create, edit, and delete. */
 export default function Collections() {
   const { wsId = '' } = useParams()
   const navigate = useNavigate()
@@ -158,7 +156,6 @@ export default function Collections() {
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(col) => setDialog({ kind: 'edit', col })}
         onDelete={(col) => setDialog({ kind: 'delete', col })}
-        onKeys={(col) => setDialog({ kind: 'keys', col })}
       />
 
       <CollectionFormModal
@@ -174,19 +171,11 @@ export default function Collections() {
         title="Delete collection"
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.col.name}”? Its API keys, documents, and indexed vectors are permanently removed. This cannot be undone.`
+            ? `Delete “${dialog.col.name}”? Its documents and indexed vectors are permanently removed. This cannot be undone.`
             : ''
         }
         loading={deleteMut.isPending}
         onConfirm={handleDelete}
-        onClose={close}
-      />
-
-      <ApiKeysModal
-        open={dialog.kind === 'keys'}
-        wsId={wsId}
-        colId={dialog.kind === 'keys' ? dialog.col.id : ''}
-        collectionName={dialog.kind === 'keys' ? dialog.col.name : ''}
         onClose={close}
       />
     </div>
@@ -204,7 +193,6 @@ function CollectionList({
   onCreate,
   onEdit,
   onDelete,
-  onKeys,
 }: {
   wsId: string
   data: Collection[] | undefined
@@ -215,7 +203,6 @@ function CollectionList({
   onCreate: () => void
   onEdit: (col: Collection) => void
   onDelete: (col: Collection) => void
-  onKeys: (col: Collection) => void
 }) {
   if (isLoading) {
     return (
@@ -248,7 +235,6 @@ function CollectionList({
           col={col}
           onEdit={onEdit}
           onDelete={onDelete}
-          onKeys={onKeys}
         />
       ))}
     </div>
@@ -261,13 +247,11 @@ function CollectionCard({
   col,
   onEdit,
   onDelete,
-  onKeys,
 }: {
   wsId: string
   col: Collection
   onEdit: (col: Collection) => void
   onDelete: (col: Collection) => void
-  onKeys: (col: Collection) => void
 }) {
   const navigate = useNavigate()
   const toast = useToast()
@@ -341,15 +325,6 @@ function CollectionCard({
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-faint">Created {formatDate(col.created_at)}</span>
         <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Manage keys for ${col.name}`}
-            onClick={stop(() => onKeys(col))}
-            className="h-10 w-10 px-0"
-          >
-            <KeyRound className="h-7 w-7" />
-          </Button>
           <Button
             variant="ghost"
             size="sm"

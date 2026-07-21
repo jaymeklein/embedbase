@@ -9,13 +9,13 @@
 import { getMasterKey, notifyUnauthorized } from './tokenStore'
 import type {
   Accelerator,
-  ApiKey,
   AppConfig,
   Collection,
   CollectionCreate,
   CollectionUpdate,
   DocumentListResponse,
   DocumentQuery,
+  GrantCreate,
   Health,
   IndexEnqueueResponse,
   IndexStatusResponse,
@@ -23,8 +23,8 @@ import type {
   JobQuery,
   JobStats,
   JobStatus,
-  MintedApiKey,
-  ApiKeyCreate,
+  MintedUserKey,
+  Permission,
   GraphResponse,
   SearchRequest,
   SearchResponse,
@@ -34,6 +34,10 @@ import type {
   TagMerge,
   TagUpdate,
   UploadAccepted,
+  User,
+  UserCreate,
+  UserKeyCreate,
+  UserUpdate,
   Workspace,
   WorkspaceCreate,
   WorkspaceDetail,
@@ -194,18 +198,21 @@ export const api = {
       { method: 'POST' },
     ),
 
-  // ── API keys ──────────────────────────────────────────────────────────────
-  listApiKeys: (wsId: string, colId: string) =>
-    request<ApiKey[]>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys`),
-  mintApiKey: (wsId: string, colId: string, body: ApiKeyCreate) =>
-    request<MintedApiKey>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys`, {
-      method: 'POST',
-      body,
-    }),
-  revokeApiKey: (wsId: string, colId: string, keyId: string) =>
-    request<void>(`/workspaces/${enc(wsId)}/collections/${enc(colId)}/keys/${enc(keyId)}`, {
-      method: 'DELETE',
-    }),
+  // ── Users, keys & permissions ───────────────────────────────────────────────
+  listUsers: () => request<User[]>('/users'),
+  createUser: (body: UserCreate) => request<User>('/users', { method: 'POST', body }),
+  getUser: (id: string) => request<User>(`/users/${enc(id)}`),
+  updateUser: (id: string, body: UserUpdate) =>
+    request<User>(`/users/${enc(id)}`, { method: 'PATCH', body }),
+  deleteUser: (id: string) => request<void>(`/users/${enc(id)}`, { method: 'DELETE' }),
+  mintUserKey: (id: string, body: UserKeyCreate) =>
+    request<MintedUserKey>(`/users/${enc(id)}/key`, { method: 'POST', body }),
+  revokeUserKey: (id: string) => request<void>(`/users/${enc(id)}/key`, { method: 'DELETE' }),
+  listPermissions: (id: string) => request<Permission[]>(`/users/${enc(id)}/permissions`),
+  grantPermission: (id: string, body: GrantCreate) =>
+    request<Permission>(`/users/${enc(id)}/permissions`, { method: 'POST', body }),
+  revokePermission: (id: string, grantId: string) =>
+    request<void>(`/users/${enc(id)}/permissions/${enc(grantId)}`, { method: 'DELETE' }),
 
   // ── Documents ─────────────────────────────────────────────────────────────
   listDocuments: (wsId: string, colId: string, query: DocumentQuery = {}) =>
