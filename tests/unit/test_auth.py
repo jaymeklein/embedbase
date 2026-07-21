@@ -1,4 +1,4 @@
-"""Auth unit tests — key hashing, prefix narrowing, master key, scoping."""
+"""Auth unit tests — key hashing, prefix narrowing, master key, user keys."""
 import secrets
 
 import pytest
@@ -25,19 +25,16 @@ def test_master_key_constant_time_compare():
     assert not secrets.compare_digest(master, "not_the_key")
 
 
-def test_principal_master_can_access_anything():
+def test_principal_carries_user_identity():
     from api.services.auth import Principal
 
-    p = Principal(is_master=True)
-    assert p.can_access("col_anything")
+    master = Principal(is_master=True)
+    assert master.is_master and master.user_id is None
 
-
-def test_principal_collection_key_is_scoped():
-    from api.services.auth import Principal
-
-    p = Principal(is_master=False, collection_id="col_a", api_key_id="k1")
-    assert p.can_access("col_a")
-    assert not p.can_access("col_b")
+    user = Principal(is_master=False, user_id="usr_a", api_key_id="k1")
+    assert not user.is_master
+    assert user.user_id == "usr_a"
+    assert user.api_key_id == "k1"
 
 
 def test_extract_key_prefers_x_api_key_then_bearer():
@@ -59,32 +56,25 @@ from fastapi import HTTPException  # noqa: E402
 from sqlalchemy import insert, select  # noqa: E402
 
 from api.db import api_keys as keys_t  # noqa: E402
-from api.db import collections as col_t  # noqa: E402
-from api.db import workspaces as ws_t  # noqa: E402
+from api.db import users as users_t  # noqa: E402
 from api.services.auth import authenticate_api_key, record_key_use  # noqa: E402
 
 MASTER = "test-master-key-for-testing-only"  # matches conftest env
 
 
-async def _seed_key(session, *, collection_id="col_seed"):
-    """Create ws → collection → api_key and return the raw key string."""
+async def _seed_user_key(session, *, user_id="usr_seed", is_active=True):
+    """Create a user + their api_key and return the raw key string."""
     await session.execute(
-        insert(ws_t).values(
-            id="ws_seed", name="W", description="", color="", icon="",
-            created_at="t", updated_at="t",
-        )
-    )
-    await session.execute(
-        insert(col_t).values(
-            id=collection_id, workspace_id="ws_seed", name="C", description="",
-            color="", icon="", created_at="t", updated_at="t",
+        insert(users_t).values(
+            id=user_id, email=f"{user_id}@example.com", name="",
+            is_active=is_active, created_at="t", updated_at="t",
         )
     )
     raw = "eb_" + secrets.token_urlsafe(32)
     key_hash = bcrypt.hashpw(raw.encode(), bcrypt.gensalt(rounds=4)).decode()
     await session.execute(
         insert(keys_t).values(
-            id="key_seed", collection_id=collection_id, key_prefix=raw[3:11],
+            id="key_seed", user_id=user_id, key_prefix=raw[3:11],
             key_hash=key_hash, label="", created_at="t",
         )
     )
@@ -95,7 +85,7 @@ async def _seed_key(session, *, collection_id="col_seed"):
 async def test_validate_master_key(db_session):
     principal = await authenticate_api_key(MASTER, db_session)
     assert principal.is_master is True
-    assert principal.can_access("any_collection")
+    assert principal.user_id is None
 
 
 async def test_validate_missing_key_raises_401(db_session):
@@ -110,16 +100,16 @@ async def test_validate_non_eb_key_raises_401(db_session):
     assert exc.value.status_code == 401
 
 
-async def test_validate_collection_key_success(db_session):
-    raw = await _seed_key(db_session, collection_id="col_a")
+async def test_validate_user_key_success(db_session):
+    raw = await _seed_user_key(db_session, user_id="usr_a")
     principal = await authenticate_api_key(raw, db_session)
     assert principal.is_master is False
-    assert principal.collection_id == "col_a"
+    assert principal.user_id == "usr_a"
     assert principal.api_key_id == "key_seed"
 
 
-async def test_validate_collection_key_updates_last_used_at(db_session):
-    raw = await _seed_key(db_session, collection_id="col_a")
+async def test_validate_user_key_updates_last_used_at(db_session):
+    raw = await _seed_user_key(db_session, user_id="usr_a")
     principal = await authenticate_api_key(raw, db_session)
     await record_key_use(principal.api_key_id, db_session)
     row = (
@@ -131,7 +121,7 @@ async def test_validate_collection_key_updates_last_used_at(db_session):
 
 
 async def test_validate_wrong_secret_same_prefix_raises_401(db_session):
-    raw = await _seed_key(db_session, collection_id="col_a")
+    raw = await _seed_user_key(db_session, user_id="usr_a")
     # Same eb_ prefix, different secret body → bcrypt mismatch.
     forged = raw[:11] + "X" * (len(raw) - 11)
     with pytest.raises(HTTPException) as exc:
@@ -139,13 +129,13 @@ async def test_validate_wrong_secret_same_prefix_raises_401(db_session):
     assert exc.value.status_code == 401
 
 
-async def test_validate_collection_scope_mismatch_raises_403(db_session):
-    raw = await _seed_key(db_session, collection_id="col_a")
+async def test_validate_inactive_user_key_raises_403(db_session):
+    raw = await _seed_user_key(db_session, user_id="usr_off", is_active=False)
     with pytest.raises(HTTPException) as exc:
-        await authenticate_api_key(raw, db_session, collection_id="col_other")
+        await authenticate_api_key(raw, db_session)
     assert exc.value.status_code == 403
 
 
-async def test_validate_master_ignores_collection_scope(db_session):
-    principal = await authenticate_api_key(MASTER, db_session, collection_id="col_x")
+async def test_validate_master_ignores_user_lookup(db_session):
+    principal = await authenticate_api_key(MASTER, db_session)
     assert principal.is_master is True

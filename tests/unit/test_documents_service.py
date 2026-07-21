@@ -367,10 +367,10 @@ async def test_resolve_download_missing_on_disk_raises_404(db_session, monkeypat
     assert exc.value.status_code == 404
 
 
-async def test_resolve_download_wrong_collection_raises_403(db_session, monkeypatch, tmp_path) -> None:
+async def test_resolve_download_without_grant_raises_403(db_session, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     await _seed(db_session)
-    principal = Principal(is_master=False, collection_id="col_other")
+    principal = Principal(is_master=False, user_id="usr_nogrant")
     with pytest.raises(HTTPException) as exc:
         await resolve_document_download(db_session, _DOC_ID, principal)
     assert exc.value.status_code == 403

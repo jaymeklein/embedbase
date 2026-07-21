@@ -215,22 +215,6 @@ async def test_delete_collection_not_found(master_client):
     assert r.status_code == 404
 
 
-async def test_delete_collection_cascades_to_api_keys(master_client):
-    ws_id = await _make_workspace(master_client)
-    col_id = (await _make_collection(master_client, ws_id, "C"))["id"]
-
-    r = await master_client.post(
-        f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}
-    )
-    assert r.status_code == 201
-
-    await master_client.delete(f"/workspaces/{ws_id}/collections/{col_id}")
-
-    assert (
-        await master_client.get(f"/workspaces/{ws_id}/collections/{col_id}")
-    ).status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # Auth — negative tests
 # ---------------------------------------------------------------------------
@@ -260,17 +244,10 @@ async def test_no_auth_delete_collection_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_collection_key_on_collection_route_returns_403(client):
-    """A collection-scoped key must be rejected (403) on management collection routes."""
+async def test_user_key_on_collection_route_returns_403(client, make_user_key):
+    """A user key must be rejected (403) on the master-only collection management routes."""
     ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
-    col_id = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
-    ).json()["id"]
-    raw_key = (
-        await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH
-        )
-    ).json()["raw_key"]
+    _, raw_key = await make_user_key()
 
     r = await client.post(
         f"/workspaces/{ws_id}/collections",

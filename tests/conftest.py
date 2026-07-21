@@ -1,6 +1,7 @@
 import os
 import sys
 from contextlib import asynccontextmanager
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -98,6 +99,37 @@ def master_client(client):
     """AsyncClient pre-configured with the master API key header."""
     client.headers.update({"Authorization": f"Bearer {MASTER_KEY}"})
     return client
+
+
+@pytest.fixture
+def make_user_key(client):
+    """Async helper: create a user, apply grants, and mint their API key.
+
+    ``grants`` is an iterable of ``(resource_type, resource_id, level)`` tuples.
+    Returns ``(user_id, raw_key)``. Uses explicit master headers per call so it
+    never mutates the shared client's default headers — unauthenticated ``client``
+    requests stay unauthenticated.
+    """
+    master = {"Authorization": f"Bearer {MASTER_KEY}"}
+
+    async def _make(grants=()):
+        email = f"user_{uuid4().hex[:8]}@example.com"
+        user_id = (
+            await client.post("/users", json={"email": email}, headers=master)
+        ).json()["id"]
+        for resource_type, resource_id, level in grants:
+            r = await client.post(
+                f"/users/{user_id}/permissions",
+                json={"resource_type": resource_type, "resource_id": resource_id, "level": level},
+                headers=master,
+            )
+            assert r.status_code == 201, r.text
+        raw = (
+            await client.post(f"/users/{user_id}/key", json={}, headers=master)
+        ).json()["raw_key"]
+        return user_id, raw
+
+    return _make
 
 
 @pytest.fixture

@@ -295,15 +295,11 @@ async def test_reprocess_requires_api_key(client):
     assert (await client.post(f"/documents/{doc_id}/reprocess")).status_code == 401
 
 
-# ── collection-scoped keys ────────────────────────────────────────────────────
+# ── user keys + grants ────────────────────────────────────────────────────────
 
-async def test_collection_key_can_upload_to_own_collection(client):
+async def test_user_key_with_write_can_upload(client, make_user_key):
     ws_id, col_id = await _setup(client)
-    raw = (
-        await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}, headers=AUTH
-        )
-    ).json()["raw_key"]
+    _, raw = await make_user_key([("collection", col_id, "write")])
 
     r = await client.post(
         f"/workspaces/{ws_id}/collections/{col_id}/documents",
@@ -313,18 +309,27 @@ async def test_collection_key_can_upload_to_own_collection(client):
     assert r.status_code == 202
 
 
-async def test_collection_key_cannot_upload_to_other_collection(client):
+async def test_user_key_read_grant_cannot_upload(client, make_user_key):
+    """A read grant is not enough to upload (write required) → 403."""
+    ws_id, col_id = await _setup(client)
+    _, raw = await make_user_key([("collection", col_id, "read")])
+
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents",
+        files=_txt(),
+        headers={"X-API-Key": raw},
+    )
+    assert r.status_code == 403
+
+
+async def test_user_key_cannot_upload_to_ungranted_collection(client, make_user_key):
     ws_id, col_id = await _setup(client)
     other = (
         await client.post(
             f"/workspaces/{ws_id}/collections", json={"name": "Other"}, headers=AUTH
         )
     ).json()["id"]
-    raw = (
-        await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}, headers=AUTH
-        )
-    ).json()["raw_key"]
+    _, raw = await make_user_key([("collection", col_id, "write")])
 
     r = await client.post(
         f"/workspaces/{ws_id}/collections/{other}/documents",
@@ -332,4 +337,33 @@ async def test_collection_key_cannot_upload_to_other_collection(client):
         headers={"X-API-Key": raw},
     )
     assert r.status_code == 403
+
+
+async def test_user_key_without_grant_cannot_list(client, make_user_key):
+    """An active user with no grant is denied (403) reading a collection's documents."""
+    ws_id, col_id = await _setup(client)
+    _, raw = await make_user_key()  # no grants
+
+    r = await client.get(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents", headers={"X-API-Key": raw}
+    )
+    assert r.status_code == 403
+
+
+async def test_document_grant_allows_nested_status(client, make_user_key):
+    """A document-level read grant authorizes the nested single-document status route."""
+    ws_id, col_id = await _setup(client)
+    doc_id = (
+        await client.post(
+            f"/workspaces/{ws_id}/collections/{col_id}/documents", files=_txt(), headers=AUTH
+        )
+    ).json()["document_id"]
+    # Granted read on the DOCUMENT only — no collection/workspace grant.
+    _, raw = await make_user_key([("document", doc_id, "read")])
+
+    r = await client.get(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents/{doc_id}/status",
+        headers={"X-API-Key": raw},
+    )
+    assert r.status_code == 200
 
