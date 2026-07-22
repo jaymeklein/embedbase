@@ -29,6 +29,9 @@ export interface Workspace {
   document_count?: number
   /** Present only on `POST /workspaces` (always 0 at creation). */
   chunk_count?: number
+  /** Whether the caller may write this workspace (create collections in it).
+   *  Present on `GET /workspaces` and `GET /workspaces/{id}`. */
+  can_write?: boolean
 }
 
 /** `GET /workspaces/{id}` — a workspace plus its (count-less) collection rows. */
@@ -145,6 +148,8 @@ export interface User {
   created_at: string
   updated_at: string
   api_key: UserKeySummary | null
+  /** Whether the user may create workspaces. Present only on `GET /auth/me`. */
+  can_create_workspaces?: boolean
 }
 
 /** `POST /users` — the created user plus the one-time login password (shown once). */
@@ -179,7 +184,9 @@ export interface SessionResponse {
 }
 
 export type PermissionLevel = 'read' | 'write'
-export type ResourceType = 'workspace' | 'collection' | 'document'
+/** `capability` grants a non-resource privilege (e.g. `resource_id: 'create_workspace'`);
+ *  the others scope access to a workspace/collection/document. */
+export type ResourceType = 'workspace' | 'collection' | 'document' | 'capability'
 
 /** A grant row (`GET /users/{id}/permissions`) — one resource the user may access. */
 export interface Permission {

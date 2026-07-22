@@ -101,12 +101,20 @@ function GrantForm({ userId }: { userId: string }) {
   const grantMut = useGrantPermission(userId)
 
   const resourceId =
-    resourceType === 'workspace' ? wsId : resourceType === 'collection' ? colId : docId.trim()
+    resourceType === 'capability'
+      ? 'create_workspace'
+      : resourceType === 'workspace'
+        ? wsId
+        : resourceType === 'collection'
+          ? colId
+          : docId.trim()
 
   const add = () => {
     if (!resourceId) return
+    // A capability grant carries no meaningful level; store write.
+    const grantLevel: PermissionLevel = resourceType === 'capability' ? 'write' : level
     grantMut.mutate(
-      { resource_type: resourceType, resource_id: resourceId, level },
+      { resource_type: resourceType, resource_id: resourceId, level: grantLevel },
       {
         onSuccess: () => {
           toast.success('Permission granted.')
@@ -132,15 +140,24 @@ function GrantForm({ userId }: { userId: string }) {
             <option value="workspace">Workspace</option>
             <option value="collection">Collection</option>
             <option value="document">Document</option>
+            <option value="capability">Create workspaces</option>
           </Select>
         </Field>
-        <Field label="Level">
-          <Select value={level} onChange={(e) => setLevel(e.target.value as PermissionLevel)}>
-            <option value="read">Read — search, list, download</option>
-            <option value="write">Write — ingest, delete (and read)</option>
-          </Select>
-        </Field>
+        {resourceType !== 'capability' && (
+          <Field label="Level">
+            <Select value={level} onChange={(e) => setLevel(e.target.value as PermissionLevel)}>
+              <option value="read">Read — search, list, download</option>
+              <option value="write">Write — ingest, delete (and read)</option>
+            </Select>
+          </Field>
+        )}
       </div>
+
+      {resourceType === 'capability' && (
+        <p className="text-xs text-ink-muted">
+          Lets this user create new workspaces — they get write access to any they create.
+        </p>
+      )}
 
       {resourceType === 'workspace' && (
         <Field label="Workspace">

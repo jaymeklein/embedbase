@@ -54,6 +54,8 @@ export default function Collections() {
   const { wsId = '' } = useParams()
   const navigate = useNavigate()
   const workspace = useWorkspace(wsId)
+  // Creating a collection needs write on the workspace; the API reports it per workspace.
+  const canWrite = workspace.data?.can_write ?? false
   const { data, isLoading, isError, error, refetch } = useCollections(wsId)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const [tagFilter, setTagFilter] = useState<string[]>([])
@@ -137,10 +139,12 @@ export default function Collections() {
             <TagsIcon className="h-5 w-5" />
             Tags
           </Button>
-          <Button onClick={() => setDialog({ kind: 'create' })}>
-            <Plus className="h-5 w-5" />
-            New collection
-          </Button>
+          {canWrite && (
+            <Button onClick={() => setDialog({ kind: 'create' })}>
+              <Plus className="h-5 w-5" />
+              New collection
+            </Button>
+          )}
         </div>
       </header>
 
@@ -152,6 +156,7 @@ export default function Collections() {
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
+        canCreate={canWrite}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(col) => setDialog({ kind: 'edit', col })}
@@ -189,6 +194,7 @@ function CollectionList({
   isLoading,
   isError,
   message,
+  canCreate,
   onRetry,
   onCreate,
   onEdit,
@@ -199,6 +205,7 @@ function CollectionList({
   isLoading: boolean
   isError: boolean
   message?: string
+  canCreate: boolean
   onRetry: () => void
   onCreate: () => void
   onEdit: (col: Collection) => void
@@ -221,8 +228,12 @@ function CollectionList({
       <EmptyState
         icon={<Layers className="h-7 w-7" />}
         title="No collections yet"
-        description="Create a collection to start ingesting and searching documents."
-        action={<Button onClick={onCreate}>New collection</Button>}
+        description={
+          canCreate
+            ? 'Create a collection to start ingesting and searching documents.'
+            : 'No collections here yet.'
+        }
+        action={canCreate ? <Button onClick={onCreate}>New collection</Button> : undefined}
       />
     )
   }
