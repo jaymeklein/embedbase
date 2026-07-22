@@ -19,17 +19,18 @@ delegating call** to a service. No business logic, no raw SQL, no schema declara
 | Router | Base | Auth | Responsibility |
 |--------|------|------|----------------|
 | `health` | `/healthz`, `/metrics` | none | liveness snapshot |
-| `workspaces` | `/workspaces` | router `require_master` | workspace CRUD |
-| `collections` | `/workspaces/{ws}/collections` | router `require_master` | collection CRUD |
+| `auth` | `/auth` | none (login) / `require_operator` | console login: `login`, `change-password`, `me` |
+| `workspaces` | `/workspaces` | per-route: reads `require_auth`+grant, writes `require_master` | workspace CRUD (reads grant-scoped) |
+| `collections` | `/workspaces/{ws}/collections` | per-route: reads `require_auth`+grant, writes `require_master` | collection CRUD (reads grant-scoped) |
 | `documents` | nested + flat `/documents…` | per-route `require_auth` + `permissions.authorize_*` | upload / list / status / delete / download / reprocess |
 | `tags` | `/workspaces/{ws}` | router `require_master` | tag CRUD, merge, assignment |
 | `graph` | `/workspaces/{ws}` | router `require_master` | tag-correlation graph |
 | `search` | `POST /search` | per-route `require_auth` + grant filter | multi-collection hybrid search |
-| `indexing` | `/indexing/…` | mixed master/auth | BM25 (re)index status + enqueue |
-| `jobs` | `/ingestion/jobs…` | `require_master` | ingestion-queue list, stats, retry-failed |
+| `indexing` | `/indexing/…` | per-route `require_auth` + grant | index status (grant-scoped read) + enqueue (`authorize_*` write) |
+| `jobs` | `/ingestion/jobs…` | per-route: reads `require_auth`+grant, retry `require_master` | ingestion-queue list/stats (grant-scoped), retry-failed (admin) |
 | `config` | `/config` | router `require_master` | live config GET/PUT, ollama-models, reload-status |
-| `users` | `/users` | router `require_master` | user CRUD, activate/deactivate, keys, permission grants |
-| `ws` | `WS /ws` | `?key=` query param | Redis pub/sub → WebSocket (ingestion progress) |
+| `users` | `/users` | router `require_master` | user CRUD (username/is_admin), activate/deactivate, keys, password reset, permission grants |
+| `ws` | `WS /ws` | `?key=` query param | Redis pub/sub → WebSocket (ingestion progress; global queue grant-filtered per event) |
 | `mcp` | mounted `/mcp` | in middleware | MCP ASGI sub-app, mounted **last** ([`mcp.md`](mcp.md)) |
 
 ## Adding an endpoint

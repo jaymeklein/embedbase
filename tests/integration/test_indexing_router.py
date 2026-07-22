@@ -35,6 +35,30 @@ async def _seed(factory) -> None:
         await s.commit()
 
 
+async def _add_collection(factory, col_id: str, doc_id: str) -> None:
+    """A second indexed collection under ws1 — the resource a non-admin must *not* see."""
+    async with factory() as s:
+        await s.execute(
+            insert(collections).values(
+                id=col_id, workspace_id="ws1", name=col_id, created_at=_TS, updated_at=_TS
+            )
+        )
+        await s.execute(
+            insert(documents).values(
+                id=doc_id, collection_id=col_id, filename=f"{doc_id}.txt", file_type=".txt",
+                chunk_count=2, created_at=_TS, updated_at=_TS,
+            )
+        )
+        await s.execute(
+            insert(job_records).values(
+                job_id=f"j_{doc_id}", document_id=doc_id, collection_id=col_id,
+                filename=f"{doc_id}.txt", file_type=".txt", status="done",
+                created_at=_TS, updated_at=_TS,
+            )
+        )
+        await s.commit()
+
+
 async def test_index_status_reports_coverage(client):
     await _seed(client.session_factory)
 
@@ -46,6 +70,26 @@ async def test_index_status_reports_coverage(client):
     col = ws["collections"][0]
     assert col["total"] == 1
     assert col["indexed"] == 1  # chunk_count set → counts as indexed
+
+
+async def test_index_status_scoped_to_user_grants(client, make_user_key):
+    await _seed(client.session_factory)  # ws1 / col1
+    await _add_collection(client.session_factory, "col2", "doc2")
+    _, key = await make_user_key(grants=[("collection", "col1", "read")])
+
+    r = await client.get("/indexing/status", headers={"X-API-Key": key})
+
+    assert r.status_code == 200
+    seen = [c["collection_id"] for w in r.json()["workspaces"] for c in w["collections"]]
+    assert seen == ["col1"]  # col2 is not granted → hidden
+
+
+async def test_index_status_empty_for_user_without_grants(client, make_user_key):
+    await _seed(client.session_factory)
+    _, key = await make_user_key(grants=[])
+    r = await client.get("/indexing/status", headers={"X-API-Key": key})
+    assert r.status_code == 200
+    assert r.json() == {"workspaces": []}
 
 
 async def test_index_collection_enqueues(client, monkeypatch):

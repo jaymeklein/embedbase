@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr, StringConstraints
 
 
 def _canonical_email(email: str) -> str:
@@ -18,21 +18,38 @@ def _canonical_email(email: str) -> str:
 # EmailStr validates + normalizes the domain; AfterValidator then folds case fully.
 CanonicalEmail = Annotated[EmailStr, AfterValidator(_canonical_email)]
 
+# Login id: trimmed + lower-cased (case-insensitive login, matches the backfill of
+# username=email for pre-existing rows). ``@``/``+`` allowed so an email works as one.
+Username = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        to_lower=True,
+        min_length=3,
+        max_length=64,
+        pattern=r"^[a-zA-Z0-9._+@-]+$",
+    ),
+]
+
 
 class UserCreate(BaseModel):
     """Body for POST /users."""
 
+    username: Username
     email: CanonicalEmail
     name: str = ""
     is_active: bool = True
+    is_admin: bool = False
 
 
 class UserUpdate(BaseModel):
     """Body for PATCH /users/{user_id} — only non-null fields are applied."""
 
+    username: Username | None = None
     email: CanonicalEmail | None = None
     name: str | None = None
     is_active: bool | None = None
+    is_admin: bool | None = None
 
 
 class UserKeyCreate(BaseModel):

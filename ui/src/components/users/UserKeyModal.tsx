@@ -1,19 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, KeyRound, RefreshCw, ShieldAlert, Trash2 } from 'lucide-react'
+import { KeyRound, RefreshCw, Trash2 } from 'lucide-react'
 import { useMintUserKey, useRevokeUserKey } from '../../api/hooks'
 import type { MintedUserKey, User } from '../../api/types'
 import { Button, Modal, useToast } from '../ui'
 import { formatDate, timeAgo } from '../../lib/format'
-
-/** Best-effort clipboard copy; the caller shows a fallback toast on failure. */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    return false
-  }
-}
+import { RevealOncePanel } from './RevealOncePanel'
 
 /**
  * The user's single API key: create it, rotate it (mint replaces the old one),
@@ -32,18 +23,22 @@ export function UserKeyModal({
   const revokeMut = useRevokeUserKey()
   const [minted, setMinted] = useState<MintedUserKey | null>(null)
   const [confirmingRevoke, setConfirmingRevoke] = useState(false)
+  // The `user` prop is a frozen snapshot; reflect a just-revoked key locally so the
+  // dialog updates immediately instead of showing the stale key until it's reopened.
+  const [revoked, setRevoked] = useState(false)
   const toast = useToast()
 
-  // Forget any one-time secret + confirm state whenever the modal closes.
+  // Forget any one-time secret + confirm/revoke state whenever the modal closes.
   useEffect(() => {
     if (!open) {
       setMinted(null)
       setConfirmingRevoke(false)
+      setRevoked(false)
     }
   }, [open])
 
   if (!user) return null
-  const existing = user.api_key
+  const existing = revoked ? null : user.api_key
 
   const mint = () =>
     mintMut.mutate(
@@ -56,6 +51,7 @@ export function UserKeyModal({
       onSuccess: () => {
         toast.success('Key revoked.')
         setConfirmingRevoke(false)
+        setRevoked(true)
       },
       onError: (e) => toast.error(e.message),
     })
@@ -66,7 +62,11 @@ export function UserKeyModal({
         // Close on Done rather than returning to the management view: the `user`
         // prop is a frozen snapshot, so its key metadata is stale post-rotation.
         // Reopening reads the freshly-invalidated list.
-        <MintedKeyPanel minted={minted} onDone={onClose} />
+        <RevealOncePanel
+          secret={minted.raw_key}
+          message="Copy this key now — it is shown in full only once and cannot be retrieved again."
+          onDone={onClose}
+        />
       ) : (
         <div className="flex flex-col gap-4">
           {existing ? (
@@ -98,9 +98,9 @@ export function UserKeyModal({
                   size="sm"
                   aria-label="Revoke key"
                   onClick={() => setConfirmingRevoke(true)}
-                  className="h-7 w-7 shrink-0 px-0 hover:text-err"
+                  className="h-10 w-10 shrink-0 px-0 hover:text-err"
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="h-7 w-7" />
                 </Button>
               )}
             </div>
@@ -128,41 +128,5 @@ export function UserKeyModal({
         </div>
       )}
     </Modal>
-  )
-}
-
-/** One-time reveal of a freshly minted key, with copy + a no-recovery warning. */
-function MintedKeyPanel({ minted, onDone }: { minted: MintedUserKey; onDone: () => void }) {
-  const [copied, setCopied] = useState(false)
-  const toast = useToast()
-  const copy = async () => {
-    if (await copyText(minted.raw_key)) {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } else {
-      toast.error('Copy failed — select the key and copy it manually.')
-    }
-  }
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-start gap-2 rounded-control border border-warn/30 bg-warn/5 px-3 py-2.5">
-        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
-        <p className="text-[13px] text-ink-muted">
-          Copy this key now — it is shown in full only once and cannot be retrieved again.
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-control border border-border bg-canvas px-3 py-2 font-mono text-[13px] text-ink">
-          {minted.raw_key}
-        </code>
-        <Button variant="secondary" onClick={copy} aria-label="Copy key">
-          {copied ? <Check className="h-5 w-5 text-ok" /> : <Copy className="h-5 w-5" />}
-          {copied ? 'Copied' : 'Copy'}
-        </Button>
-      </div>
-      <div className="flex justify-end">
-        <Button onClick={onDone}>Done</Button>
-      </div>
-    </div>
   )
 }

@@ -136,12 +136,25 @@ export interface UserKeySummary {
 /** A user row (`GET /users`, `GET /users/{id}`) with its API-key summary. */
 export interface User {
   id: string
+  username: string
   email: string
   name: string
   is_active: boolean
+  is_admin: boolean
+  must_change_password: boolean
   created_at: string
   updated_at: string
   api_key: UserKeySummary | null
+}
+
+/** `POST /users` — the created user plus the one-time login password (shown once). */
+export interface CreatedUser extends User {
+  temp_password: string
+}
+
+/** `POST /users/{id}/reset-password` — a fresh one-time login password (shown once). */
+export interface ResetPasswordResponse {
+  temp_password: string
 }
 
 /**
@@ -158,6 +171,13 @@ export interface MintedUserKey {
   raw_key: string
 }
 
+/** `POST /auth/login` / `POST /auth/change-password` — the session token + change flag. */
+export interface SessionResponse {
+  access_token: string
+  token_type: string
+  must_change_password: boolean
+}
+
 export type PermissionLevel = 'read' | 'write'
 export type ResourceType = 'workspace' | 'collection' | 'document'
 
@@ -167,6 +187,9 @@ export interface Permission {
   user_id: string
   resource_type: ResourceType
   resource_id: string
+  /** The resource's display name (workspace/collection name or document filename);
+   *  null when the resource has since been deleted (a harmless dangling grant). */
+  resource_name: string | null
   level: PermissionLevel
   created_at: string
 }
@@ -528,12 +551,20 @@ export interface CollectionCreate {
 export type CollectionUpdate = Partial<CollectionCreate>
 
 export interface UserCreate {
+  username: string
   email: string
   name?: string
   is_active?: boolean
+  is_admin?: boolean
 }
 
-export type UserUpdate = Partial<{ email: string; name: string; is_active: boolean }>
+export type UserUpdate = Partial<{
+  username: string
+  email: string
+  name: string
+  is_active: boolean
+  is_admin: boolean
+}>
 
 export interface UserKeyCreate {
   label?: string
