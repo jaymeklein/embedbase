@@ -18,6 +18,7 @@ import {
   WorkspaceFormModal,
   type WorkspaceFormValues,
 } from '../components/workspaces/WorkspaceFormModal'
+import { useAuth } from '../auth/AuthContext'
 import { formatDate } from '../lib/format'
 
 /** Which dialog (if any) is currently open, plus the row it acts on. */
@@ -39,6 +40,7 @@ function changedFields(ws: Workspace, values: WorkspaceFormValues): WorkspaceUpd
 
 /** Workspaces index: list, create, edit, and delete the top-level containers. */
 export default function Workspaces() {
+  const { canCreateWorkspaces } = useAuth()
   const { data, isLoading, isError, error, refetch } = useWorkspaces()
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const close = () => setDialog({ kind: 'none' })
@@ -97,10 +99,12 @@ export default function Workspaces() {
             Top-level containers for your collections.
           </p>
         </div>
-        <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-5 w-5" />
-          New workspace
-        </Button>
+        {canCreateWorkspaces && (
+          <Button onClick={() => setDialog({ kind: 'create' })}>
+            <Plus className="h-5 w-5" />
+            New workspace
+          </Button>
+        )}
       </header>
 
       <WorkspaceList
@@ -108,6 +112,7 @@ export default function Workspaces() {
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
+        canCreate={canCreateWorkspaces}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(ws) => setDialog({ kind: 'edit', ws })}
@@ -144,6 +149,7 @@ function WorkspaceList({
   isLoading,
   isError,
   message,
+  canCreate,
   onRetry,
   onCreate,
   onEdit,
@@ -153,6 +159,7 @@ function WorkspaceList({
   isLoading: boolean
   isError: boolean
   message?: string
+  canCreate: boolean
   onRetry: () => void
   onCreate: () => void
   onEdit: (ws: Workspace) => void
@@ -175,8 +182,12 @@ function WorkspaceList({
       <EmptyState
         icon={<FolderKanban className="h-7 w-7" />}
         title="No workspaces yet"
-        description="Create your first workspace to start organising collections."
-        action={<Button onClick={onCreate}>New workspace</Button>}
+        description={
+          canCreate
+            ? 'Create your first workspace to start organising collections.'
+            : 'No workspaces are shared with you yet.'
+        }
+        action={canCreate ? <Button onClick={onCreate}>New workspace</Button> : undefined}
       />
     )
   }
