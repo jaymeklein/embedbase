@@ -9,6 +9,8 @@ user can set their password). Token + password mechanics live in
 
 from __future__ import annotations
 
+from typing import cast
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,9 +44,10 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     """Change the current user's password, returning a fresh token (prior sessions die)."""
-    assert principal.user_id is not None  # require_operator guarantees a user identity
+    # require_operator guarantees a user identity — narrow the Optional for the type checker.
+    user_id = cast(str, principal.user_id)
     result = await user_svc.change_password(
-        principal.user_id, body.current_password, body.new_password, db
+        user_id, body.current_password, body.new_password, db
     )
     token = session.mint_session(result["user_id"], must_change=False, pwd_epoch=result["pwd_epoch"])
     return {"access_token": token, "token_type": "bearer", "must_change_password": False}
@@ -56,8 +59,9 @@ async def me(
     db: AsyncSession = Depends(get_db),
 ):
     """The current console user (identity + is_admin + must_change_password + capabilities)."""
-    assert principal.user_id is not None
-    user = await user_svc.get_user(principal.user_id, db)
+    # require_operator guarantees a user identity — narrow the Optional for the type checker.
+    user_id = cast(str, principal.user_id)
+    user = await user_svc.get_user(user_id, db)
     user["can_create_workspaces"] = await permissions.has_capability(
         db, principal, permissions.CAP_CREATE_WORKSPACE
     )
