@@ -245,26 +245,28 @@ function WorkspaceCard({
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-faint">Created {formatDate(ws.created_at)}</span>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Edit ${ws.name}`}
-            onClick={stop(() => onEdit(ws))}
-            className="h-10 w-10 px-0"
-          >
-            <Pencil className="h-7 w-7" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Delete ${ws.name}`}
-            onClick={stop(() => onDelete(ws))}
-            className="h-10 w-10 px-0 hover:text-err"
-          >
-            <Trash2 className="h-7 w-7" />
-          </Button>
-        </div>
+        {ws.can_write && (
+          <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Edit ${ws.name}`}
+              onClick={stop(() => onEdit(ws))}
+              className="h-10 w-10 px-0"
+            >
+              <Pencil className="h-7 w-7" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${ws.name}`}
+              onClick={stop(() => onDelete(ws))}
+              className="h-10 w-10 px-0 hover:text-err"
+            >
+              <Trash2 className="h-7 w-7" />
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   )
