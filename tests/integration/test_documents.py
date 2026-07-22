@@ -53,6 +53,26 @@ async def test_upload_rejects_bad_key(client):
     assert r.status_code == 401
 
 
+async def test_list_documents_missing_collection_is_403_for_scoped_user(client, make_user_key):
+    # A scoped user reaching a *nonexistent* collection gets 403, not 404: the route's access
+    # guard authorizes before checking existence, so the 404 can't be an existence oracle.
+    ws_id, col_id = await _setup(client)
+    _, raw = await make_user_key(grants=[("collection", col_id, "read")])
+    r = await client.get(
+        f"/workspaces/{ws_id}/collections/col_missing/documents", headers={"X-API-Key": raw}
+    )
+    assert r.status_code == 403
+
+
+async def test_list_documents_missing_collection_is_404_for_master(client):
+    # An unrestricted caller passes authorization, so the missing collection surfaces as 404.
+    ws_id, _ = await _setup(client)
+    r = await client.get(
+        f"/workspaces/{ws_id}/collections/col_missing/documents", headers=AUTH
+    )
+    assert r.status_code == 404
+
+
 # ── upload ────────────────────────────────────────────────────────────────────
 
 async def test_upload_returns_202_and_job(client):

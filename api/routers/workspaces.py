@@ -5,6 +5,7 @@ from api.dependencies import get_db
 from api.schemas.workspaces import WorkspaceCreate, WorkspaceUpdate
 from api.services import permissions
 from api.services import workspaces as workspace_svc
+from api.services.access import AuthorizeWorkspace
 from api.services.auth import Principal, require_auth
 
 # No router-level gate: every route is ``require_auth`` and authorized against the caller's
@@ -71,7 +72,7 @@ async def get_workspace(
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await permissions.authorize_workspace(db, principal, ws_id, "read")
+    await AuthorizeWorkspace(ws_id, "read").apply(db, principal)
     result = await workspace_svc.get_workspace(ws_id, db)
     if not principal.is_master:
         # A workspace is browsable via a single collection grant, so prune the nested
@@ -96,7 +97,7 @@ async def update_workspace(
     db: AsyncSession = Depends(get_db),
 ):
     # Editing a workspace is a write on it — needs workspace write (see + edit).
-    await permissions.authorize_workspace(db, principal, ws_id, "write")
+    await AuthorizeWorkspace(ws_id, "write").apply(db, principal)
     return await workspace_svc.update_workspace(ws_id, body, db)
 
 
@@ -106,5 +107,5 @@ async def delete_workspace(
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await permissions.authorize_workspace(db, principal, ws_id, "write")
+    await AuthorizeWorkspace(ws_id, "write").apply(db, principal)
     await workspace_svc.delete_workspace(ws_id, db)
