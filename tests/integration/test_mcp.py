@@ -316,10 +316,11 @@ async def test_workspace_grant_covers_all_its_collections(seeded):
     assert set(out["collection_stats"].keys()) == {"colA", "colB"}
 
 
-async def test_search_without_grant_raises_403(seeded):
+async def test_search_outside_scope_raises_403(seeded):
     factory, store = seeded
     async with factory() as db:
-        await _seed_user_with_grants(db, [])  # user exists, no grants
+        # Scoped to colB → searching colA (out of scope) leaves no readable collection → 403.
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])
         with pytest.raises(HTTPException) as exc:
             await tools.search_documents(
                 query="v", collection_ids=["colA"],
@@ -328,10 +329,10 @@ async def test_search_without_grant_raises_403(seeded):
     assert exc.value.status_code == 403
 
 
-async def test_list_documents_without_grant_raises_403(seeded):
+async def test_list_documents_outside_scope_raises_403(seeded):
     factory, _ = seeded
     async with factory() as db:
-        await _seed_user_with_grants(db, [])
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])  # scoped elsewhere
         with pytest.raises(HTTPException) as exc:
             await tools.list_documents(collection_id="colA", db=db, principal=USER)
     assert exc.value.status_code == 403

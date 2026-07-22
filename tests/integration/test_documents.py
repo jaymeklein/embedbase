@@ -339,15 +339,15 @@ async def test_user_key_cannot_upload_to_ungranted_collection(client, make_user_
     assert r.status_code == 403
 
 
-async def test_user_key_without_grant_cannot_list(client, make_user_key):
-    """An active user with no grant is denied (403) reading a collection's documents."""
+async def test_user_key_without_grant_can_list(client, make_user_key):
+    """An active user with no permissions reads any collection (open default)."""
     ws_id, col_id = await _setup(client)
     _, raw = await make_user_key()  # no grants
 
     r = await client.get(
         f"/workspaces/{ws_id}/collections/{col_id}/documents", headers={"X-API-Key": raw}
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
 
 
 async def test_document_grant_allows_nested_status(client, make_user_key):

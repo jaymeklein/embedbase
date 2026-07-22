@@ -221,14 +221,14 @@ async def test_jobs_workspace_grant_covers_all_its_collections(client, make_user
     assert body["total"] == 2  # a workspace grant covers every collection under it
 
 
-async def test_jobs_empty_for_user_without_grants(client, make_user_key):
+async def test_jobs_unrestricted_for_user_without_grants(client, make_user_key):
     ws_id, col_id = await _setup(client)
     await _upload(client, ws_id, col_id)
     _, key = await make_user_key(grants=[])
     uh = {"X-API-Key": key}
     body = (await client.get("/ingestion/jobs", headers=uh)).json()
-    assert body["total"] == 0 and body["items"] == []
-    assert (await client.get("/ingestion/jobs/stats", headers=uh)).json()["counts"] == {}
+    assert body["total"] == 1  # no permissions → sees every collection's jobs
+    assert (await client.get("/ingestion/jobs/stats", headers=uh)).json()["counts"] == {"pending": 1}
 
 
 async def test_retry_failed_is_admin_only(client, make_user_key):

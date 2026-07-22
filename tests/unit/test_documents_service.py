@@ -10,6 +10,8 @@ from sqlalchemy import insert, select, update
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
+from api.db import permissions as perm_t
+from api.db import users as users_t
 from api.db import workspaces as ws_t
 from api.models.document import DocumentListQuery
 from api.services.auth import Principal
@@ -367,10 +369,24 @@ async def test_resolve_download_missing_on_disk_raises_404(db_session, monkeypat
     assert exc.value.status_code == 404
 
 
-async def test_resolve_download_without_grant_raises_403(db_session, monkeypatch, tmp_path) -> None:
+async def test_resolve_download_outside_scope_raises_403(db_session, monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
     await _seed(db_session)
-    principal = Principal(is_master=False, user_id="usr_nogrant")
+    # A user scoped to a different workspace can't reach this document (out of scope).
+    await db_session.execute(
+        insert(ws_t).values(id="ws_other", name="O", description="", color="", icon="", created_at=_NOW, updated_at=_NOW)
+    )
+    await db_session.execute(
+        insert(col_t).values(id="col_other", workspace_id="ws_other", name="O", description="", color="", icon="", created_at=_NOW, updated_at=_NOW)
+    )
+    await db_session.execute(
+        insert(users_t).values(id="usr_scoped", email="s@e.com", name="", is_active=True, created_at=_NOW, updated_at=_NOW)
+    )
+    await db_session.execute(
+        insert(perm_t).values(id="p_scoped", user_id="usr_scoped", resource_type="collection", resource_id="col_other", level="read", created_at=_NOW)
+    )
+    await db_session.commit()
+    principal = Principal(is_master=False, user_id="usr_scoped")
     with pytest.raises(HTTPException) as exc:
         await resolve_document_download(db_session, _DOC_ID, principal)
     assert exc.value.status_code == 403
