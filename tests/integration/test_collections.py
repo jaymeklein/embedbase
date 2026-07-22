@@ -244,14 +244,45 @@ async def test_no_auth_delete_collection_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_user_key_on_collection_route_returns_403(client, make_user_key):
-    """A user key must be rejected (403) on the master-only collection management routes."""
+async def test_create_collection_unrestricted_user_allowed(client, make_user_key):
+    """A user with no permissions is unrestricted → may create collections."""
     ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
-    _, raw_key = await make_user_key()
+    _, raw = await make_user_key()  # no grants → unrestricted
 
     r = await client.post(
         f"/workspaces/{ws_id}/collections",
-        json={"name": "hack"},
-        headers={"Authorization": f"Bearer {raw_key}"},
+        json={"name": "C"},
+        headers={"X-API-Key": raw},
+    )
+    assert r.status_code == 201
+
+
+async def test_create_collection_requires_workspace_write(client, make_user_key):
+    """A user scoped to the workspace read-only is denied (403); workspace write allows it."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+
+    _, ro = await make_user_key(grants=[("workspace", ws_id, "read")])
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers={"X-API-Key": ro}
+    )
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("workspace", ws_id, "write")])
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers={"X-API-Key": rw}
+    )
+    assert r.status_code == 201
+
+
+async def test_create_collection_denied_for_collection_grant_holder(client, make_user_key):
+    """A collection grant (not workspace) doesn't confer creating sibling collections."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_id = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "A"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(grants=[("collection", col_id, "write")])
+
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "B"}, headers={"X-API-Key": key}
     )
     assert r.status_code == 403

@@ -65,6 +65,14 @@ A permission gives one user a `level` (`read` | `write`) on one resource (`works
 `resource_id` is a plain string (no FK — polymorphic across three tables, like `job_records`); a permission
 left dangling by a deleted resource is harmless (uuids are never reissued).
 
+### Capabilities — grantable privileges not tied to a resource
+Some privileges have no parent resource to hold a write grant — creating a top-level **workspace** is the
+one so far. These are **capability grants**: a `permissions` row with `resource_type="capability"` and a
+known `resource_id` (`create_workspace`; see `_CAPABILITIES` / `_CAPABILITY_LABELS`). They're **ignored by
+data-scope resolution** (a capability never scopes a user's read/write), checked with `has_capability` /
+`authorize_workspace_creation`, and granted through the same `POST /users/{id}/permissions` + Permissions
+editor. A no-permission user is unrestricted for *data* but still needs the capability to create workspaces.
+
 ## Enforcing access — `api/services/permissions.py` is the only authority
 Routers and MCP tools call it and let it raise `403`; **never** re-implement the check inline. A restricted
 user's permissions resolve once to a `_Scope` (permissions + parent links pre-fetched) that answers
@@ -86,8 +94,11 @@ master-equivalent), `require_auth` (any valid credential; records `last_used_at`
 session), and `require_operator` (a user session incl. must-change — only the self-service `/auth` routes).
 Patterns:
 - **Management writes** → `require_master` (router-level for `tags`, `config`, `graph`, **users**; per-route
-  on `workspaces`/`collections` **writes** and the `jobs` bulk **retry-failed**). Creating/updating/deleting
-  anything, and all user/key/grant management, is **admin-only**.
+  on workspace/collection **update + delete** and the `jobs` bulk **retry-failed**). User/key/grant management
+  is admin-only. **Self-service creation is the exception:** creating a **collection** needs `require_auth` +
+  workspace **write** (`authorize_workspace(…, "write")`); creating a **workspace** needs `require_auth` + the
+  **`create_workspace` capability** (`authorize_workspace_creation`), and a scoped creator is auto-granted
+  write on the new workspace (`grant_creator_access`) so they can use it.
 - **Data-plane + scope-restricted reads** → `require_auth` then `await permissions.authorize_*` /
   `readable_*` (documents, search, the ws bridge, the `workspaces`/`collections` **list/get**, and the
   **ingestion-queue list/stats + index status** via `readable_collection_scope`). A non-admin with no

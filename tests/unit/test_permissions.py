@@ -202,6 +202,83 @@ async def test_readable_collection_scope_excludes_document_only_grant(db_session
     assert await permissions.readable_collection_scope(db_session, _USER) == []
 
 
+# ── Capabilities + resource creation ────────────────────────────────────────
+
+async def test_workspace_creation_requires_capability(db_session):
+    await _seed(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await permissions.authorize_workspace_creation(db_session, _USER)
+    assert exc.value.status_code == 403
+    await permissions.authorize_workspace_creation(db_session, _MASTER)  # master always may
+
+
+async def test_capability_grant_allows_workspace_creation(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "capability", permissions.CAP_CREATE_WORKSPACE, "write")
+    await permissions.authorize_workspace_creation(db_session, _USER)  # no raise
+    assert await permissions.has_capability(db_session, _USER, permissions.CAP_CREATE_WORKSPACE)
+
+
+async def test_capability_grant_does_not_scope_data_access(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "capability", permissions.CAP_CREATE_WORKSPACE, "write")
+    # A capability is not a data grant — the user stays unrestricted for read/write.
+    assert await permissions.readable_collection_scope(db_session, _USER) is None
+    await permissions.authorize_collection(db_session, _USER, "colA", "write")
+
+
+async def test_capability_grant_lists_with_friendly_name(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "capability", permissions.CAP_CREATE_WORKSPACE, "write")
+    grants = await permissions.list_permissions(db_session, "usr1")
+    cap = next(g for g in grants if g["resource_type"] == "capability")
+    assert cap["resource_name"] == "Create workspaces"
+
+
+async def test_unknown_capability_grant_raises_422(db_session):
+    await _seed(db_session)
+    with pytest.raises(HTTPException) as exc:
+        await permissions.grant_permission(db_session, "usr1", "capability", "bogus", "write")
+    assert exc.value.status_code == 422
+
+
+async def test_writable_workspace_ids(db_session):
+    await _seed(db_session)
+    assert await permissions.writable_workspace_ids(db_session, _MASTER, ["ws1"]) == ["ws1"]
+    # No permissions → unrestricted → writable everywhere.
+    assert await permissions.writable_workspace_ids(db_session, _USER, ["ws1"]) == ["ws1"]
+    await _grant(db_session, "workspace", "ws1", "read")
+    assert await permissions.writable_workspace_ids(db_session, _USER, ["ws1"]) == []  # read caps it
+
+
+async def test_grant_creator_access_grants_scoped_user(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")  # makes usr1 a scoped user
+    await permissions.grant_creator_access(db_session, _USER, "ws1")
+    grants = await permissions.list_permissions(db_session, "usr1")
+    ws_grant = next(
+        (g for g in grants if g["resource_type"] == "workspace" and g["resource_id"] == "ws1"),
+        None,
+    )
+    assert ws_grant is not None and ws_grant["level"] == "write"
+
+
+async def test_grant_creator_access_skips_unrestricted_user(db_session):
+    await _seed(db_session)
+    # usr1 has no permissions → unrestricted → auto-granting would wrongly scope them down.
+    await permissions.grant_creator_access(db_session, _USER, "ws1")
+    assert await permissions.list_permissions(db_session, "usr1") == []
+
+
+async def test_grant_creator_access_skips_capability_only_user(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "capability", permissions.CAP_CREATE_WORKSPACE, "write")
+    # A capability grant doesn't scope data → the user is still unrestricted → no auto-grant.
+    await permissions.grant_creator_access(db_session, _USER, "ws1")
+    grants = await permissions.list_permissions(db_session, "usr1")
+    assert [g["resource_type"] for g in grants] == ["capability"]  # only the capability remains
+
+
 async def test_filter_workspace_tree_prunes_and_recounts(db_session):
     await _seed(db_session)
     await _grant(db_session, "collection", "colA", "read")

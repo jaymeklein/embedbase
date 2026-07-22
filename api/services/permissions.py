@@ -41,7 +41,7 @@ from api.db import workspaces as ws_t
 from api.services.auth import Principal
 
 Level = Literal["read", "write"]
-ResourceType = Literal["workspace", "collection", "document"]
+ResourceType = Literal["workspace", "collection", "document", "capability"]
 
 _RESOURCE_TABLES = {"workspace": ws_t, "collection": col_t, "document": doc_t}
 # The human-facing name column per resource kind (documents label by filename).
@@ -56,6 +56,14 @@ _Target = tuple[str, str]  # (resource_type, resource_id)
 # Raised by the REST /search route and the MCP search tool when none of the
 # requested collections are readable by the caller.
 NO_READABLE_COLLECTIONS = "API key not authorized to read the requested collections"
+
+# Grantable capabilities — permissions NOT tied to a resource (e.g. "may create
+# workspaces", which has no parent resource to hold a write grant). Stored in the
+# permissions table as ``resource_type="capability"`` and ignored by data-scope
+# resolution, so a capability grant never scopes a user's read/write access.
+CAP_CREATE_WORKSPACE = "create_workspace"
+_CAPABILITIES = {CAP_CREATE_WORKSPACE}
+_CAPABILITY_LABELS = {CAP_CREATE_WORKSPACE: "Create workspaces"}
 
 
 def _denied(need: str) -> str:
@@ -376,12 +384,89 @@ async def authorize_workspace(
     raise HTTPException(403, _denied(need))
 
 
+async def writable_workspace_ids(
+    db: AsyncSession, principal: Principal, candidate_ids: list[str]
+) -> list[str]:
+    """Filter workspace ids to those ``principal`` may write (i.e. create collections in).
+
+    Master and users with no permissions may write all; a scoped user only where a
+    workspace-level write permission covers it. Lets the UI show a "new collection" action
+    only where it would succeed.
+    """
+    ids = list(dict.fromkeys(candidate_ids))
+    if principal.is_master:
+        return ids
+    if principal.user_id is None or not ids:
+        return []
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return ids
+    return [
+        wid
+        for wid in ids
+        if scope.workspace_readable(wid) and scope.ws_level.get(wid) == "write"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Capabilities — grantable permissions not tied to a resource
+# ---------------------------------------------------------------------------
+
+async def has_capability(db: AsyncSession, principal: Principal, capability: str) -> bool:
+    """Whether ``principal`` holds a grantable ``capability`` (master/admin always do)."""
+    if principal.is_master:
+        return True
+    if principal.user_id is None:
+        return False
+    row = (
+        await db.execute(
+            select(perm_t.c.id).where(
+                perm_t.c.user_id == principal.user_id,
+                perm_t.c.resource_type == "capability",
+                perm_t.c.resource_id == capability,
+            )
+        )
+    ).scalar_one_or_none()
+    return row is not None
+
+
+async def authorize_workspace_creation(db: AsyncSession, principal: Principal) -> None:
+    """Raise ``403`` unless ``principal`` may create workspaces.
+
+    Master/admin always may; a non-admin needs the ``create_workspace`` capability grant. A
+    no-permission user does *not* get it implicitly — creating top-level workspaces is a
+    deliberate privilege, unlike data access (open by default).
+    """
+    if not await has_capability(db, principal, CAP_CREATE_WORKSPACE):
+        raise HTTPException(403, "Not authorized to create workspaces")
+
+
+async def grant_creator_access(
+    db: AsyncSession, principal: Principal, workspace_id: str
+) -> None:
+    """Give a *scoped* creator write on a workspace they just made, so they can use it.
+
+    Master/admin and unrestricted (no-permission) users already see everything, so no grant
+    is made for them — granting an unrestricted user would wrongly scope their access down.
+    """
+    if principal.user_id is None or principal.is_master:
+        return
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return
+    await grant_permission(db, principal.user_id, "workspace", workspace_id, "write")
+
+
 # ---------------------------------------------------------------------------
 # Grant CRUD — used by the users management API (master-only)
 # ---------------------------------------------------------------------------
 
 async def _require_resource(db: AsyncSession, resource_type: str, resource_id: str) -> None:
-    """Raise ``404`` when the target of a grant does not exist."""
+    """Raise ``404``/``422`` when the target of a grant does not exist."""
+    if resource_type == "capability":  # not a resource — validate the known capability id
+        if resource_id not in _CAPABILITIES:
+            raise HTTPException(422, f"Unknown capability {resource_id!r}")
+        return
     table = _RESOURCE_TABLES.get(resource_type)
     if table is None:  # defensive — the schema Literal should prevent this
         raise HTTPException(422, f"Unknown resource_type {resource_type!r}")
@@ -462,6 +547,12 @@ async def _resource_names(db: AsyncSession, grants: list[dict[str, Any]]) -> dic
         ids_by_type.setdefault(g["resource_type"], set()).add(g["resource_id"])
     names: dict[_Target, str] = {}
     for rtype, ids in ids_by_type.items():
+        if rtype == "capability":  # not a resource — label from the capability registry
+            for rid in ids:
+                label = _CAPABILITY_LABELS.get(rid)
+                if label is not None:
+                    names[(rtype, rid)] = label
+            continue
         table = _RESOURCE_TABLES.get(rtype)
         if table is None:  # defensive — unknown kind stays unnamed, never a 500
             continue

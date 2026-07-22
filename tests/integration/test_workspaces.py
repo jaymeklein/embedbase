@@ -204,9 +204,9 @@ async def test_no_auth_delete_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_user_key_on_workspace_route_returns_403(client, make_user_key):
-    """A user key must be rejected (403) on the master-only workspace routes."""
-    _, raw_key = await make_user_key()
+async def test_create_workspace_without_capability_returns_403(client, make_user_key):
+    """A user without the create_workspace capability cannot create workspaces."""
+    _, raw_key = await make_user_key()  # no capability
 
     r = await client.post(
         "/workspaces",
@@ -214,3 +214,31 @@ async def test_user_key_on_workspace_route_returns_403(client, make_user_key):
         headers={"Authorization": f"Bearer {raw_key}"},
     )
     assert r.status_code == 403
+
+
+async def test_create_workspace_with_capability_returns_201(client, make_user_key):
+    _, key = await make_user_key(grants=[("capability", "create_workspace", "write")])
+    r = await client.post("/workspaces", json={"name": "Mine"}, headers={"X-API-Key": key})
+    assert r.status_code == 201
+
+
+async def test_scoped_creator_can_use_the_workspace_they_made(client, make_user_key):
+    # Scope the user to some existing collection, then give them the create capability.
+    ws0 = (await client.post("/workspaces", json={"name": "Other"}, headers=_MH)).json()["id"]
+    col0 = (
+        await client.post(f"/workspaces/{ws0}/collections", json={"name": "C"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(
+        grants=[("collection", col0, "read"), ("capability", "create_workspace", "write")]
+    )
+    uh = {"X-API-Key": key}
+
+    created = (await client.post("/workspaces", json={"name": "Mine"}, headers=uh)).json()
+    # A scoped creator would not otherwise see a new top-level workspace — the auto-grant
+    # gives them write, so it lists with can_write and they can add collections to it.
+    listed = {w["id"]: w for w in (await client.get("/workspaces", headers=uh)).json()}
+    assert listed.get(created["id"], {}).get("can_write") is True
+    r = await client.post(
+        f"/workspaces/{created['id']}/collections", json={"name": "New"}, headers=uh
+    )
+    assert r.status_code == 201
