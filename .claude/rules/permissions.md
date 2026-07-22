@@ -155,6 +155,9 @@ session epoch. `username` (`UNIQUE`) + `is_admin` are set here.
 miss) and returns a signed session JWT. `POST /auth/change-password` + `GET /auth/me` use `require_operator`
 (a user session, must-change allowed). A must-change session can reach **nothing else** until the password is
 set. Password hashing + temp-password generation live in `session.py` (bcrypt `rounds=12`, same as keys).
+The console client treats a **dead credential as sign-out**: any `401` (expired / invalid / reset session)
+and the deactivated-user `403` ("User is inactive") clear the stored credentials and return the app to the
+login screen (`ui/src/api/client.ts::raiseForStatus` → the auth provider's `logout`).
 
 ## MCP
 The MCP transport authenticates the caller's key (master or active user) in `api/services/mcp/middleware.py`

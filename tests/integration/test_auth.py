@@ -167,6 +167,18 @@ async def test_reset_password_invalidates_active_session(client, make_operator):
     assert (await client.get("/auth/me", headers=h)).status_code == 401
 
 
+async def test_deactivation_kills_active_session_with_stable_detail(client, make_operator):
+    op = await make_operator()
+    h = _bearer(op["token"])
+    assert (await client.get("/auth/me", headers=h)).status_code == 200
+    await client.patch(f"/users/{op['user_id']}", json={"is_active": False}, headers=_MH)
+    r = await client.get("/auth/me", headers=h)
+    assert r.status_code == 403
+    # The console signs out on this exact detail (ui/src/api/client.ts::raiseForStatus);
+    # rewording it would strand deactivated users signed-in with errors — keep it stable.
+    assert r.json()["detail"] == "User is inactive"
+
+
 async def test_master_key_still_manages(client):
     assert (await client.get("/users", headers=_MH)).status_code == 200
     assert (await client.post("/workspaces", json={"name": "M"}, headers=_MH)).status_code == 201
