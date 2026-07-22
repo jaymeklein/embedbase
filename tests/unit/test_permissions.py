@@ -8,7 +8,7 @@ from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import users as users_t
 from api.db import workspaces as ws_t
-from api.services import permissions
+from api.services import access, permissions
 from api.services.auth import Principal
 
 _MASTER = Principal(is_master=True)
@@ -373,3 +373,105 @@ async def test_revoke_missing_permission_raises_404(db_session):
     with pytest.raises(HTTPException) as exc:
         await permissions.revoke_permission(db_session, "usr1", "perm_ghost")
     assert exc.value.status_code == 404
+
+
+# ── access.py policies: composable authz + existence, applied authorize-first ──
+#
+# Each policy's ``apply`` raises to deny / returns None to allow; CompositePolicy applies its
+# policies in order. Authorization policies precede existence policies, so a scoped caller who
+# may not reach a resource gets 403 before any 404 — the 404 can never be an existence oracle.
+
+
+async def test_authorize_collection_policy_denies_out_of_scope(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")  # scoped to colA
+    await access.AuthorizeCollection("colA", "read").apply(db_session, _USER)  # in scope → allow
+    with pytest.raises(HTTPException) as exc:  # a sibling is out of scope
+        await access.AuthorizeCollection("colB", "read").apply(db_session, _USER)
+    assert exc.value.status_code == 403
+
+
+async def test_authorize_collection_policy_read_grant_denies_write(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")
+    with pytest.raises(HTTPException) as exc:  # a read grant never confers write
+        await access.AuthorizeCollection("colA", "write").apply(db_session, _USER)
+    assert exc.value.status_code == 403
+
+
+async def test_authorize_workspace_policy_denies_out_of_scope(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "read")  # scoped to ws1
+    await access.AuthorizeWorkspace("ws1", "read").apply(db_session, _USER)  # allow
+    with pytest.raises(HTTPException) as exc:
+        await access.AuthorizeWorkspace("ws_missing", "read").apply(db_session, _USER)
+    assert exc.value.status_code == 403
+
+
+async def test_authorize_document_policy_allows_granted(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "document", "docA", "read")
+    assert await access.AuthorizeDocument("docA", "read").apply(db_session, _USER) is None
+
+
+async def test_collection_in_workspace_policy_404_when_absent(db_session):
+    await _seed(db_session)
+    await access.CollectionInWorkspace("ws1", "colA").apply(db_session, _MASTER)  # present → allow
+    with pytest.raises(HTTPException) as exc:
+        await access.CollectionInWorkspace("ws1", "col_missing").apply(db_session, _MASTER)
+    assert exc.value.status_code == 404
+
+
+async def test_composite_applies_authorization_before_existence(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")  # scoped
+    # Missing collection: the authorize policy (403) fires before the existence policy (404),
+    # so a scoped caller gets 403 — the 404 can never be an existence oracle.
+    policy = access.CompositePolicy(
+        access.AuthorizeCollection("col_missing", "read"),
+        access.CollectionInWorkspace("ws1", "col_missing"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await policy.apply(db_session, _USER)
+    assert exc.value.status_code == 403
+
+
+async def test_composite_reaches_existence_only_after_authorization(db_session):
+    await _seed(db_session)  # _USER unrestricted → authorize passes
+    # An authorized caller reaches the existence policy → 404 for a genuinely missing collection.
+    policy = access.CompositePolicy(
+        access.AuthorizeCollection("col_missing", "read"),
+        access.CollectionInWorkspace("ws1", "col_missing"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await policy.apply(db_session, _USER)
+    assert exc.value.status_code == 404
+
+
+async def test_composite_passes_when_all_policies_allow(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")
+    policy = access.CompositePolicy(
+        access.AuthorizeCollection("colA", "read"),
+        access.CollectionInWorkspace("ws1", "colA"),
+    )
+    assert await policy.apply(db_session, _USER) is None  # every policy allows → no raise
+
+
+async def test_composite_document_path_authorizes_before_existence(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "document", "docA", "read")  # scoped to docA only
+    # Unauthorized document + a bad collection path → 403 (document authz first), never 404.
+    policy = access.CompositePolicy(
+        access.AuthorizeDocument("doc_other", "read"),
+        access.CollectionInWorkspace("ws1", "col_missing"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await policy.apply(db_session, _USER)
+    assert exc.value.status_code == 403
+
+
+def test_composite_rejects_empty_fail_closed():
+    # An empty composite would authorize everything (empty loop) — reject it at construction.
+    with pytest.raises(ValueError):
+        access.CompositePolicy()
