@@ -1,13 +1,17 @@
-"""Permissions table — per-user access grants over the resource hierarchy.
+"""Permissions table — per-user access grants + capabilities.
 
 One row grants a user a ``level`` (``read`` or ``write``) on a single resource
-(``resource_type`` ∈ ``workspace`` | ``collection`` | ``document``). Grants are
-**hierarchical**: a grant on a workspace covers its collections and documents; a
-grant on a collection covers its documents. ``write`` implies ``read``.
+(``resource_type`` ∈ ``workspace`` | ``collection`` | ``document``). Resource grants are
+**hierarchical**: a grant on a workspace covers its collections and documents; a grant on
+a collection covers its documents. ``write`` implies ``read``.
 
-``resource_id`` is a plain string with no foreign key — it is polymorphic across
-three tables (like ``job_records.document_id``). A grant left dangling by a
-deleted resource is harmless: the id is a random uuid that is never reissued.
+A fourth ``resource_type``, ``capability``, is **not** a resource grant — it holds a
+non-resource privilege (``resource_id`` a known capability id, e.g. ``create_workspace``)
+and is ignored by data-scope resolution. See ``api/services/permissions.py``.
+
+``resource_id`` is a plain string with no foreign key — polymorphic across the three
+resource tables (like ``job_records.document_id``), or a capability id. A grant left
+dangling by a deleted resource is harmless: the id is a random uuid that is never reissued.
 """
 
 from sqlalchemy import Column, ForeignKey, Index, String, Table, UniqueConstraint

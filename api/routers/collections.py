@@ -5,6 +5,7 @@ from api.dependencies import get_db
 from api.schemas.collections import CollectionCreate, CollectionUpdate
 from api.services import collections as collection_svc
 from api.services import permissions
+from api.services import workspaces as workspace_svc
 from api.services.auth import Principal, require_auth, require_master
 
 # Writes are admin-only (per-route ``require_master``); reads are ``require_auth`` and
@@ -12,10 +13,18 @@ from api.services.auth import Principal, require_auth, require_master
 router = APIRouter(prefix="/workspaces/{ws_id}/collections", tags=["collections"])
 
 
-@router.post("", status_code=201, dependencies=[Depends(require_master)])
+@router.post("", status_code=201)
 async def create_collection(
-    ws_id: str, body: CollectionCreate, db: AsyncSession = Depends(get_db)
+    ws_id: str,
+    body: CollectionCreate,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
+    # Creating a collection is a write into its parent workspace — needs workspace write.
+    # Authorize before the existence check so a scoped user gets a uniform 403 and can't
+    # probe which workspaces exist (the read routes authorize-first for the same reason).
+    await permissions.authorize_workspace(db, principal, ws_id, "write")
+    await workspace_svc.require_workspace(ws_id, db)
     return await collection_svc.create_collection(
         workspace_id=ws_id,
         name=body.name,

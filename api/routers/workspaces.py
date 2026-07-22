@@ -13,15 +13,26 @@ from api.services.auth import Principal, require_auth, require_master
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
-@router.post("", status_code=201, dependencies=[Depends(require_master)])
-async def create_workspace(body: WorkspaceCreate, db: AsyncSession = Depends(get_db)):
-    return await workspace_svc.create_workspace(
+@router.post("", status_code=201)
+async def create_workspace(
+    body: WorkspaceCreate,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    # Creating a top-level workspace needs the create_workspace capability (master/admin
+    # always). A scoped creator is then granted write on it so they can use what they made
+    # — a separate commit, but fail-safe: a crash in between only self-locks the creator out
+    # of their new empty workspace (no privilege leak), recoverable by an admin.
+    await permissions.authorize_workspace_creation(db, principal)
+    ws = await workspace_svc.create_workspace(
         name=body.name,
         description=body.description,
         color=body.color,
         icon=body.icon,
         db=db,
     )
+    await permissions.grant_creator_access(db, principal, ws["id"])
+    return ws
 
 
 @router.get("")
@@ -30,18 +41,26 @@ async def list_workspaces(
 ):
     workspaces = await workspace_svc.list_workspaces(db)
     if principal.is_master:
-        return workspaces
+        return [{**w, "can_write": True} for w in workspaces]
     # Non-admin: keep only readable workspaces and recompute collection_count against
     # the collections the caller can actually see (reusing the grant-tree filter), so
-    # the count never reveals collections they can't reach.
+    # the count never reveals collections they can't reach. ``can_write`` tells the UI
+    # where a "new collection" action would succeed.
     tree = await permissions.filter_workspace_tree(
         db, principal, await workspace_svc.list_workspace_tree(db)
     )
     scoped_counts = {w["id"]: w["collection_count"] for w in tree}
+    visible = [w for w in workspaces if w["id"] in scoped_counts]
+    writable = set(
+        await permissions.writable_workspace_ids(db, principal, [w["id"] for w in visible])
+    )
     return [
-        {**w, "collection_count": scoped_counts[w["id"]]}
-        for w in workspaces
-        if w["id"] in scoped_counts
+        {
+            **w,
+            "collection_count": scoped_counts[w["id"]],
+            "can_write": w["id"] in writable,
+        }
+        for w in visible
     ]
 
 
@@ -62,6 +81,9 @@ async def get_workspace(
             )
         )
         result["collections"] = [c for c in result["collections"] if c["id"] in allowed]
+    result["can_write"] = bool(
+        await permissions.writable_workspace_ids(db, principal, [ws_id])
+    )
     return result
 
 

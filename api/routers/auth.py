@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
 from api.schemas.auth import ChangePasswordRequest, LoginRequest
-from api.services import session
+from api.services import permissions, session
 from api.services import users as user_svc
 from api.services.auth import Principal, require_operator
 
@@ -55,6 +55,10 @@ async def me(
     principal: Principal = Depends(require_operator),
     db: AsyncSession = Depends(get_db),
 ):
-    """The current console user (identity + is_admin + must_change_password) for the UI."""
+    """The current console user (identity + is_admin + must_change_password + capabilities)."""
     assert principal.user_id is not None
-    return await user_svc.get_user(principal.user_id, db)
+    user = await user_svc.get_user(principal.user_id, db)
+    user["can_create_workspaces"] = await permissions.has_capability(
+        db, principal, permissions.CAP_CREATE_WORKSPACE
+    )
+    return user

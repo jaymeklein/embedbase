@@ -59,8 +59,12 @@ class UserKeyCreate(BaseModel):
 
 
 class GrantCreate(BaseModel):
-    """Body for POST /users/{user_id}/permissions."""
+    """Body for POST /users/{user_id}/permissions.
 
-    resource_type: Literal["workspace", "collection", "document"]
+    ``capability`` grants a non-resource privilege (e.g. ``resource_id="create_workspace"``);
+    the other types scope access to a workspace/collection/document.
+    """
+
+    resource_type: Literal["workspace", "collection", "document", "capability"]
     resource_id: str
     level: Literal["read", "write"]
