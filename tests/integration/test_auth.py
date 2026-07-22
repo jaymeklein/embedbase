@@ -132,10 +132,11 @@ async def test_nonadmin_sees_only_granted_resources(client, make_operator):
     assert cols == {col_a}
 
 
-async def test_nonadmin_with_no_grants_sees_nothing(client, make_operator):
-    await _make_collection(client)
+async def test_nonadmin_with_no_grants_sees_everything(client, make_operator):
+    ws_id, _ = await _make_collection(client)
     op = await make_operator(is_admin=False)
-    assert (await client.get("/workspaces", headers=_bearer(op["token"]))).json() == []
+    wss = (await client.get("/workspaces", headers=_bearer(op["token"]))).json()
+    assert [w["id"] for w in wss] == [ws_id]  # no permissions → sees all (open default)
 
 
 async def test_nonadmin_get_workspace_hides_ungranted_collections(client, make_operator):
