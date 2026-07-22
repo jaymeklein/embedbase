@@ -9,7 +9,7 @@ import { Input } from '../components/ui/Input'
 type ApiReach = 'checking' | 'up' | 'down'
 
 /** Probe the public `/healthz` so the operator sees the stack is reachable. */
-function useApiReach(): { reach: ApiReach; health: Health | null } {
+export function useApiReach(): { reach: ApiReach; health: Health | null } {
   const [reach, setReach] = useState<ApiReach>('checking')
   const [health, setHealth] = useState<Health | null>(null)
   useEffect(() => {
@@ -36,10 +36,11 @@ function unlockError(err: unknown): string {
 }
 
 /**
- * Full-screen gate shown until a valid master key is held. The key is the only
- * credential — there is no login. Submitting verifies it against `/workspaces`.
+ * Master-key bootstrap/break-glass unlock (full admin). The primary sign-in is
+ * username/password (`LoginScreen`); this is reached via its "use master key"
+ * toggle. Submitting verifies the key against `/workspaces`.
  */
-export function UnlockScreen() {
+export function UnlockScreen({ onBack }: { onBack?: () => void }) {
   const { unlock } = useAuth()
   const { reach, health } = useApiReach()
   const [key, setKey] = useState('')
@@ -100,14 +101,24 @@ export function UnlockScreen() {
           </Button>
         </form>
 
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="mt-4 w-full text-center text-xs text-ink-faint hover:text-ink-muted"
+          >
+            Back to sign in
+          </button>
+        )}
+
         <ApiReachLine reach={reach} health={health} />
       </div>
     </div>
   )
 }
 
-/** Subtle API-reachability footer beneath the unlock form. */
-function ApiReachLine({ reach, health }: { reach: ApiReach; health: Health | null }) {
+/** Subtle API-reachability footer beneath the unlock/login form. */
+export function ApiReachLine({ reach, health }: { reach: ApiReach; health: Health | null }) {
   if (reach === 'checking') {
     return (
       <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-ink-faint">

@@ -1,10 +1,14 @@
 """Integration tests for the users + permissions management API (master-only)."""
 
+from uuid import uuid4
+
 _MH = {"Authorization": "Bearer test-master-key-for-testing-only"}
 
 
 async def _make_user(client, email="a@example.com", **extra):
-    r = await client.post("/users", json={"email": email, **extra})
+    """Create a user; a unique username is generated unless one is passed in ``extra``."""
+    body = {"username": f"u{uuid4().hex[:10]}", "email": email, **extra}
+    r = await client.post("/users", json=body)
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -21,22 +25,32 @@ async def _make_collection(client):
 # ── users CRUD ────────────────────────────────────────────────────────────────
 
 async def test_create_user_returns_201_with_fields(master_client):
-    data = await _make_user(master_client, "jane@example.com", name="Jane")
+    data = await _make_user(master_client, "jane@example.com", name="Jane", username="jane")
     assert data["id"].startswith("usr_")
+    assert data["username"] == "jane"
     assert data["email"] == "jane@example.com"
     assert data["name"] == "Jane"
     assert data["is_active"] is True
+    assert data["is_admin"] is False
+    assert data["must_change_password"] is True
+    assert data["temp_password"]  # one-time login password, returned once
     assert data["api_key"] is None
 
 
 async def test_create_user_duplicate_email_returns_409(master_client):
     await _make_user(master_client, "dup@example.com")
-    r = await master_client.post("/users", json={"email": "dup@example.com"})
+    r = await master_client.post("/users", json={"username": "dup2", "email": "dup@example.com"})
+    assert r.status_code == 409
+
+
+async def test_create_user_duplicate_username_returns_409(master_client):
+    await _make_user(master_client, "a1@example.com", username="taken")
+    r = await master_client.post("/users", json={"username": "taken", "email": "a2@example.com"})
     assert r.status_code == 409
 
 
 async def test_create_user_rejects_invalid_email(master_client):
-    r = await master_client.post("/users", json={"email": "not-an-email"})
+    r = await master_client.post("/users", json={"username": "bademail", "email": "not-an-email"})
     assert r.status_code == 422
 
 
@@ -53,7 +67,7 @@ async def test_create_user_canonicalizes_email(master_client):
 
 async def test_duplicate_email_is_case_insensitive(master_client):
     await _make_user(master_client, "Case@Example.com")
-    r = await master_client.post("/users", json={"email": "case@example.com"})
+    r = await master_client.post("/users", json={"username": "case2", "email": "case@example.com"})
     assert r.status_code == 409
 
 

@@ -8,7 +8,19 @@ import {
   useWorkspaces,
 } from '../../api/hooks'
 import type { PermissionLevel, ResourceType, User } from '../../api/types'
-import { Badge, Button, EmptyState, Field, Input, Modal, QueryError, Select, Skeleton, useToast } from '../ui'
+import {
+  Badge,
+  Button,
+  CopyButton,
+  EmptyState,
+  Field,
+  Input,
+  Modal,
+  QueryError,
+  Select,
+  Skeleton,
+  useToast,
+} from '../ui'
 
 /**
  * Grant editor for one user: pick a resource (a whole workspace, one collection,
@@ -56,6 +68,7 @@ export function PermissionsModal({
                   grantId={grant.id}
                   resourceType={grant.resource_type}
                   resourceId={grant.resource_id}
+                  resourceName={grant.resource_name}
                   level={grant.level}
                 />
               ))}
@@ -188,12 +201,14 @@ function GrantRow({
   grantId,
   resourceType,
   resourceId,
+  resourceName,
   level,
 }: {
   userId: string
   grantId: string
   resourceType: ResourceType
   resourceId: string
+  resourceName: string | null
   level: PermissionLevel
 }) {
   const revokeMut = useRevokePermission(userId)
@@ -205,12 +220,34 @@ function GrantRow({
       onError: (e) => toast.error(e.message),
     })
 
+  // Show the resource's name; the raw id becomes a click-to-copy chip. A deleted
+  // resource has no name — say so, but keep the id copyable so the grant is traceable.
+  const shortId = resourceId.length > 16 ? `${resourceId.slice(0, 14)}…` : resourceId
+
   return (
     <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
       <div className="flex min-w-0 items-center gap-2">
         <Badge>{level === 'write' ? 'Write' : 'Read'}</Badge>
-        <span className="text-xs capitalize text-ink-muted">{resourceType}</span>
-        <code className="truncate font-mono text-[13px] text-ink">{resourceId}</code>
+        <span className="shrink-0 text-xs capitalize text-ink-muted">{resourceType}</span>
+        <span
+          className={
+            resourceName
+              ? 'min-w-0 truncate text-[13px] text-ink'
+              : 'min-w-0 truncate text-[13px] italic text-ink-faint'
+          }
+          title={resourceName ?? undefined}
+        >
+          {resourceName ?? 'deleted'}
+        </span>
+        <CopyButton
+          text={resourceId}
+          label={shortId}
+          variant="ghost"
+          iconClassName="h-3.5 w-3.5"
+          className="shrink-0 font-mono"
+          title={`Copy id: ${resourceId}`}
+          aria-label={`Copy id ${resourceId}`}
+        />
       </div>
       {confirming ? (
         <div className="flex shrink-0 items-center gap-1.5">
@@ -227,9 +264,9 @@ function GrantRow({
           size="sm"
           aria-label="Revoke permission"
           onClick={() => setConfirming(true)}
-          className="h-7 w-7 shrink-0 px-0 hover:text-err"
+          className="h-10 w-10 shrink-0 px-0 hover:text-err"
         >
-          <Trash2 className="h-4 w-4" />
+          <Trash2 className="h-7 w-7" />
         </Button>
       )}
     </div>

@@ -21,8 +21,13 @@ router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(requir
 
 @router.post("", status_code=201)
 async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Create a user. Mint their API key separately via POST /users/{id}/key."""
-    return await user_svc.create_user(body.email, body.name, body.is_active, db)
+    """Create a user with a one-time login password (``temp_password``, returned once).
+
+    Mint their API key separately via POST /users/{id}/key.
+    """
+    return await user_svc.create_user(
+        body.username, body.email, body.name, body.is_active, body.is_admin, db
+    )
 
 
 @router.get("")
@@ -47,6 +52,15 @@ async def update_user(user_id: str, body: UserUpdate, db: AsyncSession = Depends
 async def delete_user(user_id: str, db: AsyncSession = Depends(get_db)):
     """Delete a user; cascades to their key and grants."""
     await user_svc.delete_user(user_id, db)
+
+
+@router.post("/{user_id}/reset-password", status_code=201)
+async def reset_user_password(user_id: str, db: AsyncSession = Depends(get_db)):
+    """Reset the user's password to a new one-time value (``temp_password``, returned once).
+
+    Forces a change on their next login and invalidates any active session.
+    """
+    return await user_svc.reset_password(user_id, db)
 
 
 # ── API key (one per user) ────────────────────────────────────────────────────

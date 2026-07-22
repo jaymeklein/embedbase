@@ -33,8 +33,14 @@ from api.services import tasks as task_producer
 _IN_FLIGHT = {"pending", "processing", "rate_limited"}
 
 
-async def _active_documents(db: AsyncSession) -> list[Any]:
-    """Fetch every active document with its workspace, collection, job status, and chunk_count."""
+async def _active_documents(
+    db: AsyncSession, collection_ids: list[str] | None = None
+) -> list[Any]:
+    """Fetch every active document with its workspace, collection, job status, and chunk_count.
+
+    ``collection_ids`` is the caller's grant scope: ``None`` = unrestricted; a list narrows to
+    those collections (the empty case is short-circuited by :func:`get_index_overview`).
+    """
     stmt = (
         select(
             ws_t.c.id.label("ws_id"),
@@ -53,6 +59,8 @@ async def _active_documents(db: AsyncSession) -> list[Any]:
         .where(doc_t.c.status.is_(None))
         .order_by(job_t.c.created_at)
     )
+    if collection_ids is not None:
+        stmt = stmt.where(col_t.c.id.in_(collection_ids))
     return list((await db.execute(stmt)).fetchall())
 
 
@@ -74,19 +82,26 @@ def _collection_status(
     )
 
 
-async def get_index_overview(db: AsyncSession) -> IndexStatusResponse:
+async def get_index_overview(
+    db: AsyncSession, collection_ids: list[str] | None = None
+) -> IndexStatusResponse:
     """Return BM25 index coverage grouped by workspace then collection.
 
     A document counts as indexed once it has stored chunks (``chunk_count`` set),
     since its text is FTS-searchable via ``chunks.text_tsv``. Only collections
     with at least one active document appear — empty ones have nothing to index.
+
+    ``collection_ids`` is the caller's grant scope: ``None`` = unrestricted (master/admin);
+    a list restricts coverage to those collections (an empty list shows nothing).
     """
+    if collection_ids is not None and not collection_ids:
+        return IndexStatusResponse(workspaces=[])
     # ws_id -> (ws_name, {col_id -> (col_name, {doc_id -> status})})
     tree: dict[str, tuple[str, dict[str, tuple[str, dict[str, str | None]]]]] = defaultdict(
         lambda: ("", defaultdict(lambda: ("", {})))
     )
     indexed: set[str] = set()
-    for row in await _active_documents(db):
+    for row in await _active_documents(db, collection_ids):
         _, cols = tree[row.ws_id]
         tree[row.ws_id] = (row.ws_name, cols)
         _, docs = cols[row.col_id]

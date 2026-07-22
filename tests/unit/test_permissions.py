@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import insert
+from sqlalchemy import delete, insert
 
 from api.db import collections as col_t
 from api.db import documents as doc_t
@@ -109,6 +109,38 @@ async def test_readable_collection_ids_master_sees_all(db_session):
     assert got == ["colA", "colB"]
 
 
+async def test_readable_collection_scope_master_is_unrestricted(db_session):
+    await _seed(db_session)
+    # None = "see everything"; callers skip filtering entirely.
+    assert await permissions.readable_collection_scope(db_session, _MASTER) is None
+
+
+async def test_readable_collection_scope_no_grants_is_empty(db_session):
+    await _seed(db_session)
+    assert await permissions.readable_collection_scope(db_session, _USER) == []
+
+
+async def test_readable_collection_scope_collection_grant(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")
+    assert await permissions.readable_collection_scope(db_session, _USER) == ["colA"]
+
+
+async def test_readable_collection_scope_workspace_grant_expands(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "read")
+    got = await permissions.readable_collection_scope(db_session, _USER)
+    assert set(got) == {"colA", "colB"}  # a workspace grant covers every collection under it
+
+
+async def test_readable_collection_scope_excludes_document_only_grant(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "document", "docA", "read")
+    # A document-level grant doesn't make its collection browsable in these listings,
+    # mirroring the collection documents listing (authorized on the collection).
+    assert await permissions.readable_collection_scope(db_session, _USER) == []
+
+
 async def test_filter_workspace_tree_prunes_and_recounts(db_session):
     await _seed(db_session)
     await _grant(db_session, "collection", "colA", "read")
@@ -134,6 +166,29 @@ async def test_grant_is_idempotent_and_relevels(db_session):
     grants = await permissions.list_permissions(db_session, "usr1")
     assert len(grants) == 1
     assert grants[0]["level"] == "write"
+
+
+async def test_list_permissions_resolves_resource_names(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "read")
+    await _grant(db_session, "collection", "colA", "read")
+    await _grant(db_session, "document", "docA", "read")
+    names = {
+        (g["resource_type"], g["resource_id"]): g["resource_name"]
+        for g in await permissions.list_permissions(db_session, "usr1")
+    }
+    assert names[("workspace", "ws1")] == "W"
+    assert names[("collection", "colA")] == "colA"
+    assert names[("document", "docA")] == "a.txt"  # documents label by filename
+
+
+async def test_list_permissions_name_is_none_for_deleted_resource(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "collection", "colA", "read")
+    await db_session.execute(delete(col_t).where(col_t.c.id == "colA"))
+    await db_session.commit()
+    grants = await permissions.list_permissions(db_session, "usr1")
+    assert grants[0]["resource_name"] is None  # dangling grant → no name
 
 
 async def test_grant_on_missing_resource_raises_404(db_session):

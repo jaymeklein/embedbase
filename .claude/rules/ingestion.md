@@ -38,8 +38,10 @@ Flow: **upload → parse → chunk → embed → store**. The DI seam is `worker
   (`ingestion:{col}` for the Documents view, `ingestion-queue` for the Queue tab) with `snapshot_key=document_id`
   so late joiners get replayed the latest per-document state. Phases: `parsing/embedding/storing/done/failed/rate_limited`.
   PDF page callbacks are coalesced to ~1 frame/percent.
-- **Queue read side** (master key): `api/routers/jobs.py` — `GET /ingestion/jobs` (paginated/filtered),
-  `GET /ingestion/jobs/stats`.
+- **Queue read side** (grant-scoped): `api/routers/jobs.py` — `GET /ingestion/jobs` (paginated/filtered),
+  `GET /ingestion/jobs/stats`. Both `require_auth` and narrow to the caller's readable collections via
+  `permissions.readable_collection_scope` (master/admin see all); the `ingestion-queue` WS is filtered the
+  same way per event. Bulk `retry-failed` stays master/admin-only ([`permissions.md`](permissions.md)).
 
 ## DI shape (why it's testable)
 `_run_ingestion(job_id, file_path, collection_id, document_id, file_type, *, session_factory=None,

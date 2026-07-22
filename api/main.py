@@ -21,6 +21,7 @@ from api.dependencies import (
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import (
+    auth,
     collections,
     config,
     documents,
@@ -225,6 +226,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
 
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(workspaces.router)
     app.include_router(collections.router)
     app.include_router(documents.router)

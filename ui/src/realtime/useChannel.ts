@@ -3,13 +3,14 @@
  * (see api/routers/ws.py). Reusable for any topic — ingestion progress is the
  * first consumer.
  *
- * Pass `topic = null` to stay disconnected. The master key is read from the
- * token store and sent as a query param (browsers can't set WS headers). The
- * socket reconnects with capped backoff and is always closed on unmount.
+ * Pass `topic = null` to stay disconnected. The auth token (login session or
+ * master key) is read from the token store and sent as a query param (browsers
+ * can't set WS headers). The socket reconnects with capped backoff and is always
+ * closed on unmount.
  */
 
 import { useEffect, useRef, useState } from 'react'
-import { getMasterKey } from '../api/tokenStore'
+import { getToken } from '../api/tokenStore'
 
 export type ChannelStatus = 'connecting' | 'open' | 'closed'
 
@@ -33,7 +34,7 @@ export function useChannel<T = unknown>(
   cbRef.current = onMessage
 
   useEffect(() => {
-    const key = getMasterKey()
+    const key = getToken()
     if (!topic || !key) {
       setStatus('closed')
       return
