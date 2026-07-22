@@ -14,7 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.dependencies import get_db
 from api.models.document import DocumentListQuery
 from api.services import documents as doc_svc
-from api.services import permissions
+from api.services.access import (
+    AuthorizeCollection,
+    AuthorizeDocument,
+    CollectionInWorkspace,
+    CompositePolicy,
+)
 from api.services.auth import Principal, require_auth
 
 router = APIRouter(tags=["documents"])
@@ -56,8 +61,10 @@ async def list_documents(
     ``indexed`` gates on stored chunks, and the ``*_size``/``*_after``/``*_before`` bounds are
     inclusive. See :class:`DocumentListQuery` for the full set of query parameters.
     """
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    await permissions.authorize_collection(db, principal, col_id, "read")
+    await CompositePolicy(
+        AuthorizeCollection(col_id, "read"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return await doc_svc.list_documents(db, col_id, query)
 
 
@@ -70,10 +77,12 @@ async def get_document_status(
     db: AsyncSession = Depends(get_db),
 ):
     """Return the latest ingestion job status for a document."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    # Single-document op → authorize the document (honors document-level grants),
-    # matching the flat routes; the collection subtree is covered by an ancestor grant.
-    await permissions.authorize_document(db, principal, doc_id, "read")
+    # Single-document op → authorize the document (honors document-level grants), then
+    # validate the URL's collection (col ∈ ws). Authorize-first, so no existence oracle.
+    await CompositePolicy(
+        AuthorizeDocument(doc_id, "read"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return await doc_svc.get_document_status(db, col_id, doc_id)
 
 
@@ -88,8 +97,10 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a document and enqueue async vector-store cleanup."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    await permissions.authorize_document(db, principal, doc_id, "write")
+    await CompositePolicy(
+        AuthorizeDocument(doc_id, "write"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     await doc_svc.delete_document(db, col_id, doc_id)
 
 
@@ -126,7 +137,8 @@ async def delete_document_flat(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a document by ID without the nested workspace/collection path."""
-    await permissions.authorize_document(db, principal, doc_id, "write")
+    # Flat route: authorize the document, then resolve its collection (404 if absent).
+    await AuthorizeDocument(doc_id, "write").apply(db, principal)
     col_id = await doc_svc.resolve_document_collection(db, doc_id)
     await doc_svc.delete_document(db, col_id, doc_id)
 
@@ -139,6 +151,6 @@ async def reprocess_document_flat(
 ):
     """Re-enqueue a document's ingestion — the manual retry for a failed file. Reuses the stored
     bytes (nothing is re-uploaded) and surfaces a fresh pending job in the queue."""
-    await permissions.authorize_document(db, principal, doc_id, "write")
+    await AuthorizeDocument(doc_id, "write").apply(db, principal)
     col_id = await doc_svc.resolve_document_collection(db, doc_id)
     return await doc_svc.reprocess_document(db, col_id, doc_id)

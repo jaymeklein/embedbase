@@ -11,9 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
 from api.models.indexing import IndexEnqueueResponse, IndexStatusResponse
-from api.services import documents as doc_svc
 from api.services import indexing as index_svc
 from api.services import permissions
+from api.services.access import (
+    AuthorizeCollection,
+    AuthorizeDocument,
+    CollectionInWorkspace,
+    CompositePolicy,
+)
 from api.services.auth import Principal, require_auth
 
 router = APIRouter(tags=["indexing"])
@@ -41,8 +46,10 @@ async def index_collection(
     db: AsyncSession = Depends(get_db),
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of every active document in a collection."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    await permissions.authorize_collection(db, principal, col_id, "write")
+    await CompositePolicy(
+        AuthorizeCollection(col_id, "write"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return index_svc.enqueue_collection(col_id)
 
 
@@ -58,7 +65,10 @@ async def index_document(
     db: AsyncSession = Depends(get_db),
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of a single document."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    # Single-document op → authorize the document (honors document-level grants).
-    await permissions.authorize_document(db, principal, doc_id, "write")
+    # Single-document op → authorize the document (honors document-level grants), then
+    # validate the URL's collection path. Authorize-first, so no existence oracle.
+    await CompositePolicy(
+        AuthorizeDocument(doc_id, "write"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return index_svc.enqueue_document(doc_id, col_id)

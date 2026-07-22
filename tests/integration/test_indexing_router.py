@@ -115,3 +115,21 @@ async def test_index_document_enqueues(client, monkeypatch):
 
     assert r.status_code == 200
     assert r.json()["task_id"] == "task-doc"
+
+
+async def test_index_collection_missing_is_403_for_scoped_user(client, make_user_key):
+    # A scoped user reaching a nonexistent collection gets 403, not 404: the index route's
+    # access guard authorizes before checking existence, so the 404 can't be an oracle.
+    await _seed(client.session_factory)  # ws1 / col1
+    _, key = await make_user_key(grants=[("collection", "col1", "write")])
+    r = await client.post(
+        "/workspaces/ws1/collections/col_missing/index", headers={"X-API-Key": key}
+    )
+    assert r.status_code == 403
+
+
+async def test_index_collection_missing_is_404_for_master(client):
+    # An unrestricted caller passes authorization, so the missing collection surfaces as 404.
+    await _seed(client.session_factory)
+    r = await client.post("/workspaces/ws1/collections/col_missing/index", headers=AUTH)
+    assert r.status_code == 404

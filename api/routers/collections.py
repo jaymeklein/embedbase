@@ -5,7 +5,7 @@ from api.dependencies import get_db
 from api.schemas.collections import CollectionCreate, CollectionUpdate
 from api.services import collections as collection_svc
 from api.services import permissions
-from api.services import workspaces as workspace_svc
+from api.services.access import AuthorizeCollection, AuthorizeWorkspace
 from api.services.auth import Principal, require_auth
 
 # Every route is ``require_auth`` and authorized against the caller's grants: reads are
@@ -23,10 +23,9 @@ async def create_collection(
     db: AsyncSession = Depends(get_db),
 ):
     # Creating a collection is a write into its parent workspace — needs workspace write.
-    # Authorize before the existence check so a scoped user gets a uniform 403 and can't
-    # probe which workspaces exist (the read routes authorize-first for the same reason).
-    await permissions.authorize_workspace(db, principal, ws_id, "write")
-    await workspace_svc.require_workspace(ws_id, db)
+    # Authorize first (403), then delegate: create_collection raises the 404 when the workspace
+    # is absent, so a scoped user gets a uniform 403 and can't probe which workspaces exist.
+    await AuthorizeWorkspace(ws_id, "write").apply(db, principal)
     return await collection_svc.create_collection(
         workspace_id=ws_id,
         name=body.name,
@@ -64,7 +63,7 @@ async def get_collection(
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await permissions.authorize_collection(db, principal, col_id, "read")
+    await AuthorizeCollection(col_id, "read").apply(db, principal)
     result = await collection_svc.get_collection(ws_id, col_id, db)
     result["can_write"] = bool(
         await permissions.writable_collection_ids(db, principal, [col_id])
@@ -83,7 +82,7 @@ async def update_collection(
     # Editing a collection is a write on it — needs write on the collection or an ancestor
     # (which also requires read: you can't edit what you can't see). Authorize before the
     # existence check so a scoped user gets a uniform 403, not an existence oracle.
-    await permissions.authorize_collection(db, principal, col_id, "write")
+    await AuthorizeCollection(col_id, "write").apply(db, principal)
     return await collection_svc.update_collection(ws_id, col_id, body, db)
 
 
@@ -94,5 +93,5 @@ async def delete_collection(
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    await permissions.authorize_collection(db, principal, col_id, "write")
+    await AuthorizeCollection(col_id, "write").apply(db, principal)
     await collection_svc.delete_collection(ws_id, col_id, db)

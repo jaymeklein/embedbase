@@ -89,6 +89,36 @@ readability/writability per level:
 - `filter_workspace_tree(db, principal, tree)` — prunes a workspace tree to readable nodes (the whole tree for
   unrestricted; scoped otherwise).
 
+### Access policies — composable authorization + existence (`api/services/access.py`)
+Per-resource authorization in the `workspaces` / `collections` / `documents` / `indexing` routers goes through
+**access policies**: small objects implementing the `AccessPolicy` Protocol (`async apply(db, principal)`,
+which **raises** `HTTPException` to deny and returns `None` to allow). Concrete policies wrap the authority —
+`AuthorizeWorkspace` / `AuthorizeCollection` / `AuthorizeDocument` (403, via `permissions.authorize_*`) — and
+the domain existence checks — `CollectionInWorkspace` (404, via `collections.require_collection`). A route
+composes what it needs with **`CompositePolicy(*policies)`**, which applies them **in order** and lets the
+first denial propagate:
+
+```python
+await CompositePolicy(
+    AuthorizeDocument(doc_id, "write"),     # 403 if the caller may not write it
+    CollectionInWorkspace(ws_id, col_id),   # 404 if the URL's collection path is wrong
+).apply(db, principal)
+```
+
+**Order is a security property**: authorization policies precede existence policies, so a scoped caller who
+may not reach a resource gets a uniform 403 whether or not it exists (the 404 can never be an existence
+oracle). This is *why* `apply` raises rather than returning a bool (as in the canonical pattern) — the
+policies surface **different** status codes (403 vs 404) and which fires first is what closes the oracle.
+Policies hold **no scope logic of their own** — they only compose `permissions.authorize_*` with the existence
+checks. Single-check routes apply one policy (`await AuthorizeCollection(...).apply(...)`); the multi-check
+`documents` (list / status / delete / reprocess) and `indexing` routes use `CompositePolicy`. Two concerns stay
+direct `permissions.*` calls because they gate a *set* or a capability, not one resource: list-filtering
+(`readable_*` / `writable_*` / `filter_workspace_tree`) and workspace creation (`authorize_workspace_creation`).
+And two routes authorize inside their service: **raw-download** (`resolve_document_download`, authorize-first)
+and **upload** — the router confirms the collection exists (`resolve_collection`) *before* `ingest` authorizes,
+so it stays existence-first, a minor non-enumerable residual (collection ids are random) left as-is because
+`ingest` keeps its write-authorization in-service by design.
+
 Three FastAPI deps in `auth.py`, all built on `resolve_bearer` (JWT-or-key): `require_master` (403 unless
 master-equivalent), `require_auth` (any valid credential; records `last_used_at`; rejects a must-change
 session), and `require_operator` (a user session incl. must-change — only the self-service `/auth` routes).
