@@ -31,6 +31,7 @@ import {
   type CollectionFormValues,
 } from '../components/collections/CollectionFormModal'
 import { formatDate } from '../lib/format'
+import { useAuth } from '../auth/AuthContext'
 
 /** Which dialog (if any) is currently open, plus the row it acts on. */
 type Dialog =
@@ -56,6 +57,8 @@ export default function Collections() {
   const workspace = useWorkspace(wsId)
   // Creating a collection needs write on the workspace; the API reports it per workspace.
   const canWrite = workspace.data?.can_write ?? false
+  // Tag management + the Tags page are admin-only (the tags router is master-gated).
+  const { isAdmin } = useAuth()
   const { data, isLoading, isError, error, refetch } = useCollections(wsId)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const [tagFilter, setTagFilter] = useState<string[]>([])
@@ -135,10 +138,12 @@ export default function Collections() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
-            <TagsIcon className="h-5 w-5" />
-            Tags
-          </Button>
+          {isAdmin && (
+            <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
+              <TagsIcon className="h-5 w-5" />
+              Tags
+            </Button>
+          )}
           {canWrite && (
             <Button onClick={() => setDialog({ kind: 'create' })}>
               <Plus className="h-5 w-5" />
@@ -265,6 +270,7 @@ function CollectionCard({
   onDelete: (col: Collection) => void
 }) {
   const navigate = useNavigate()
+  const { isAdmin } = useAuth()
   const toast = useToast()
   const assignMut = useAssignCollectionTag(wsId)
   const unassignMut = useUnassignCollectionTag(wsId)
@@ -313,48 +319,58 @@ function CollectionCard({
           </p>
         </div>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-        {(col.tags ?? []).map((t) => (
-          <TagChip
-            key={t.id}
-            name={t.name}
-            color={t.color}
-            onRemove={() =>
-              unassignMut.mutate({ colId: col.id, tagId: t.id }, { onError: onErr })
-            }
-          />
-        ))}
-        <TagPicker
-          wsId={wsId}
-          assigned={col.tags ?? []}
-          busy={tagBusy}
-          onAssign={(tagId) => assignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
-          onUnassign={(tagId) => unassignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
-          onCreate={handleCreate}
-        />
-      </div>
+      {((col.tags ?? []).length > 0 || isAdmin) && (
+        <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          {(col.tags ?? []).map((t) => (
+            <TagChip
+              key={t.id}
+              name={t.name}
+              color={t.color}
+              onRemove={
+                isAdmin
+                  ? () => unassignMut.mutate({ colId: col.id, tagId: t.id }, { onError: onErr })
+                  : undefined
+              }
+            />
+          ))}
+          {isAdmin && (
+            <TagPicker
+              wsId={wsId}
+              assigned={col.tags ?? []}
+              busy={tagBusy}
+              onAssign={(tagId) => assignMut.mutate({ colId: col.id, tagId }, { onError: onErr })}
+              onUnassign={(tagId) =>
+                unassignMut.mutate({ colId: col.id, tagId }, { onError: onErr })
+              }
+              onCreate={handleCreate}
+            />
+          )}
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-faint">Created {formatDate(col.created_at)}</span>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Edit ${col.name}`}
-            onClick={stop(() => onEdit(col))}
-            className="h-10 w-10 px-0"
-          >
-            <Pencil className="h-7 w-7" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Delete ${col.name}`}
-            onClick={stop(() => onDelete(col))}
-            className="h-10 w-10 px-0 hover:text-err"
-          >
-            <Trash2 className="h-7 w-7" />
-          </Button>
-        </div>
+        {col.can_write && (
+          <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Edit ${col.name}`}
+              onClick={stop(() => onEdit(col))}
+              className="h-10 w-10 px-0"
+            >
+              <Pencil className="h-7 w-7" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${col.name}`}
+              onClick={stop(() => onDelete(col))}
+              className="h-10 w-10 px-0 hover:text-err"
+            >
+              <Trash2 className="h-7 w-7" />
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   )

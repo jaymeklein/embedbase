@@ -55,6 +55,9 @@ export interface Collection {
   document_count?: number
   /** Present only on `POST .../collections` (always 0 at creation). */
   chunk_count?: number
+  /** Whether the caller may write (edit/delete, ingest into) this collection.
+   *  Present on `GET .../collections` and `GET .../collections/{id}`. */
+  can_write?: boolean
   /** Assigned tags, echoed by `GET .../collections`. */
   tags?: TagRef[]
 }

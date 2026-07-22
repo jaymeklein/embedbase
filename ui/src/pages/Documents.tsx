@@ -38,6 +38,7 @@ import { UploadZone } from '../components/documents/UploadZone'
 import { DocumentFilters, type DocumentFilterValues } from '../components/documents/DocumentFilters'
 import { Pager } from '../components/Pager'
 import { formatBytes, timeAgo } from '../lib/format'
+import { useAuth } from '../auth/AuthContext'
 
 /** Largest file accepted before an upload is attempted (client-side guard). */
 const MAX_FILE_SIZE_MB = 50
@@ -49,6 +50,11 @@ export default function Documents() {
   const { wsId = '', colId = '' } = useParams()
   const workspace = useWorkspace(wsId)
   const collection = useCollection(wsId, colId)
+  // Write affordances (upload, delete, retry, index) gate on the collection's can_write (write on
+  // it or an ancestor); tag editing is admin-only (master-gated router). Per-document buttons
+  // deliberately reuse this collection signal — the backend still authorizes per document, so a
+  // rare document-level read grant on a child doc fails closed (button shown, the action 403s).
+  const canWrite = collection.data?.can_write ?? false
 
   const [page, setPage] = useState(0)
   const [searchParams] = useSearchParams()
@@ -172,13 +178,17 @@ export default function Documents() {
       <header>
         <h1 className="text-xl font-semibold tracking-tight text-ink">Documents</h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          Upload files to ingest them into this collection.
+          {canWrite
+            ? 'Upload files to ingest them into this collection.'
+            : 'Browse and search documents in this collection.'}
         </p>
       </header>
 
-      <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
+      {canWrite && (
+        <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
+      )}
 
-      {retentionHours > 0 && (
+      {canWrite && retentionHours > 0 && (
         <label className="flex items-center gap-2 text-[13px] text-ink-muted">
           <input
             type="checkbox"
@@ -200,6 +210,7 @@ export default function Documents() {
       <DocumentList
         wsId={wsId}
         colId={colId}
+        canWrite={canWrite}
         data={items}
         filtered={hasFilters}
         isLoading={isLoading}
@@ -238,6 +249,7 @@ export default function Documents() {
 function DocumentList({
   wsId,
   colId,
+  canWrite,
   data,
   filtered,
   isLoading,
@@ -248,6 +260,7 @@ function DocumentList({
 }: {
   wsId: string
   colId: string
+  canWrite: boolean
   data: DocumentSummary[] | undefined
   filtered: boolean
   isLoading: boolean
@@ -294,6 +307,7 @@ function DocumentList({
           key={doc.document_id}
           wsId={wsId}
           colId={colId}
+          canWrite={canWrite}
           doc={doc}
           progress={progressById[doc.document_id]}
           onDelete={onDelete}
@@ -339,16 +353,19 @@ function IngestProgress({ progress }: { progress?: IngestionProgress }) {
 function DocumentRow({
   wsId,
   colId,
+  canWrite,
   doc,
   progress,
   onDelete,
 }: {
   wsId: string
   colId: string
+  canWrite: boolean
   doc: DocumentSummary
   progress?: IngestionProgress
   onDelete: (doc: DocumentSummary) => void
 }) {
+  const { isAdmin } = useAuth()
   const [showError, setShowError] = useState(false)
   const failed = doc.status === 'failed'
 
@@ -417,7 +434,7 @@ function DocumentRow({
               {showError ? 'Hide' : 'Why?'}
             </button>
           )}
-          {failed && (
+          {failed && canWrite && (
             <button
               type="button"
               disabled={reprocessMut.isPending}
@@ -440,6 +457,7 @@ function DocumentRow({
           <IndexBadge
             doc={doc}
             busy={indexMut.isPending}
+            canWrite={canWrite}
             onIndex={() =>
               indexMut.mutate(doc.document_id, {
                 onSuccess: () => toast.success(`Indexing “${doc.filename}”.`),
@@ -467,41 +485,53 @@ function DocumentRow({
           >
             <Download className="h-7 w-7" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Delete ${doc.filename}`}
-            onClick={() => onDelete(doc)}
-            className="h-10 w-10 px-0 hover:text-err"
-          >
-            <Trash2 className="h-7 w-7" />
-          </Button>
+          {canWrite && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${doc.filename}`}
+              onClick={() => onDelete(doc)}
+              className="h-10 w-10 px-0 hover:text-err"
+            >
+              <Trash2 className="h-7 w-7" />
+            </Button>
+          )}
         </div>
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        {(doc.tags ?? []).map((t) => (
-          <TagChip
-            key={t.id}
-            name={t.name}
-            color={t.color}
-            onRemove={() =>
-              unassignMut.mutate({ docId: doc.document_id, tagId: t.id }, { onError: onErr })
-            }
-          />
-        ))}
-        <TagPicker
-          wsId={wsId}
-          assigned={doc.tags ?? []}
-          busy={tagBusy}
-          onAssign={(tagId) =>
-            assignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
-          }
-          onUnassign={(tagId) =>
-            unassignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
-          }
-          onCreate={handleCreate}
-        />
-      </div>
+      {((doc.tags ?? []).length > 0 || isAdmin) && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {(doc.tags ?? []).map((t) => (
+            <TagChip
+              key={t.id}
+              name={t.name}
+              color={t.color}
+              onRemove={
+                isAdmin
+                  ? () =>
+                      unassignMut.mutate(
+                        { docId: doc.document_id, tagId: t.id },
+                        { onError: onErr },
+                      )
+                  : undefined
+              }
+            />
+          ))}
+          {isAdmin && (
+            <TagPicker
+              wsId={wsId}
+              assigned={doc.tags ?? []}
+              busy={tagBusy}
+              onAssign={(tagId) =>
+                assignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
+              }
+              onUnassign={(tagId) =>
+                unassignMut.mutate({ docId: doc.document_id, tagId }, { onError: onErr })
+              }
+              onCreate={handleCreate}
+            />
+          )}
+        </div>
+      )}
       {failed && showError && (
         <FailureReason wsId={wsId} colId={colId} docId={doc.document_id} />
       )}
@@ -516,10 +546,12 @@ function DocumentRow({
 function IndexBadge({
   doc,
   busy,
+  canWrite,
   onIndex,
 }: {
   doc: DocumentSummary
   busy: boolean
+  canWrite: boolean
   onIndex: () => void
 }) {
   if (doc.status !== 'done') return null
@@ -534,6 +566,8 @@ function IndexBadge({
       </span>
     )
   }
+  // Read-only users see the "Indexed" pill above but not the manual (re)index trigger.
+  if (!canWrite) return null
   return (
     <button
       type="button"
