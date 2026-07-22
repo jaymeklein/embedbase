@@ -3,8 +3,9 @@
  *
  * Every request injects the active bearer credential (a login session JWT, else
  * the master key — see `tokenStore.getToken`) as `Authorization: Bearer <token>`.
- * A 401 triggers `notifyUnauthorized()` so the app can sign out and return to the
- * login screen, then throws an {@link ApiError} carrying the status code.
+ * A dead credential — any 401, or the 403 a deactivated user gets — triggers
+ * `notifyUnauthorized()` so the app signs out and returns to the login screen,
+ * then throws an {@link ApiError} carrying the status code.
  */
 
 import { getToken, notifyUnauthorized } from './tokenStore'
@@ -99,19 +100,34 @@ async function errorMessage(res: Response): Promise<string> {
   return `Request failed (HTTP ${res.status})`
 }
 
+/**
+ * Throw for a failed response — signing the operator out first when the credential
+ * itself is dead. That's any 401 (missing/expired/invalid session or key) and the
+ * 403 a deactivated user gets (`"User is inactive"` — the coarse-auth convention of
+ * `api/services/auth.py`). Staying "signed in" would only error every subsequent
+ * request, so both clear the credentials and return the app to the login screen.
+ */
+async function raiseForStatus(res: Response): Promise<void> {
+  if (res.ok) return
+  if (res.status === 401) {
+    notifyUnauthorized()
+    throw new ApiError(401, 'Session expired. Please sign in again.')
+  }
+  const message = await errorMessage(res)
+  if (res.status === 403 && message === 'User is inactive') {
+    notifyUnauthorized()
+    throw new ApiError(403, 'Your account has been deactivated.')
+  }
+  throw new ApiError(res.status, message)
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, signal } = options
   const { headers, payload } = buildHeaders(body)
 
   const res = await fetch(`${BASE}${path}`, { method, headers, body: payload, signal })
 
-  if (res.status === 401) {
-    notifyUnauthorized()
-    throw new ApiError(401, 'Session expired. Please sign in again.')
-  }
-  if (!res.ok) {
-    throw new ApiError(res.status, await errorMessage(res))
-  }
+  await raiseForStatus(res)
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
 }
@@ -266,11 +282,7 @@ export const api = {
     const { headers } = buildHeaders(undefined)
     try {
       const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
-      if (res.status === 401) {
-        notifyUnauthorized()
-        throw new ApiError(401, 'Session expired. Please sign in again.')
-      }
-      if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+      await raiseForStatus(res)
       const url = URL.createObjectURL(await res.blob())
       if (win) {
         win.opener = null // blob is same-origin; sever opener to restore noopener
@@ -294,11 +306,7 @@ export const api = {
   downloadDocument: async (docId: string, filename: string) => {
     const { headers } = buildHeaders(undefined)
     const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
-    if (res.status === 401) {
-      notifyUnauthorized()
-      throw new ApiError(401, 'Session expired. Please sign in again.')
-    }
-    if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
+    await raiseForStatus(res)
     const url = URL.createObjectURL(await res.blob())
     const a = document.createElement('a')
     a.href = url
