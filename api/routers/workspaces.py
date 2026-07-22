@@ -5,11 +5,12 @@ from api.dependencies import get_db
 from api.schemas.workspaces import WorkspaceCreate, WorkspaceUpdate
 from api.services import permissions
 from api.services import workspaces as workspace_svc
-from api.services.auth import Principal, require_auth, require_master
+from api.services.auth import Principal, require_auth
 
-# No router-level gate: writes are admin-only (per-route ``require_master``), while
-# reads are ``require_auth`` and grant-scoped so a non-admin user browses only the
-# workspaces their grants reach. Master / admin see everything.
+# No router-level gate: every route is ``require_auth`` and authorized against the caller's
+# grants. Reads are grant-scoped (a non-admin browses only the workspaces their grants reach);
+# create needs the ``create_workspace`` capability; update/delete need workspace **write**.
+# Master / admin are unrestricted.
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 
@@ -87,13 +88,23 @@ async def get_workspace(
     return result
 
 
-@router.patch("/{ws_id}", dependencies=[Depends(require_master)])
+@router.patch("/{ws_id}")
 async def update_workspace(
-    ws_id: str, body: WorkspaceUpdate, db: AsyncSession = Depends(get_db)
+    ws_id: str,
+    body: WorkspaceUpdate,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
+    # Editing a workspace is a write on it — needs workspace write (see + edit).
+    await permissions.authorize_workspace(db, principal, ws_id, "write")
     return await workspace_svc.update_workspace(ws_id, body, db)
 
 
-@router.delete("/{ws_id}", status_code=204, dependencies=[Depends(require_master)])
-async def delete_workspace(ws_id: str, db: AsyncSession = Depends(get_db)):
+@router.delete("/{ws_id}", status_code=204)
+async def delete_workspace(
+    ws_id: str,
+    principal: Principal = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    await permissions.authorize_workspace(db, principal, ws_id, "write")
     await workspace_svc.delete_workspace(ws_id, db)

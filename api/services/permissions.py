@@ -279,6 +279,39 @@ async def readable_collection_ids(
     ]
 
 
+async def writable_collection_ids(
+    db: AsyncSession, principal: Principal, candidate_ids: list[str]
+) -> list[str]:
+    """Filter collection ids to those ``principal`` may write — edit/delete or ingest into.
+
+    Master and users with no permissions may write all; a scoped user only where a
+    collection- or ancestor-workspace **write** permission covers a *visible* collection
+    (write requires read — you cannot edit what you cannot see). Lets the UI show the
+    edit/delete/upload affordances only where they would actually succeed.
+    """
+    ids = list(dict.fromkeys(candidate_ids))
+    if principal.is_master:
+        return ids
+    if principal.user_id is None or not ids:
+        return []
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return ids
+    rows = (
+        await db.execute(
+            select(col_t.c.id, col_t.c.workspace_id).where(col_t.c.id.in_(ids))
+        )
+    ).fetchall()
+    ws_by_col = {r.id: r.workspace_id for r in rows}
+    return [
+        cid
+        for cid in ids
+        if (ws := ws_by_col.get(cid)) is not None
+        and scope.collection_readable(cid, ws)
+        and scope.collection_writable(cid, ws)
+    ]
+
+
 async def readable_collection_scope(
     db: AsyncSession, principal: Principal
 ) -> list[str] | None:
@@ -367,9 +400,9 @@ async def authorize_workspace(
 ) -> None:
     """Raise ``403`` unless ``principal`` may ``need`` ``workspace_id``.
 
-    Read passes when the workspace is in scope; write passes unless a workspace-level
-    ``read`` permission caps it. (Workspace writes are admin-only in the router, so ``read``
-    is the path non-admins use.)
+    Read passes when the workspace is in scope; write passes only with a workspace-level
+    ``write`` grant — a workspace-only ``read`` grant (or a workspace reached only via a
+    collection/document grant) is view-only. Drives the workspace update/delete routes.
     """
     if principal.is_master:
         return
@@ -387,11 +420,11 @@ async def authorize_workspace(
 async def writable_workspace_ids(
     db: AsyncSession, principal: Principal, candidate_ids: list[str]
 ) -> list[str]:
-    """Filter workspace ids to those ``principal`` may write (i.e. create collections in).
+    """Filter workspace ids to those ``principal`` may write — create collections in, edit, delete.
 
     Master and users with no permissions may write all; a scoped user only where a
-    workspace-level write permission covers it. Lets the UI show a "new collection" action
-    only where it would succeed.
+    workspace-level write permission covers it. Drives the workspace ``can_write`` signal, so the
+    UI shows new-collection + edit/delete only where they would succeed.
     """
     ids = list(dict.fromkeys(candidate_ids))
     if principal.is_master:
