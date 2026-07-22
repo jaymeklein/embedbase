@@ -1,18 +1,20 @@
 /**
  * Typed, authenticated API client for the EmbedBase backend.
  *
- * Every request injects the master key as `Authorization: Bearer <key>`. A 401
- * triggers `notifyUnauthorized()` so the app can lock and return to the unlock
- * screen, then throws an {@link ApiError} carrying the status code.
+ * Every request injects the active bearer credential (a login session JWT, else
+ * the master key — see `tokenStore.getToken`) as `Authorization: Bearer <token>`.
+ * A 401 triggers `notifyUnauthorized()` so the app can sign out and return to the
+ * login screen, then throws an {@link ApiError} carrying the status code.
  */
 
-import { getMasterKey, notifyUnauthorized } from './tokenStore'
+import { getToken, notifyUnauthorized } from './tokenStore'
 import type {
   Accelerator,
   AppConfig,
   Collection,
   CollectionCreate,
   CollectionUpdate,
+  CreatedUser,
   DocumentListResponse,
   DocumentQuery,
   GrantCreate,
@@ -25,6 +27,8 @@ import type {
   JobStatus,
   MintedUserKey,
   Permission,
+  ResetPasswordResponse,
+  SessionResponse,
   GraphResponse,
   SearchRequest,
   SearchResponse,
@@ -67,8 +71,8 @@ interface RequestOptions {
 /** Build headers with auth + the right content-type for the body kind. */
 function buildHeaders(body: unknown): { headers: Headers; payload: BodyInit | undefined } {
   const headers = new Headers()
-  const key = getMasterKey()
-  if (key) headers.set('Authorization', `Bearer ${key}`)
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
 
   if (body instanceof FormData) {
     // Let the browser set `multipart/form-data` + boundary — never force JSON.
@@ -103,7 +107,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (res.status === 401) {
     notifyUnauthorized()
-    throw new ApiError(401, 'Master key rejected. Please unlock again.')
+    throw new ApiError(401, 'Session expired. Please sign in again.')
   }
   if (!res.ok) {
     throw new ApiError(res.status, await errorMessage(res))
@@ -193,13 +197,25 @@ export const api = {
       { method: 'POST' },
     ),
 
+  // ── Auth (console login sessions) ───────────────────────────────────────────
+  login: (username: string, password: string) =>
+    request<SessionResponse>('/auth/login', { method: 'POST', body: { username, password } }),
+  me: () => request<User>('/auth/me'),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<SessionResponse>('/auth/change-password', {
+      method: 'POST',
+      body: { current_password: currentPassword, new_password: newPassword },
+    }),
+
   // ── Users, keys & permissions ───────────────────────────────────────────────
   listUsers: () => request<User[]>('/users'),
-  createUser: (body: UserCreate) => request<User>('/users', { method: 'POST', body }),
+  createUser: (body: UserCreate) => request<CreatedUser>('/users', { method: 'POST', body }),
   getUser: (id: string) => request<User>(`/users/${enc(id)}`),
   updateUser: (id: string, body: UserUpdate) =>
     request<User>(`/users/${enc(id)}`, { method: 'PATCH', body }),
   deleteUser: (id: string) => request<void>(`/users/${enc(id)}`, { method: 'DELETE' }),
+  resetUserPassword: (id: string) =>
+    request<ResetPasswordResponse>(`/users/${enc(id)}/reset-password`, { method: 'POST' }),
   mintUserKey: (id: string, body: UserKeyCreate) =>
     request<MintedUserKey>(`/users/${enc(id)}/key`, { method: 'POST', body }),
   revokeUserKey: (id: string) => request<void>(`/users/${enc(id)}/key`, { method: 'DELETE' }),
@@ -252,7 +268,7 @@ export const api = {
       const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
       if (res.status === 401) {
         notifyUnauthorized()
-        throw new ApiError(401, 'Master key rejected. Please unlock again.')
+        throw new ApiError(401, 'Session expired. Please sign in again.')
       }
       if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
       const url = URL.createObjectURL(await res.blob())
@@ -280,7 +296,7 @@ export const api = {
     const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
     if (res.status === 401) {
       notifyUnauthorized()
-      throw new ApiError(401, 'Master key rejected. Please unlock again.')
+      throw new ApiError(401, 'Session expired. Please sign in again.')
     }
     if (!res.ok) throw new ApiError(res.status, await errorMessage(res))
     const url = URL.createObjectURL(await res.blob())

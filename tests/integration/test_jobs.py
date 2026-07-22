@@ -185,3 +185,57 @@ async def test_retry_failed_is_zero_when_nothing_failed(client):
 
 async def test_retry_failed_requires_api_key(client):
     assert (await client.post("/ingestion/jobs/retry-failed")).status_code == 401
+
+
+# ── grant scoping (a non-admin sees only their collections' jobs) ────────────────
+
+async def test_jobs_scoped_to_readable_collections(client, make_user_key):
+    ws_id, seen_col = await _setup(client)
+    hidden_col = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "Secret"}, headers=AUTH)
+    ).json()["id"]
+    mine = await _upload(client, ws_id, seen_col, name="mine.txt")
+    await _upload(client, ws_id, hidden_col, name="theirs.txt")
+
+    _, key = await make_user_key(grants=[("collection", seen_col, "read")])
+    uh = {"X-API-Key": key}
+
+    body = (await client.get("/ingestion/jobs", headers=uh)).json()
+    assert body["total"] == 1  # only the readable collection's job
+    assert body["items"][0]["document_id"] == mine["document_id"]
+
+    stats = (await client.get("/ingestion/jobs/stats", headers=uh)).json()
+    assert stats["counts"] == {"pending": 1}  # counts scoped the same way
+
+
+async def test_jobs_workspace_grant_covers_all_its_collections(client, make_user_key):
+    ws_id, col_a = await _setup(client)
+    col_b = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "B"}, headers=AUTH)
+    ).json()["id"]
+    await _upload(client, ws_id, col_a, name="a.txt")
+    await _upload(client, ws_id, col_b, name="b.txt")
+
+    _, key = await make_user_key(grants=[("workspace", ws_id, "read")])
+    body = (await client.get("/ingestion/jobs", headers={"X-API-Key": key})).json()
+    assert body["total"] == 2  # a workspace grant covers every collection under it
+
+
+async def test_jobs_empty_for_user_without_grants(client, make_user_key):
+    ws_id, col_id = await _setup(client)
+    await _upload(client, ws_id, col_id)
+    _, key = await make_user_key(grants=[])
+    uh = {"X-API-Key": key}
+    body = (await client.get("/ingestion/jobs", headers=uh)).json()
+    assert body["total"] == 0 and body["items"] == []
+    assert (await client.get("/ingestion/jobs/stats", headers=uh)).json()["counts"] == {}
+
+
+async def test_retry_failed_is_admin_only(client, make_user_key):
+    # The bulk retry stays master/admin-only — even a write grant doesn't unlock it.
+    ws_id, col_id = await _setup(client)
+    bad = await _upload(client, ws_id, col_id, name="broken.txt")
+    await _mark_failed(client, bad["document_id"])
+    _, key = await make_user_key(grants=[("collection", col_id, "write")])
+    r = await client.post("/ingestion/jobs/retry-failed", headers={"X-API-Key": key})
+    assert r.status_code == 403

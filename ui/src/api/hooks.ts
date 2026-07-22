@@ -1,10 +1,10 @@
 /**
  * TanStack Query bindings over the typed {@link api} client.
  *
- * The global 401 → lock behaviour lives in the client itself (it calls
+ * The global 401 → sign-out behaviour lives in the client itself (it calls
  * `notifyUnauthorized()` before throwing), so these hooks stay declarative.
- * `retry: false` keeps a revoked-key 401 from being retried before the lock
- * handler fires.
+ * `retry: false` keeps an expired-session / revoked-key 401 from being retried
+ * before the sign-out handler fires.
  */
 
 import {
@@ -370,6 +370,14 @@ export function useRevokeUserKey() {
   const invalidate = useInvalidateUsers()
   return useMutation({
     mutationFn: (id: string) => api.revokeUserKey(id),
+    onSuccess: (_data, id) => invalidate(id),
+  })
+}
+
+export function useResetUserPassword() {
+  const invalidate = useInvalidateUsers()
+  return useMutation({
+    mutationFn: (id: string) => api.resetUserPassword(id),
     onSuccess: (_data, id) => invalidate(id),
   })
 }

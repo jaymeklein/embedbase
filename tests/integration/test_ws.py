@@ -96,9 +96,9 @@ class _FakeAsyncRedis:
         pass
 
 
-@pytest.fixture
-def ws_client(monkeypatch):
-    """TestClient over the app with an in-memory DB and a stubbed async redis."""
+def _build_ws_client(monkeypatch, snapshot, messages) -> TestClient:
+    """Wire the app to an in-memory DB and a stubbed async redis replaying ``snapshot`` then
+    ``messages``. Returns an un-entered TestClient — enter it (``with``) to run the lifespan/seed."""
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -127,22 +127,36 @@ def ws_client(monkeypatch):
     app.router.lifespan_context = _lifespan
     app.dependency_overrides[get_db] = _override_get_db
 
-    snapshot = {
-        "doc_1": json.dumps(
-            {"document_id": "doc_1", "phase": "parsing", "pct": 10, "status": "processing"}
-        )
-    }
-    messages = [
-        json.dumps(
-            {"document_id": "doc_1", "phase": "embedding", "pct": 50, "status": "processing"}
-        )
-    ]
     monkeypatch.setattr(
         ws_module.aioredis, "from_url", lambda *a, **k: _FakeAsyncRedis(snapshot, messages)
     )
+    return TestClient(app)
 
-    with TestClient(app) as client:
+
+# Default single-document payloads for the collection-scoped topic tests (no collection tag needed —
+# a collection topic is authorized as a whole, so its events are forwarded unfiltered).
+_DEFAULT_SNAPSHOT = {
+    "doc_1": json.dumps(
+        {"document_id": "doc_1", "phase": "parsing", "pct": 10, "status": "processing"}
+    )
+}
+_DEFAULT_MESSAGES = [
+    json.dumps({"document_id": "doc_1", "phase": "embedding", "pct": 50, "status": "processing"})
+]
+
+
+@pytest.fixture
+def ws_client(monkeypatch):
+    """TestClient over the app with an in-memory DB and the default single-document redis payloads."""
+    with _build_ws_client(monkeypatch, _DEFAULT_SNAPSHOT, _DEFAULT_MESSAGES) as client:
         yield client
+
+
+@pytest.fixture
+def make_ws_client(monkeypatch):
+    """Factory for a ws TestClient with custom snapshot/messages — the queue-filter tests need
+    collection-tagged events. Enter the returned client with ``with`` to run the lifespan."""
+    return lambda snapshot, messages: _build_ws_client(monkeypatch, snapshot, messages)
 
 
 def test_master_receives_snapshot_then_message(ws_client):
@@ -179,3 +193,41 @@ def test_user_key_on_granted_topic_is_accepted(ws_client):
     with ws_client.websocket_connect(f"/ws?topic=ingestion:col_2&key={SCOPED_KEY}") as ws:
         snap = json.loads(ws.receive_text())
         assert snap["document_id"] == "doc_1"
+
+
+# ── global ingestion-queue topic (grant-scoped per event) ───────────────────────
+
+def _queue_payloads():
+    """A col_2 event (readable to usr_1) and a col_1 event (not), in both snapshot and stream."""
+    snapshot = {
+        "d_seen": json.dumps(
+            {"document_id": "d_seen", "collection_id": "col_2", "status": "processing"}
+        ),
+        "d_hidden": json.dumps(
+            {"document_id": "d_hidden", "collection_id": "col_1", "status": "processing"}
+        ),
+    }
+    messages = [
+        json.dumps({"document_id": "m_hidden", "collection_id": "col_1", "status": "done"}),
+        json.dumps({"document_id": "m_seen", "collection_id": "col_2", "status": "done"}),
+    ]
+    return snapshot, messages
+
+
+def test_queue_stream_filters_to_readable_collections(make_ws_client):
+    # usr_1 (SCOPED_KEY) may read col_2 only, so col_1 events drop from the snapshot and the stream.
+    with (
+        make_ws_client(*_queue_payloads()) as client,
+        client.websocket_connect(f"/ws?topic=ingestion-queue&key={SCOPED_KEY}") as ws,
+    ):
+        assert json.loads(ws.receive_text())["document_id"] == "d_seen"  # d_hidden snap skipped
+        assert json.loads(ws.receive_text())["document_id"] == "m_seen"  # m_hidden msg skipped
+
+
+def test_queue_stream_unfiltered_for_master(make_ws_client):
+    with (
+        make_ws_client(*_queue_payloads()) as client,
+        client.websocket_connect(f"/ws?topic=ingestion-queue&key={MASTER}") as ws,
+    ):
+        seen = {json.loads(ws.receive_text())["document_id"] for _ in range(4)}
+    assert seen == {"d_seen", "d_hidden", "m_seen", "m_hidden"}  # master sees every collection

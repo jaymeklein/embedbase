@@ -1,11 +1,29 @@
 import { useState } from 'react'
-import { KeyRound, Pencil, Plus, ShieldCheck, Trash2, Users as UsersIcon } from 'lucide-react'
-import { useCreateUser, useDeleteUser, useUpdateUser, useUsers } from '../api/hooks'
+import { KeyRound, Pencil, Plus, RotateCcw, ShieldCheck, Trash2, Users as UsersIcon } from 'lucide-react'
+import {
+  useCreateUser,
+  useDeleteUser,
+  useResetUserPassword,
+  useUpdateUser,
+  useUsers,
+} from '../api/hooks'
 import type { User, UserUpdate } from '../api/types'
-import { Button, ConfirmDialog, EmptyState, QueryError, Skeleton, useToast } from '../components/ui'
+import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  DropdownItem,
+  DropdownMenu,
+  EmptyState,
+  Modal,
+  QueryError,
+  Skeleton,
+  useToast,
+} from '../components/ui'
 import { UserFormModal, type UserFormValues } from '../components/users/UserFormModal'
 import { UserKeyModal } from '../components/users/UserKeyModal'
 import { PermissionsModal } from '../components/users/PermissionsModal'
+import { RevealOncePanel } from '../components/users/RevealOncePanel'
 import { cn } from '../lib/cn'
 import { formatDate } from '../lib/format'
 
@@ -17,17 +35,21 @@ type Dialog =
   | { kind: 'delete'; user: User }
   | { kind: 'key'; user: User }
   | { kind: 'permissions'; user: User }
+  | { kind: 'reset'; user: User }
+  | { kind: 'reveal'; title: string; message: string; secret: string }
 
 /** Reduce a full form submission to only the fields that actually changed. */
 function changedFields(user: User, values: UserFormValues): UserUpdate {
   const body: UserUpdate = {}
+  if (values.username !== user.username) body.username = values.username
   if (values.email !== user.email) body.email = values.email
   if (values.name !== (user.name ?? '')) body.name = values.name
   if (values.is_active !== user.is_active) body.is_active = values.is_active
+  if (values.is_admin !== user.is_admin) body.is_admin = values.is_admin
   return body
 }
 
-/** Users admin: list, create, edit, activate/deactivate, assign a key, and grant permissions. */
+/** Users admin: sign-in accounts (username/password + role), API keys, and grants. */
 export default function Users() {
   const { data, isLoading, isError, error, refetch } = useUsers()
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
@@ -36,14 +58,19 @@ export default function Users() {
   const createMut = useCreateUser()
   const updateMut = useUpdateUser()
   const deleteMut = useDeleteUser()
+  const resetMut = useResetUserPassword()
 
   const handleSubmit = (values: UserFormValues) => {
     if (dialog.kind === 'create') {
       createMut.mutate(values, {
-        onSuccess: () => {
-          toast.success(`User “${values.email}” created.`)
-          close()
-        },
+        onSuccess: (user) =>
+          setDialog({
+            kind: 'reveal',
+            title: `User “${user.username}” created`,
+            message:
+              'Share this one-time password with the user — they will be asked to change it on first sign-in. It is shown only once.',
+            secret: user.temp_password,
+          }),
         onError: (e) => toast.error(e.message),
       })
     } else if (dialog.kind === 'edit') {
@@ -70,9 +97,25 @@ export default function Users() {
     const { user } = dialog
     deleteMut.mutate(user.id, {
       onSuccess: () => {
-        toast.success(`User “${user.email}” deleted.`)
+        toast.success(`User “${user.username}” deleted.`)
         close()
       },
+      onError: (e) => toast.error(e.message),
+    })
+  }
+
+  const handleReset = () => {
+    if (dialog.kind !== 'reset') return
+    const { user } = dialog
+    resetMut.mutate(user.id, {
+      onSuccess: (res) =>
+        setDialog({
+          kind: 'reveal',
+          title: `Password reset for “${user.username}”`,
+          message:
+            'Share this one-time password with the user — their old password no longer works and they will set a new one on next sign-in. Shown only once.',
+          secret: res.temp_password,
+        }),
       onError: (e) => toast.error(e.message),
     })
   }
@@ -89,12 +132,12 @@ export default function Users() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-ink">Users</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
-            Each user has one API key; access is scoped by permission grants. The MCP server and REST
-            API enforce those grants — an inactive user's key stops working.
+            Each user signs in with a username + password (admins get the full console; others are
+            scoped by their grants) and may hold one API key for MCP/programmatic access.
           </p>
         </div>
-        <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-5 w-5" />
+        <Button onClick={() => setDialog({ kind: 'create' })} className="shrink-0">
+          <Plus className="h-5 w-5 shrink-0" />
           New user
         </Button>
       </header>
@@ -110,6 +153,7 @@ export default function Users() {
         onDelete={(user) => setDialog({ kind: 'delete', user })}
         onKey={(user) => setDialog({ kind: 'key', user })}
         onPermissions={(user) => setDialog({ kind: 'permissions', user })}
+        onReset={(user) => setDialog({ kind: 'reset', user })}
         onToggleActive={toggleActive}
       />
 
@@ -138,13 +182,33 @@ export default function Users() {
         title="Delete user"
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.user.email}”? Their API key and all permission grants are permanently removed. This cannot be undone.`
+            ? `Delete “${dialog.user.username}”? Their API key and all permission grants are permanently removed. This cannot be undone.`
             : ''
         }
         loading={deleteMut.isPending}
         onConfirm={handleDelete}
         onClose={close}
       />
+
+      <ConfirmDialog
+        open={dialog.kind === 'reset'}
+        title="Reset password"
+        message={
+          dialog.kind === 'reset'
+            ? `Reset the password for “${dialog.user.username}”? Their current password stops working immediately and any active session is signed out.`
+            : ''
+        }
+        confirmLabel="Reset password"
+        loading={resetMut.isPending}
+        onConfirm={handleReset}
+        onClose={close}
+      />
+
+      <Modal open={dialog.kind === 'reveal'} onClose={close} title={dialog.kind === 'reveal' ? dialog.title : ''}>
+        {dialog.kind === 'reveal' && (
+          <RevealOncePanel secret={dialog.secret} message={dialog.message} onDone={close} />
+        )}
+      </Modal>
     </div>
   )
 }
@@ -161,6 +225,7 @@ function UserList({
   onDelete,
   onKey,
   onPermissions,
+  onReset,
   onToggleActive,
 }: {
   data: User[] | undefined
@@ -173,6 +238,7 @@ function UserList({
   onDelete: (user: User) => void
   onKey: (user: User) => void
   onPermissions: (user: User) => void
+  onReset: (user: User) => void
   onToggleActive: (user: User) => void
 }) {
   if (isLoading) {
@@ -192,7 +258,7 @@ function UserList({
       <EmptyState
         icon={<UsersIcon className="h-7 w-7" />}
         title="No users yet"
-        description="Create a user, assign its API key, and grant access to workspaces or collections."
+        description="Create a user, share their one-time password, and grant access to workspaces or collections."
         action={<Button onClick={onCreate}>New user</Button>}
       />
     )
@@ -207,6 +273,7 @@ function UserList({
           onDelete={onDelete}
           onKey={onKey}
           onPermissions={onPermissions}
+          onReset={onReset}
           onToggleActive={onToggleActive}
         />
       ))}
@@ -214,13 +281,14 @@ function UserList({
   )
 }
 
-/** A single user row: identity, status toggle, key state, and inline actions. */
+/** A single user row: identity + role, status toggle, and inline actions. */
 function UserRow({
   user,
   onEdit,
   onDelete,
   onKey,
   onPermissions,
+  onReset,
   onToggleActive,
 }: {
   user: User
@@ -228,17 +296,19 @@ function UserRow({
   onDelete: (user: User) => void
   onKey: (user: User) => void
   onPermissions: (user: User) => void
+  onReset: (user: User) => void
   onToggleActive: (user: User) => void
 }) {
   return (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium text-ink">{user.name || user.email}</span>
-          {user.name && <span className="truncate text-xs text-ink-muted">{user.email}</span>}
+          <span className="truncate text-sm font-medium text-ink">{user.username}</span>
+          {user.is_admin && <Badge>Admin</Badge>}
+          {user.name && <span className="truncate text-xs text-ink-muted">{user.name}</span>}
         </div>
-        <p className="mt-0.5 text-xs text-ink-faint">
-          {user.api_key ? `Key ${user.api_key.key_prefix}…` : 'No API key'} · created{' '}
+        <p className="mt-0.5 truncate text-xs text-ink-faint">
+          {user.email} · {user.api_key ? `key ${user.api_key.key_prefix}…` : 'no API key'} · created{' '}
           {formatDate(user.created_at)}
         </p>
       </div>
@@ -254,42 +324,23 @@ function UserRow({
             {user.is_active ? 'Active' : 'Inactive'}
           </span>
         </button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Permissions for ${user.email}`}
-          onClick={() => onPermissions(user)}
-          className="h-9 w-9 px-0"
-        >
-          <ShieldCheck className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`API key for ${user.email}`}
-          onClick={() => onKey(user)}
-          className="h-9 w-9 px-0"
-        >
-          <KeyRound className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Edit ${user.email}`}
-          onClick={() => onEdit(user)}
-          className="h-9 w-9 px-0"
-        >
-          <Pencil className="h-5 w-5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-label={`Delete ${user.email}`}
-          onClick={() => onDelete(user)}
-          className="h-9 w-9 px-0 hover:text-err"
-        >
-          <Trash2 className="h-5 w-5" />
-        </Button>
+        <DropdownMenu triggerAriaLabel={`Manage ${user.username}`}>
+          <DropdownItem icon={<ShieldCheck className="h-4 w-4" />} onSelect={() => onPermissions(user)}>
+            Permissions
+          </DropdownItem>
+          <DropdownItem icon={<KeyRound className="h-4 w-4" />} onSelect={() => onKey(user)}>
+            API key
+          </DropdownItem>
+          <DropdownItem icon={<RotateCcw className="h-4 w-4" />} onSelect={() => onReset(user)}>
+            Reset password
+          </DropdownItem>
+          <DropdownItem icon={<Pencil className="h-4 w-4" />} onSelect={() => onEdit(user)}>
+            Edit
+          </DropdownItem>
+          <DropdownItem icon={<Trash2 className="h-4 w-4" />} danger onSelect={() => onDelete(user)}>
+            Delete
+          </DropdownItem>
+        </DropdownMenu>
       </div>
     </div>
   )

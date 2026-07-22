@@ -32,6 +32,12 @@ ResourceType = Literal["workspace", "collection", "document"]
 
 _LEVELS: dict[str, int] = {"read": 1, "write": 2}
 _RESOURCE_TABLES = {"workspace": ws_t, "collection": col_t, "document": doc_t}
+# The human-facing name column per resource kind (documents label by filename).
+_RESOURCE_NAME_COLS = {
+    "workspace": ws_t.c.name,
+    "collection": col_t.c.name,
+    "document": doc_t.c.filename,
+}
 
 _Target = tuple[str, str]  # (resource_type, resource_id)
 
@@ -166,6 +172,38 @@ async def readable_collection_ids(
     ]
 
 
+async def readable_collection_scope(
+    db: AsyncSession, principal: Principal
+) -> list[str] | None:
+    """The full set of collection ids ``principal`` may read — or ``None`` when unrestricted.
+
+    ``None`` means master-equivalent (the master key or an admin user): callers skip
+    filtering and see every collection. A non-admin gets the explicit list their grants
+    make readable — each collection they hold a grant on, plus every collection under a
+    granted workspace — and ``[]`` when no grant qualifies (reads nothing).
+
+    Unlike :func:`readable_collection_ids`, which narrows a caller-supplied candidate list,
+    this returns the *whole* readable set, for the global cross-collection views (the
+    ingestion queue and index status) that have no natural candidate list to filter.
+    Document-level grants are intentionally excluded: like the collection documents listing
+    (authorized on the *collection*), these collection-grained views surface a collection
+    only when a collection- or workspace-level grant makes it browsable.
+    """
+    if principal.is_master:
+        return None
+    if principal.user_id is None:
+        return []
+    grants = await _user_grant_targets(db, principal.user_id)
+    ws_ids = [rid for (rtype, rid) in grants if rtype == "workspace"]
+    col_ids = {rid for (rtype, rid) in grants if rtype == "collection"}
+    if ws_ids:
+        rows = (
+            await db.execute(select(col_t.c.id).where(col_t.c.workspace_id.in_(ws_ids)))
+        ).fetchall()
+        col_ids.update(r.id for r in rows)
+    return list(col_ids)
+
+
 async def filter_workspace_tree(
     db: AsyncSession, principal: Principal, tree: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -197,6 +235,55 @@ async def filter_workspace_tree(
             }
         )
     return filtered
+
+
+async def readable_workspace_ids(
+    db: AsyncSession, principal: Principal, candidate_ids: list[str]
+) -> list[str]:
+    """Filter workspace ids to those ``principal`` may browse (order kept).
+
+    A workspace is readable when the user holds a grant on it, or on any collection
+    within it (so they can navigate to that collection) — the same visibility rule as
+    :func:`filter_workspace_tree`. Master sees all; a user with no grants sees none.
+    """
+    ids = list(dict.fromkeys(candidate_ids))
+    if principal.is_master:
+        return ids
+    if principal.user_id is None or not ids:
+        return []
+    grants = await _user_grant_targets(db, principal.user_id)
+    granted_ws = {rid for (rtype, rid) in grants if rtype == "workspace"}
+    granted_cols = [rid for (rtype, rid) in grants if rtype == "collection"]
+    ws_via_col: set[str] = set()
+    if granted_cols:
+        rows = (
+            await db.execute(
+                select(col_t.c.workspace_id).where(col_t.c.id.in_(granted_cols))
+            )
+        ).fetchall()
+        ws_via_col = {r.workspace_id for r in rows}
+    readable = granted_ws | ws_via_col
+    return [wid for wid in ids if wid in readable]
+
+
+async def authorize_workspace(
+    db: AsyncSession, principal: Principal, workspace_id: str, need: Level = "read"
+) -> None:
+    """Raise ``403`` unless ``principal`` may ``need`` ``workspace_id``.
+
+    Browsing (``read``) passes on a grant on the workspace or any collection within it;
+    ``write`` requires a workspace-level grant. Workspace writes are admin-only in the
+    router, so ``read`` is the path non-admins use.
+    """
+    if principal.is_master:
+        return
+    if principal.user_id is not None:
+        if need == "read":
+            if await readable_workspace_ids(db, principal, [workspace_id]):
+                return
+        elif await _has_grant(db, principal.user_id, [("workspace", workspace_id)], need):
+            return
+    raise HTTPException(403, _denied(need))
 
 
 # ---------------------------------------------------------------------------
@@ -273,8 +360,39 @@ async def grant_permission(
     return await _get_grant(db, grant_id)
 
 
+async def _resource_names(db: AsyncSession, grants: list[dict[str, Any]]) -> dict[_Target, str]:
+    """Map each grant's ``(resource_type, resource_id)`` to its display name.
+
+    One query per resource kind present (≤3). A resource deleted since the grant was
+    made has no entry — the grant is dangling (harmless by design), and the caller
+    falls back to the raw id.
+    """
+    ids_by_type: dict[str, set[str]] = {}
+    for g in grants:
+        ids_by_type.setdefault(g["resource_type"], set()).add(g["resource_id"])
+    names: dict[_Target, str] = {}
+    for rtype, ids in ids_by_type.items():
+        table = _RESOURCE_TABLES.get(rtype)
+        if table is None:  # defensive — unknown kind stays unnamed, never a 500
+            continue
+        rows = (
+            await db.execute(
+                select(table.c.id, _RESOURCE_NAME_COLS[rtype].label("name")).where(
+                    table.c.id.in_(ids)
+                )
+            )
+        ).fetchall()
+        for r in rows:
+            names[(rtype, r.id)] = r.name
+    return names
+
+
 async def list_permissions(db: AsyncSession, user_id: str) -> list[dict[str, Any]]:
-    """Return every grant held by ``user_id``, oldest first."""
+    """Return every grant held by ``user_id``, oldest first.
+
+    Each grant carries a ``resource_name`` — the workspace/collection name or document
+    filename — or ``None`` when the resource has since been deleted.
+    """
     rows = (
         await db.execute(
             select(
@@ -289,7 +407,11 @@ async def list_permissions(db: AsyncSession, user_id: str) -> list[dict[str, Any
             .order_by(perm_t.c.created_at)
         )
     ).fetchall()
-    return [dict(r._mapping) for r in rows]
+    grants = [dict(r._mapping) for r in rows]
+    names = await _resource_names(db, grants)
+    for g in grants:
+        g["resource_name"] = names.get((g["resource_type"], g["resource_id"]))
+    return grants
 
 
 async def revoke_permission(db: AsyncSession, user_id: str, grant_id: str) -> None:

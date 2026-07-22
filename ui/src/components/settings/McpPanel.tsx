@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Copy, Download, ExternalLink } from 'lucide-react'
+import { Download, ExternalLink } from 'lucide-react'
 import { api } from '../../api/client'
-import { Button, Card, Field, Input, useToast } from '../ui'
+import { Button, Card, CopyButton, Field, Input } from '../ui'
 
 /** The five tools the MCP server exposes (mirrors api/services/mcp/server.py). */
 const TOOLS: { name: string; sig: string; desc: string }[] = [
@@ -73,22 +73,6 @@ Read the spec to learn the exact request/response shapes behind the tools.
 `
 }
 
-/** Small copy-to-clipboard button with a success toast. */
-function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
-  const toast = useToast()
-  const copy = () =>
-    navigator.clipboard
-      .writeText(text)
-      .then(() => toast.success('Copied to clipboard'))
-      .catch(() => toast.error('Could not copy'))
-  return (
-    <Button variant="secondary" size="sm" onClick={copy}>
-      <Copy className="h-4 w-4" />
-      {label}
-    </Button>
-  )
-}
-
 /** A labelled monospace value row with a copy button. */
 function ValueRow({ label, value }: { label: string; value: string }) {
   return (
@@ -98,7 +82,7 @@ function ValueRow({ label, value }: { label: string; value: string }) {
         <code className="flex-1 truncate rounded-control bg-canvas px-2 py-1.5 font-mono text-[13px] text-ink">
           {value}
         </code>
-        <CopyButton text={value} />
+        <CopyButton text={value} label="Copy" />
       </div>
     </div>
   )
