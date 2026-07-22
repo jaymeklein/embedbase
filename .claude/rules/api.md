@@ -20,8 +20,8 @@ delegating call** to a service. No business logic, no raw SQL, no schema declara
 |--------|------|------|----------------|
 | `health` | `/healthz`, `/metrics` | none | liveness snapshot |
 | `auth` | `/auth` | none (login) / `require_operator` | console login: `login`, `change-password`, `me` |
-| `workspaces` | `/workspaces` | reads `require_auth`+grant; create `require_auth`+`create_workspace` cap; update/delete `require_master` | workspace CRUD (create needs the capability) |
-| `collections` | `/workspaces/{ws}/collections` | reads `require_auth`+grant; create `require_auth`+workspace-write; update/delete `require_master` | collection CRUD (create needs workspace write) |
+| `workspaces` | `/workspaces` | reads `require_auth`+grant (report `can_write`); create `require_auth`+`create_workspace` cap; update/delete `require_auth`+workspace **write** | workspace CRUD (writes are grant-scoped) |
+| `collections` | `/workspaces/{ws}/collections` | reads `require_auth`+grant (list/get report `can_write`); create `require_auth`+workspace-write; update/delete `require_auth`+collection **write** | collection CRUD (writes are grant-scoped) |
 | `documents` | nested + flat `/documents…` | per-route `require_auth` + `permissions.authorize_*` | upload / list / status / delete / download / reprocess |
 | `tags` | `/workspaces/{ws}` | router `require_master` | tag CRUD, merge, assignment |
 | `graph` | `/workspaces/{ws}` | router `require_master` | tag-correlation graph |

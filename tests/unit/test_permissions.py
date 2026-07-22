@@ -251,6 +251,31 @@ async def test_writable_workspace_ids(db_session):
     assert await permissions.writable_workspace_ids(db_session, _USER, ["ws1"]) == []  # read caps it
 
 
+async def test_writable_collection_ids(db_session):
+    await _seed(db_session)  # ws1 → {colA, colB}
+    # Master and no-permission (unrestricted) users may write every candidate.
+    assert await permissions.writable_collection_ids(
+        db_session, _MASTER, ["colA", "colB"]
+    ) == ["colA", "colB"]
+    assert await permissions.writable_collection_ids(
+        db_session, _USER, ["colA", "colB"]
+    ) == ["colA", "colB"]
+    # A read grant scopes but doesn't confer write; a write grant does.
+    await _grant(db_session, "collection", "colA", "read")
+    await _grant(db_session, "collection", "colB", "write")
+    assert await permissions.writable_collection_ids(db_session, _USER, ["colA", "colB"]) == ["colB"]
+
+
+async def test_writable_collection_ids_never_leaks_past_visibility(db_session):
+    """Write never leaks past the read narrowing: a collection the user can't see is never
+    writable, even when an ancestor workspace-write grant would otherwise cover it."""
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "write")
+    await _grant(db_session, "collection", "colA", "read")  # narrows ws1; colA becomes read-only
+    # colA is capped read-only and colB is narrowed out of scope → neither is writable.
+    assert await permissions.writable_collection_ids(db_session, _USER, ["colA", "colB"]) == []
+
+
 async def test_grant_creator_access_grants_scoped_user(db_session):
     await _seed(db_session)
     await _grant(db_session, "collection", "colA", "read")  # makes usr1 a scoped user

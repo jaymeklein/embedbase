@@ -94,11 +94,15 @@ master-equivalent), `require_auth` (any valid credential; records `last_used_at`
 session), and `require_operator` (a user session incl. must-change — only the self-service `/auth` routes).
 Patterns:
 - **Management writes** → `require_master` (router-level for `tags`, `config`, `graph`, **users**; per-route
-  on workspace/collection **update + delete** and the `jobs` bulk **retry-failed**). User/key/grant management
-  is admin-only. **Self-service creation is the exception:** creating a **collection** needs `require_auth` +
-  workspace **write** (`authorize_workspace(…, "write")`); creating a **workspace** needs `require_auth` + the
-  **`create_workspace` capability** (`authorize_workspace_creation`), and a scoped creator is auto-granted
-  write on the new workspace (`grant_creator_access`) so they can use it.
+  on the `jobs` bulk **retry-failed**). User/key/grant + tag management stays admin-only. **Workspace &
+  collection writes are scope-permissioned, not admin-only:** create a **collection** with `require_auth` +
+  workspace **write**, and **edit/delete** one with `require_auth` + **write** on the collection or an
+  ancestor (`authorize_collection(…, "write")`); create a **workspace** with `require_auth` + the
+  **`create_workspace` capability** (`authorize_workspace_creation`, scoped creator auto-granted write via
+  `grant_creator_access`), and **edit/delete** one with `require_auth` + workspace **write**
+  (`authorize_workspace(…, "write")`). `write` implies `read`, so a user only edits what their grants let
+  them see. The `workspaces`/`collections` list+get report **`can_write`** (via `writable_workspace_ids` /
+  `writable_collection_ids`) so the console shows edit/delete/upload only where they'd succeed.
 - **Data-plane + scope-restricted reads** → `require_auth` then `await permissions.authorize_*` /
   `readable_*` (documents, search, the ws bridge, the `workspaces`/`collections` **list/get**, and the
   **ingestion-queue list/stats + index status** via `readable_collection_scope`). A non-admin with no
