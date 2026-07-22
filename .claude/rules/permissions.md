@@ -22,9 +22,10 @@ paths:
 **Three credentials, two authz planes.** Credentials: the **master key** (bootstrap), a **console session**
 (a user's login JWT), and a **user key** (`eb_`, one per user, for MCP/programmatic access). Access is
 either **master-equivalent** (the master key or an **admin** user → the whole management plane) or
-**grant-scoped** (a non-admin user → `read`/`write` grants over the `workspace → collection → document`
-hierarchy). The auth core is `api/services/auth.py` (+ `session.py` for JWTs); the single authorization
-authority is `api/services/permissions.py`. **MCP stays API-key-only — JWTs never reach it.**
+**scope-restricted** (a non-admin user: **permissions scope them *down*** over the `workspace → collection →
+document` hierarchy — with none they see and write everything, and each permission narrows what they reach).
+The auth core is `api/services/auth.py` (+ `session.py` for JWTs); the single authorization authority is
+`api/services/permissions.py`. **MCP stays API-key-only — JWTs never reach it.**
 
 ## Credentials
 - **Master key** — the one required secret `MASTER_API_KEY` (`api/settings.py`; app won't start without it).
@@ -32,7 +33,7 @@ authority is `api/services/permissions.py`. **MCP stays API-key-only — JWTs ne
 - **Console session (JWT)** — from `POST /auth/login` (username + bcrypt password). A short-lived **HS256**
   token signed with a key **derived from `master_api_key`** (`api/services/session.py`; no separate secret —
   rotating the master invalidates every session). Sent as `Authorization: Bearer`. An **admin** user
-  (`users.is_admin`) resolves master-equivalent; a **non-admin** resolves grant-scoped. `resolve_bearer`
+  (`users.is_admin`) resolves master-equivalent; a **non-admin** resolves scope-restricted. `resolve_bearer`
   verifies a JWT first, else falls back to the key path; it re-checks `is_active` + `is_admin` live and the
   token's `pwd_epoch` against `password_changed_at` (a reset/change invalidates prior sessions). A
   **must-change** session (first login / after a reset) may reach *only* `/auth/change-password` + `/auth/me`.
@@ -45,30 +46,40 @@ authority is `api/services/permissions.py`. **MCP stays API-key-only — JWTs ne
   to a frozen `Principal(is_master, user_id, api_key_id, must_change)` — `is_master` means *master-equivalent*
   (master key **or** admin user).
 
-## Grants (`permissions` table)
-A grant gives one user a `level` (`read` | `write`) on one resource (`workspace` | `collection` | `document`).
-Grants are **hierarchical** and `write` implies `read`:
-- a **workspace** grant covers its collections and documents;
-- a **collection** grant covers its documents;
-- `read` = search / list / download; `write` = ingest / delete (and read).
+## Permissions (`permissions` table) — a scope-*down* model
+A permission gives one user a `level` (`read` | `write`) on one resource (`workspace` | `collection` |
+`document`). Permissions **restrict**; they don't grant access from nothing:
+- **No permissions at all → unrestricted**: the user reads *and writes* every workspace, collection, and
+  document (open default). Master and admin users are always unrestricted.
+- **Any permission scopes the user** to the workspace(s) it *touches* — a collection/document permission
+  scopes them to that resource's workspace; other workspaces disappear.
+- **Per-level narrowing** inside a visible workspace: a workspace-only permission leaves every collection
+  visible; a collection permission narrows to just the permitted collections. A **document** permission is
+  *direct-access* to that one document (get status / download / delete it) — it scopes the user into the
+  document's workspace but does **not** open its collection for browsing or search, so it can't leak the
+  collection's siblings through the collection-grained readers (list / search / jobs / indexing).
+- **Read vs write**: a user with **no permissions writes everything**; a scoped user writes only where a
+  *write* permission covers the resource (on it or an ancestor) — everything else in their scope is
+  view-only. `read` = search / list / download; `write` = ingest / delete (and read). `write` implies `read`.
 
-`resource_id` is a plain string (no FK — polymorphic across three tables, like `job_records`); a grant left
-dangling by a deleted resource is harmless (uuids are never reissued).
+`resource_id` is a plain string (no FK — polymorphic across three tables, like `job_records`); a permission
+left dangling by a deleted resource is harmless (uuids are never reissued).
 
 ## Enforcing access — `api/services/permissions.py` is the only authority
-Routers and MCP tools call it and let it raise `403`; **never** re-implement the check inline:
+Routers and MCP tools call it and let it raise `403`; **never** re-implement the check inline. A restricted
+user's permissions resolve once to a `_Scope` (permissions + parent links pre-fetched) that answers
+readability/writability per level:
 - `authorize_workspace(db, principal, ws_id, need)` / `authorize_collection(...)` /
-  `authorize_document(...)` — master/admin passes; a user passes iff a `need`-satisfying grant exists on the
-  resource **or an ancestor** (a collection/workspace grant makes ancestors browsable for `read`).
+  `authorize_document(...)` — master/admin **and users with no permissions** pass; a scoped user passes iff the
+  resource is in scope (visible) and, for `write`, no `read`-level permission on it or an ancestor caps it.
 - `readable_workspace_ids(db, principal, ids)` / `readable_collection_ids(db, principal, ids)` — narrow a
-  candidate list to what the principal may browse (used by the grant-scoped `/workspaces` + `/collections`
-  reads and by `/search`; `/search` 403s when none survive).
-- `readable_collection_scope(db, principal)` — the *whole* set of collection ids the principal may read, or
-  `None` when unrestricted (master/admin). Unlike `readable_collection_ids` (which filters a candidate list),
-  this returns the full set — for the global cross-collection views (ingestion queue list/stats, index
-  status, the `ingestion-queue` WS) that have no candidate list. Document-only grants are excluded (these are
-  collection-grained views, like the documents listing).
-- `filter_workspace_tree(db, principal, tree)` — prunes the MCP `list_workspaces` tree to readable nodes.
+  candidate list to what the principal may browse (master + no-permission users keep all; a scoped user keeps
+  only in-scope ids). Used by the `/workspaces` + `/collections` reads and by `/search` (403s when none survive).
+- `readable_collection_scope(db, principal)` — the *whole* set of readable collection ids, or `None` when
+  unrestricted (master, admin, or **no permissions**). For the global cross-collection views (ingestion queue
+  list/stats, index status, the `ingestion-queue` WS) that have no candidate list to filter.
+- `filter_workspace_tree(db, principal, tree)` — prunes a workspace tree to readable nodes (the whole tree for
+  unrestricted; scoped otherwise).
 
 Three FastAPI deps in `auth.py`, all built on `resolve_bearer` (JWT-or-key): `require_master` (403 unless
 master-equivalent), `require_auth` (any valid credential; records `last_used_at`; rejects a must-change
@@ -77,12 +88,13 @@ Patterns:
 - **Management writes** → `require_master` (router-level for `tags`, `config`, `graph`, **users**; per-route
   on `workspaces`/`collections` **writes** and the `jobs` bulk **retry-failed**). Creating/updating/deleting
   anything, and all user/key/grant management, is **admin-only**.
-- **Data-plane + grant-scoped reads** → `require_auth` then `await permissions.authorize_*` /
+- **Data-plane + scope-restricted reads** → `require_auth` then `await permissions.authorize_*` /
   `readable_*` (documents, search, the ws bridge, the `workspaces`/`collections` **list/get**, and the
-  **ingestion-queue list/stats + index status** via `readable_collection_scope`). A non-admin sees only what
-  their grants reach; master/admin see everything. The global `ingestion-queue` WS is likewise grant-filtered
-  per event (fail-closed on a malformed/collection-less event). The console exposes the queue + indexing
-  pages to non-admins as read-only views (retry actions stay admin-only in the UI).
+  **ingestion-queue list/stats + index status** via `readable_collection_scope`). A non-admin with no
+  permissions sees everything; a scoped one sees only what's in scope; master/admin see everything. The global
+  `ingestion-queue` WS is scope-filtered per event (fail-closed on a malformed/collection-less event). The
+  console exposes the queue + indexing pages to non-admins as read-only views (retry actions stay admin-only
+  in the UI).
 
 ## Users management API (`api/routers/users.py`, `api/services/users.py` — master-only)
 CRUD users (create/list/get/update/delete), activate/deactivate (`is_active`), mint/rotate/revoke the user's

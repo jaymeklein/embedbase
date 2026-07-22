@@ -53,11 +53,55 @@ async def test_master_bypasses_every_check(db_session):
     await permissions.authorize_document(db_session, _MASTER, "docA", "write")
 
 
-async def test_no_grant_is_denied(db_session):
+async def test_no_permissions_is_unrestricted(db_session):
     await _seed(db_session)
-    with pytest.raises(HTTPException) as exc:
-        await permissions.authorize_collection(db_session, _USER, "colA", "read")
-    assert exc.value.status_code == 403
+    # No permissions at all → the user reads AND writes everything (open default).
+    await permissions.authorize_collection(db_session, _USER, "colA", "write")
+    await permissions.authorize_document(db_session, _USER, "docA", "write")
+    await permissions.authorize_workspace(db_session, _USER, "ws1", "read")
+
+
+async def test_collection_grant_scopes_out_siblings_and_other_workspaces(db_session):
+    await _seed(db_session)  # ws1 → {colA → docA, colB}
+    await db_session.execute(
+        insert(ws_t).values(
+            id="ws2", name="W2", description="", color="", icon="", created_at="t", updated_at="t"
+        )
+    )
+    await db_session.execute(
+        insert(col_t).values(
+            id="colC", workspace_id="ws2", name="colC", description="", color="",
+            icon="", created_at="t", updated_at="t",
+        )
+    )
+    await db_session.commit()
+    await _grant(db_session, "collection", "colA", "read")
+    # Scoped to colA: its sibling colB and the other workspace (colC) fall out of scope.
+    await permissions.authorize_collection(db_session, _USER, "colA", "read")
+    for cid in ("colB", "colC"):
+        with pytest.raises(HTTPException):
+            await permissions.authorize_collection(db_session, _USER, cid, "read")
+    with pytest.raises(HTTPException):
+        await permissions.authorize_workspace(db_session, _USER, "ws2", "read")
+
+
+async def test_workspace_read_grant_is_view_only(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "read")
+    # Every collection is readable, but a read-level workspace permission caps writes.
+    await permissions.authorize_collection(db_session, _USER, "colA", "read")
+    await permissions.authorize_collection(db_session, _USER, "colB", "read")
+    with pytest.raises(HTTPException):
+        await permissions.authorize_collection(db_session, _USER, "colA", "write")
+    with pytest.raises(HTTPException):
+        await permissions.authorize_document(db_session, _USER, "docA", "write")
+
+
+async def test_workspace_write_grant_allows_write(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "workspace", "ws1", "write")
+    await permissions.authorize_collection(db_session, _USER, "colA", "write")
+    await permissions.authorize_document(db_session, _USER, "docA", "write")
 
 
 async def test_collection_read_grant_allows_read_denies_write(db_session):
@@ -88,12 +132,28 @@ async def test_collection_grant_covers_document(db_session):
     await permissions.authorize_document(db_session, _USER, "docA", "write")
 
 
-async def test_document_grant_does_not_widen_to_collection(db_session):
+async def test_document_grant_is_direct_access_only(db_session):
+    await _seed(db_session)  # ws1 → {colA → docA, colB}
+    await _grant(db_session, "document", "docA", "read")
+    # The granted document is directly readable…
+    await permissions.authorize_document(db_session, _USER, "docA", "read")
+    # …but a document grant must NOT open its collection for browsing/search or writes (no
+    # ingest into colA), and the sibling collection stays out of scope entirely.
+    for need in ("read", "write"):
+        with pytest.raises(HTTPException):
+            await permissions.authorize_collection(db_session, _USER, "colA", need)
+    with pytest.raises(HTTPException):
+        await permissions.authorize_document(db_session, _USER, "docA", "write")
+    with pytest.raises(HTTPException):
+        await permissions.authorize_collection(db_session, _USER, "colB", "read")
+
+
+async def test_document_grant_does_not_open_collection_for_browsing(db_session):
     await _seed(db_session)
     await _grant(db_session, "document", "docA", "read")
-    await permissions.authorize_document(db_session, _USER, "docA", "read")
-    with pytest.raises(HTTPException):
-        await permissions.authorize_collection(db_session, _USER, "colA", "read")
+    # readable_collection_ids feeds /search + /collections; a document grant must not make the
+    # parent collection sweepable (which would return sibling documents).
+    assert await permissions.readable_collection_ids(db_session, _USER, ["colA", "colB"]) == []
 
 
 async def test_readable_collection_ids_filters_to_granted(db_session):
@@ -115,9 +175,10 @@ async def test_readable_collection_scope_master_is_unrestricted(db_session):
     assert await permissions.readable_collection_scope(db_session, _MASTER) is None
 
 
-async def test_readable_collection_scope_no_grants_is_empty(db_session):
+async def test_readable_collection_scope_no_permissions_is_unrestricted(db_session):
     await _seed(db_session)
-    assert await permissions.readable_collection_scope(db_session, _USER) == []
+    # No permissions → None (unrestricted; callers skip filtering and see every collection).
+    assert await permissions.readable_collection_scope(db_session, _USER) is None
 
 
 async def test_readable_collection_scope_collection_grant(db_session):
@@ -136,8 +197,8 @@ async def test_readable_collection_scope_workspace_grant_expands(db_session):
 async def test_readable_collection_scope_excludes_document_only_grant(db_session):
     await _seed(db_session)
     await _grant(db_session, "document", "docA", "read")
-    # A document-level grant doesn't make its collection browsable in these listings,
-    # mirroring the collection documents listing (authorized on the collection).
+    # A document grant is direct-access only — it must not surface its collection in the
+    # collection-grained views (queue, indexing), which would leak sibling documents.
     assert await permissions.readable_collection_scope(db_session, _USER) == []
 
 

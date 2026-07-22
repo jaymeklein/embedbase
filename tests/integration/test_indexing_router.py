@@ -84,12 +84,13 @@ async def test_index_status_scoped_to_user_grants(client, make_user_key):
     assert seen == ["col1"]  # col2 is not granted → hidden
 
 
-async def test_index_status_empty_for_user_without_grants(client, make_user_key):
-    await _seed(client.session_factory)
+async def test_index_status_unrestricted_for_user_without_grants(client, make_user_key):
+    await _seed(client.session_factory)  # ws1 / col1
     _, key = await make_user_key(grants=[])
     r = await client.get("/indexing/status", headers={"X-API-Key": key})
     assert r.status_code == 200
-    assert r.json() == {"workspaces": []}
+    seen = [c["collection_id"] for w in r.json()["workspaces"] for c in w["collections"]]
+    assert seen == ["col1"]  # no permissions → sees all coverage
 
 
 async def test_index_collection_enqueues(client, monkeypatch):

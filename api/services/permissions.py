@@ -1,14 +1,27 @@
-"""Permission grants + the authorization authority.
+"""Permissions + the authorization authority.
 
-A grant gives a user a ``level`` (``read`` or ``write``) on one resource
-(``workspace`` | ``collection`` | ``document``). Grants are **hierarchical** —
-workspace ⊃ collection ⊃ document — and ``write`` implies ``read``. So a user
-with ``read`` on a workspace can read every collection and document under it.
+Permissions **scope a user down** rather than granting access from nothing:
+
+- A user with **no permissions at all is unrestricted** — they read *and* write
+  every workspace, collection, and document (an open default). Master and admin
+  principals are always unrestricted.
+- **Any permission scopes the user** to the workspace(s) it touches: a
+  collection- or document-level permission scopes them to *that* resource's
+  workspace; other workspaces disappear.
+- Within a visible workspace, narrowing is **per level**: a workspace-only
+  permission leaves every collection visible, while a collection permission
+  narrows to just the permitted collections. A **document** permission is
+  *direct-access* to that one document — it scopes the user into its
+  collection's workspace but does **not** open the collection for browsing or
+  search (so it can't leak the collection's other documents).
+- **Read vs write**: a user with **no permissions writes everything**; a scoped
+  user writes only where a *write* permission covers the resource (on it or an
+  ancestor) and is otherwise view-only within their scope. ``write`` ⊇ ``read``.
 
 This module is the single place that answers *"may this principal do X to
 resource Y?"*: routers and MCP tools call :func:`authorize_collection` /
-:func:`authorize_document` and let them raise ``403``. The master principal
-bypasses every check. It also owns grant CRUD for the management API.
+:func:`authorize_document` and let them raise ``403``. It also owns permission
+CRUD for the management API.
 """
 
 from __future__ import annotations
@@ -30,7 +43,6 @@ from api.services.auth import Principal
 Level = Literal["read", "write"]
 ResourceType = Literal["workspace", "collection", "document"]
 
-_LEVELS: dict[str, int] = {"read": 1, "write": 2}
 _RESOURCE_TABLES = {"workspace": ws_t, "collection": col_t, "document": doc_t}
 # The human-facing name column per resource kind (documents label by filename).
 _RESOURCE_NAME_COLS = {
@@ -46,57 +58,140 @@ _Target = tuple[str, str]  # (resource_type, resource_id)
 NO_READABLE_COLLECTIONS = "API key not authorized to read the requested collections"
 
 
-def _satisfies(grant_level: str, need: str) -> bool:
-    """True when a held ``grant_level`` meets the required ``need`` (write ⊇ read)."""
-    return _LEVELS.get(grant_level, 0) >= _LEVELS[need]
-
-
 def _denied(need: str) -> str:
     return f"API key not authorized to {need} this resource"
 
 
 # ---------------------------------------------------------------------------
-# Hierarchy resolution — a resource plus the ancestors a grant can cover
+# Scope resolution — the "restrict / scope-down" model (see the module docstring)
 # ---------------------------------------------------------------------------
 
-async def _collection_targets(db: AsyncSession, collection_id: str) -> list[_Target] | None:
-    """``[(collection, id), (workspace, ws)]`` or ``None`` if the collection is unknown."""
-    ws_id = (
+async def _collection_ws(db: AsyncSession, collection_id: str) -> str | None:
+    """The workspace a collection belongs to, or ``None`` if the collection is unknown."""
+    return (
         await db.execute(select(col_t.c.workspace_id).where(col_t.c.id == collection_id))
     ).scalar_one_or_none()
-    if ws_id is None:
-        return None
-    return [("collection", collection_id), ("workspace", ws_id)]
 
 
-async def _document_targets(db: AsyncSession, document_id: str) -> list[_Target] | None:
-    """``[(document, id), (collection, c), (workspace, ws)]`` or ``None`` if unknown."""
-    col_id = (
-        await db.execute(select(doc_t.c.collection_id).where(doc_t.c.id == document_id))
-    ).scalar_one_or_none()
-    if col_id is None:
-        return None
-    parents = await _collection_targets(db, col_id) or []
-    return [("document", document_id), *parents]
+async def _document_location(
+    db: AsyncSession, document_id: str
+) -> tuple[str, str] | None:
+    """``(collection_id, workspace_id)`` for a document, or ``None`` if unknown."""
+    row = (
+        await db.execute(
+            select(doc_t.c.collection_id, col_t.c.workspace_id)
+            .select_from(doc_t.join(col_t, doc_t.c.collection_id == col_t.c.id))
+            .where(doc_t.c.id == document_id)
+        )
+    ).first()
+    return (row.collection_id, row.workspace_id) if row is not None else None
 
 
-async def _has_grant(
-    db: AsyncSession, user_id: str, targets: list[_Target], need: str
-) -> bool:
-    """True when the user holds a ``need``-satisfying grant on any of ``targets``."""
-    resource_ids = [rid for _, rid in targets]
+class _Scope:
+    """A restricted user's resolved permissions, with parent links pre-fetched.
+
+    Visibility narrows per level: a permission scopes the user to the workspace(s) it
+    touches; within a touched workspace a collection/document permission narrows to just
+    the permitted children, while a workspace-only permission leaves all children visible.
+    Capability defaults to write; the nearest permission's level (on the resource or an
+    ancestor) caps it, so a ``read`` permission makes its scope view-only.
+    """
+
+    def __init__(
+        self,
+        ws_level: dict[str, str],
+        col_level: dict[str, str],
+        doc_level: dict[str, str],
+        col_ws: dict[str, str],
+        doc_col: dict[str, str],
+    ) -> None:
+        self.ws_level = ws_level  # workspace_id -> level (direct workspace permissions)
+        self.col_level = col_level  # collection_id -> level
+        self.doc_level = doc_level  # document_id -> level
+        self.col_ws = col_ws  # collection_id -> workspace_id (granted cols + granted docs' cols)
+        self.doc_col = doc_col  # document_id -> collection_id (granted docs)
+        # A collection- or document-level permission "narrows" its parent WORKSPACE: inside a
+        # narrowed workspace only explicitly collection-granted collections are browsable.
+        # (narrowed_cols — collections holding a granted document — feeds narrowed_ws so a
+        # document grant scopes its workspace, but does not itself open its collection.)
+        self.narrowed_cols: set[str] = {doc_col[d] for d in doc_level if d in doc_col}
+        self.narrowed_ws: set[str] = {
+            col_ws[c] for c in col_level if c in col_ws
+        } | {col_ws[c] for c in self.narrowed_cols if c in col_ws}
+        self.touched_ws: set[str] = set(ws_level) | self.narrowed_ws
+
+    def is_empty(self) -> bool:
+        """No permissions at all → the user is unrestricted (sees and writes everything)."""
+        return not (self.ws_level or self.col_level or self.doc_level)
+
+    def workspace_readable(self, ws_id: str) -> bool:
+        return ws_id in self.touched_ws
+
+    def collection_readable(self, col_id: str, ws_id: str) -> bool:
+        """Whether the *whole* collection is browsable/searchable. A document permission does
+        NOT open its collection here — only a collection- or workspace-level permission does
+        (the granted document itself stays reachable via :meth:`document_readable`). This is
+        what keeps a document grant from leaking its collection's siblings through the
+        collection-grained readers (list/search/jobs/indexing)."""
+        if ws_id not in self.touched_ws:
+            return False
+        if ws_id not in self.narrowed_ws:
+            return True  # workspace-only scope → every collection under it
+        return col_id in self.col_level
+
+    def document_readable(self, doc_id: str, col_id: str, ws_id: str) -> bool:
+        """A directly-granted document, or any document in a browse-readable collection."""
+        return doc_id in self.doc_level or self.collection_readable(col_id, ws_id)
+
+    def collection_writable(self, col_id: str, ws_id: str) -> bool:
+        # A scoped user writes only where an explicit write permission covers the resource
+        # (on it or an ancestor); an in-scope resource with no covering permission stays
+        # view-only. (A user with *no* permissions is unrestricted and never reaches here.)
+        return (self.col_level.get(col_id) or self.ws_level.get(ws_id)) == "write"
+
+    def document_writable(self, doc_id: str, col_id: str, ws_id: str) -> bool:
+        return (
+            self.doc_level.get(doc_id)
+            or self.col_level.get(col_id)
+            or self.ws_level.get(ws_id)
+        ) == "write"
+
+
+async def _resolve_scope(db: AsyncSession, user_id: str) -> _Scope:
+    """Load ``user_id``'s permissions and pre-fetch the parent links the scope needs."""
+    ws_level: dict[str, str] = {}
+    col_level: dict[str, str] = {}
+    doc_level: dict[str, str] = {}
+    bucket = {"workspace": ws_level, "collection": col_level, "document": doc_level}
     rows = (
         await db.execute(
             select(perm_t.c.resource_type, perm_t.c.resource_id, perm_t.c.level).where(
-                perm_t.c.user_id == user_id, perm_t.c.resource_id.in_(resource_ids)
+                perm_t.c.user_id == user_id
             )
         )
     ).fetchall()
-    target_set = set(targets)
-    return any(
-        (r.resource_type, r.resource_id) in target_set and _satisfies(r.level, need)
-        for r in rows
-    )
+    for r in rows:
+        target = bucket.get(r.resource_type)
+        if target is not None:
+            target[r.resource_id] = r.level
+    doc_col: dict[str, str] = {}
+    if doc_level:
+        rows = (
+            await db.execute(
+                select(doc_t.c.id, doc_t.c.collection_id).where(doc_t.c.id.in_(doc_level))
+            )
+        ).fetchall()
+        doc_col = {r.id: r.collection_id for r in rows}
+    need_cols = set(col_level) | set(doc_col.values())
+    col_ws: dict[str, str] = {}
+    if need_cols:
+        rows = (
+            await db.execute(
+                select(col_t.c.id, col_t.c.workspace_id).where(col_t.c.id.in_(need_cols))
+            )
+        ).fetchall()
+        col_ws = {r.id: r.workspace_id for r in rows}
+    return _Scope(ws_level, col_level, doc_level, col_ws, doc_col)
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +205,15 @@ async def authorize_collection(
     if principal.is_master:
         return
     if principal.user_id is not None:
-        targets = await _collection_targets(db, collection_id)
-        if targets and await _has_grant(db, principal.user_id, targets, need):
+        scope = await _resolve_scope(db, principal.user_id)
+        if scope.is_empty():
+            return  # no permissions set → unrestricted
+        ws_id = await _collection_ws(db, collection_id)
+        if (
+            ws_id is not None
+            and scope.collection_readable(collection_id, ws_id)
+            and (need == "read" or scope.collection_writable(collection_id, ws_id))
+        ):
             return
     raise HTTPException(403, _denied(need))
 
@@ -121,27 +223,23 @@ async def authorize_document(
 ) -> None:
     """Raise ``403`` unless ``principal`` may ``need`` (read/write) ``document_id``.
 
-    A grant on the document, its collection, or its workspace all satisfy the check.
+    A permission on the document, its collection, or its workspace scopes access; with no
+    permission on it or an ancestor the document is fully accessible (open default).
     """
     if principal.is_master:
         return
     if principal.user_id is not None:
-        targets = await _document_targets(db, document_id)
-        if targets and await _has_grant(db, principal.user_id, targets, need):
+        scope = await _resolve_scope(db, principal.user_id)
+        if scope.is_empty():
             return
+        loc = await _document_location(db, document_id)
+        if loc is not None:
+            col_id, ws_id = loc
+            if scope.document_readable(document_id, col_id, ws_id) and (
+                need == "read" or scope.document_writable(document_id, col_id, ws_id)
+            ):
+                return
     raise HTTPException(403, _denied(need))
-
-
-async def _user_grant_targets(db: AsyncSession, user_id: str) -> set[_Target]:
-    """Every ``(resource_type, resource_id)`` the user holds any grant on."""
-    rows = (
-        await db.execute(
-            select(perm_t.c.resource_type, perm_t.c.resource_id).where(
-                perm_t.c.user_id == user_id
-            )
-        )
-    ).fetchall()
-    return {(r.resource_type, r.resource_id) for r in rows}
 
 
 async def readable_collection_ids(
@@ -149,26 +247,27 @@ async def readable_collection_ids(
 ) -> list[str]:
     """Filter ``candidate_ids`` to the collections ``principal`` may read (order kept).
 
-    A collection is readable when the user holds any grant on it or on its parent
-    workspace. Master sees them all; a user with no grants sees none.
+    Master and users with no permissions see them all; a scoped user sees only the
+    collections their permissions leave visible.
     """
     ids = list(dict.fromkeys(candidate_ids))
     if principal.is_master:
         return ids
     if principal.user_id is None or not ids:
         return []
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return ids
     rows = (
         await db.execute(
             select(col_t.c.id, col_t.c.workspace_id).where(col_t.c.id.in_(ids))
         )
     ).fetchall()
     ws_by_col = {r.id: r.workspace_id for r in rows}
-    grants = await _user_grant_targets(db, principal.user_id)
     return [
         cid
         for cid in ids
-        if (ws := ws_by_col.get(cid)) is not None
-        and (("collection", cid) in grants or ("workspace", ws) in grants)
+        if (ws := ws_by_col.get(cid)) is not None and scope.collection_readable(cid, ws)
     ]
 
 
@@ -177,31 +276,30 @@ async def readable_collection_scope(
 ) -> list[str] | None:
     """The full set of collection ids ``principal`` may read — or ``None`` when unrestricted.
 
-    ``None`` means master-equivalent (the master key or an admin user): callers skip
-    filtering and see every collection. A non-admin gets the explicit list their grants
-    make readable — each collection they hold a grant on, plus every collection under a
-    granted workspace — and ``[]`` when no grant qualifies (reads nothing).
-
-    Unlike :func:`readable_collection_ids`, which narrows a caller-supplied candidate list,
-    this returns the *whole* readable set, for the global cross-collection views (the
-    ingestion queue and index status) that have no natural candidate list to filter.
-    Document-level grants are intentionally excluded: like the collection documents listing
-    (authorized on the *collection*), these collection-grained views surface a collection
-    only when a collection- or workspace-level grant makes it browsable.
+    ``None`` = master, an admin, or a user with **no permissions** (see everything; callers
+    skip filtering). A scoped user gets the explicit set their permissions leave visible:
+    every collection under a workspace-only scope, plus each explicitly collection-granted
+    collection under a narrowed workspace (a document grant does not surface its collection
+    here). For the global cross-collection views (ingestion queue, index status, the
+    ingestion-queue WS) that have no candidate list to filter.
     """
     if principal.is_master:
         return None
     if principal.user_id is None:
         return []
-    grants = await _user_grant_targets(db, principal.user_id)
-    ws_ids = [rid for (rtype, rid) in grants if rtype == "workspace"]
-    col_ids = {rid for (rtype, rid) in grants if rtype == "collection"}
-    if ws_ids:
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return None
+    readable: set[str] = {
+        cid for cid, ws in scope.col_ws.items() if scope.collection_readable(cid, ws)
+    }
+    open_ws = [ws for ws in scope.touched_ws if ws not in scope.narrowed_ws]
+    if open_ws:
         rows = (
-            await db.execute(select(col_t.c.id).where(col_t.c.workspace_id.in_(ws_ids)))
+            await db.execute(select(col_t.c.id).where(col_t.c.workspace_id.in_(open_ws)))
         ).fetchall()
-        col_ids.update(r.id for r in rows)
-    return list(col_ids)
+        readable.update(r.id for r in rows)
+    return list(readable)
 
 
 async def filter_workspace_tree(
@@ -209,23 +307,23 @@ async def filter_workspace_tree(
 ) -> list[dict[str, Any]]:
     """Prune a workspace tree (from ``list_workspace_tree``) to what ``principal`` reads.
 
-    Keeps a workspace when the user holds a workspace-level grant (all its
-    collections show) or has a grant on at least one of its collections (only
-    those show). Counts are recomputed against the surviving collections.
+    Master and users with no permissions get the whole tree; a scoped user keeps only
+    readable workspaces, each narrowed to its readable collections with counts recomputed.
     """
     if principal.is_master:
         return tree
     if principal.user_id is None:
         return []
-    grants = await _user_grant_targets(db, principal.user_id)
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return tree
     filtered: list[dict[str, Any]] = []
     for ws in tree:
-        ws_granted = ("workspace", ws["id"]) in grants
-        cols = [
-            c for c in ws["collections"] if ws_granted or ("collection", c["id"]) in grants
-        ]
-        if not ws_granted and not cols:
+        if not scope.workspace_readable(ws["id"]):
             continue
+        cols = [
+            c for c in ws["collections"] if scope.collection_readable(c["id"], ws["id"])
+        ]
         filtered.append(
             {
                 **ws,
@@ -242,28 +340,18 @@ async def readable_workspace_ids(
 ) -> list[str]:
     """Filter workspace ids to those ``principal`` may browse (order kept).
 
-    A workspace is readable when the user holds a grant on it, or on any collection
-    within it (so they can navigate to that collection) — the same visibility rule as
-    :func:`filter_workspace_tree`. Master sees all; a user with no grants sees none.
+    Master and users with no permissions see all; a scoped user sees only the workspaces
+    their permissions touch (granted directly, or holding a permitted collection/document).
     """
     ids = list(dict.fromkeys(candidate_ids))
     if principal.is_master:
         return ids
     if principal.user_id is None or not ids:
         return []
-    grants = await _user_grant_targets(db, principal.user_id)
-    granted_ws = {rid for (rtype, rid) in grants if rtype == "workspace"}
-    granted_cols = [rid for (rtype, rid) in grants if rtype == "collection"]
-    ws_via_col: set[str] = set()
-    if granted_cols:
-        rows = (
-            await db.execute(
-                select(col_t.c.workspace_id).where(col_t.c.id.in_(granted_cols))
-            )
-        ).fetchall()
-        ws_via_col = {r.workspace_id for r in rows}
-    readable = granted_ws | ws_via_col
-    return [wid for wid in ids if wid in readable]
+    scope = await _resolve_scope(db, principal.user_id)
+    if scope.is_empty():
+        return ids
+    return [wid for wid in ids if scope.workspace_readable(wid)]
 
 
 async def authorize_workspace(
@@ -271,17 +359,19 @@ async def authorize_workspace(
 ) -> None:
     """Raise ``403`` unless ``principal`` may ``need`` ``workspace_id``.
 
-    Browsing (``read``) passes on a grant on the workspace or any collection within it;
-    ``write`` requires a workspace-level grant. Workspace writes are admin-only in the
-    router, so ``read`` is the path non-admins use.
+    Read passes when the workspace is in scope; write passes unless a workspace-level
+    ``read`` permission caps it. (Workspace writes are admin-only in the router, so ``read``
+    is the path non-admins use.)
     """
     if principal.is_master:
         return
     if principal.user_id is not None:
-        if need == "read":
-            if await readable_workspace_ids(db, principal, [workspace_id]):
-                return
-        elif await _has_grant(db, principal.user_id, [("workspace", workspace_id)], need):
+        scope = await _resolve_scope(db, principal.user_id)
+        if scope.is_empty():
+            return
+        if scope.workspace_readable(workspace_id) and (
+            need == "read" or scope.ws_level.get(workspace_id) == "write"
+        ):
             return
     raise HTTPException(403, _denied(need))
 
