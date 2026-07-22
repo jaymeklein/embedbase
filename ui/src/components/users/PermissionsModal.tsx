@@ -23,10 +23,12 @@ import {
 } from '../ui'
 
 /**
- * Grant editor for one user: pick a resource (a whole workspace, one collection,
- * or a single document id) and a level (read/write), then add it. A workspace
- * grant cascades to its collections and documents; write implies read. Existing
- * grants are listed with an inline revoke.
+ * Permission editor for one user. Permissions SCOPE A USER DOWN: with none the user
+ * sees and writes everything; each permission narrows what they reach. A workspace
+ * permission limits them to that workspace (all its collections); adding a collection
+ * (or document) permission narrows further to just that collection (or document).
+ * `read` = view-only, `write` = ingest/delete (and read). Existing permissions are
+ * listed with an inline revoke.
  */
 export function PermissionsModal({
   open,
@@ -44,6 +46,11 @@ export function PermissionsModal({
     <Modal open={open} onClose={onClose} title={`Permissions — ${user?.email ?? ''}`} className="max-w-xl">
       {user && (
         <div className="flex flex-col gap-5">
+          <p className="rounded-control border border-border bg-canvas/50 px-3 py-2 text-xs text-ink-muted">
+            Permissions <span className="font-medium text-ink">scope this user down</span>. With none,
+            they see and write everything. A workspace limits them to it; add a collection (or document) to
+            narrow them to just that one.
+          </p>
           <GrantForm userId={user.id} />
           {isLoading ? (
             <div className="flex flex-col gap-2">
