@@ -11,7 +11,8 @@ Two halves, both infra-free:
 import io
 from datetime import UTC, datetime, timedelta
 
-from fastapi import UploadFile
+import pytest
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -107,6 +108,22 @@ async def test_temporary_local_path_stamps_expiry(db_session, monkeypatch, tmp_p
         )
     ).scalar()
     assert expires_at is not None
+
+
+async def test_local_path_rejects_empty_file(db_session, monkeypatch, tmp_path):
+    """ingest_local_path (MCP) refuses a zero-byte file → 422, before any DB/enqueue."""
+    await _seed_ws_col(db_session)
+    monkeypatch.setattr(
+        doc_svc, "get_app_config",
+        lambda: AppConfig(storage=StorageConfig(temp_retention_hours=0)),
+    )
+    src = tmp_path / "empty.txt"
+    src.write_bytes(b"")
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.ingest_local_path(
+            db_session, "col1", str(src), Principal(is_master=True)
+        )
+    assert exc.value.status_code == 422
 
 
 def test_documents_expires_at_column_is_nullable():

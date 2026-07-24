@@ -91,6 +91,27 @@ async def test_upload_returns_202_and_job(client):
     assert body["file_size"] > 0
 
 
+async def test_upload_empty_file_returns_422(client):
+    ws_id, col_id = await _setup(client)
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents",
+        files={"file": ("empty.txt", b"", "text/plain")},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+
+
+async def test_upload_whitespace_only_file_returns_422(client):
+    # A lone CRLF is non-zero bytes but has no ingestible content (parses to 0 chunks).
+    ws_id, col_id = await _setup(client)
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections/{col_id}/documents",
+        files={"file": ("blank.md", b"\r\n", "text/markdown")},
+        headers=AUTH,
+    )
+    assert r.status_code == 422
+
+
 async def test_upload_unsupported_type_returns_415(client):
     ws_id, col_id = await _setup(client)
     r = await client.post(
