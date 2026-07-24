@@ -31,6 +31,7 @@ from api.services.auth import Principal
 from api.services.document_filters import build_specs, latest_status_subquery
 from api.services.filters import to_conditions
 from api.services.storage import get_storage
+from api.services.upload import EmptyFileError
 
 logger = structlog.get_logger()
 
@@ -270,7 +271,8 @@ async def ingest_local_path(
 
     Raises:
         HTTPException: 403 if the principal is not the master key, 415 for an
-            unsupported extension, or 404 if ``file_path`` does not exist.
+            unsupported extension, 404 if ``file_path`` does not exist, or 422 if
+            the file is empty.
     """
     if not principal.is_master:
         raise HTTPException(403, "Ingesting a container-local file path requires the master key")
@@ -281,6 +283,8 @@ async def ingest_local_path(
     _reject_unsupported(ext, config.parsers if config else None)
     if not path.is_file():
         raise HTTPException(404, f"File not found: {file_path!r}")
+    if path.stat().st_size == 0:
+        raise EmptyFileError()
 
     doc_id = f"doc_{uuid4().hex[:12]}"
     job_id = f"job_{uuid4().hex[:12]}"

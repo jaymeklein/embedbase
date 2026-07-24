@@ -26,6 +26,13 @@ class FileTooLargeError(HTTPException):
         )
 
 
+class EmptyFileError(HTTPException):
+    def __init__(self) -> None:
+        # A file with no ingestible content parses to zero chunks, so it can never be
+        # indexed — it would sit forever showing a no-op "Index" action. Reject at upload.
+        super().__init__(422, "File is empty")
+
+
 async def stream_upload_with_size_guard(
     upload: UploadFile,
     dest_path: str | Path,
@@ -37,6 +44,10 @@ async def stream_upload_with_size_guard(
     Returns the number of bytes written. Uses the ``Content-Length`` header as a
     fast-path rejection before reading any body, then re-checks the running total
     while streaming (the header is advisory and may be absent or wrong).
+
+    Also rejects a file with no ingestible content — zero bytes *or* only whitespace
+    (e.g. a lone ``\\r\\n``) — since it parses to zero chunks and could never be
+    indexed. Both aborts clean up the ``.tmp`` so nothing is published.
     """
     limit = max_bytes if max_bytes is not None else _DEFAULT_MAX_BYTES
     dest = Path(dest_path)
@@ -49,6 +60,7 @@ async def stream_upload_with_size_guard(
         raise FileTooLargeError(limit)
 
     bytes_written = 0
+    saw_content = False
     try:
         with open(tmp, "wb") as fh:
             while True:
@@ -58,7 +70,14 @@ async def stream_upload_with_size_guard(
                 bytes_written += len(chunk)
                 if bytes_written > limit:
                     raise FileTooLargeError(limit)
+                # Any non-whitespace byte makes the file ingestible. The flag
+                # short-circuits the strip() once content is seen, so a large binary
+                # is trimmed at most once (its first bytes are non-whitespace anyway).
+                if not saw_content and chunk.strip():
+                    saw_content = True
                 fh.write(chunk)
+        if not saw_content:
+            raise EmptyFileError()
     except BaseException:
         # Abort + cleanup on any failure (size guard, disk error, disconnect).
         tmp.unlink(missing_ok=True)
