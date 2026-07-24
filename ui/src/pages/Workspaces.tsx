@@ -18,6 +18,7 @@ import {
   WorkspaceFormModal,
   type WorkspaceFormValues,
 } from '../components/workspaces/WorkspaceFormModal'
+import { useAuth } from '../auth/AuthContext'
 import { formatDate } from '../lib/format'
 
 /** Which dialog (if any) is currently open, plus the row it acts on. */
@@ -39,6 +40,7 @@ function changedFields(ws: Workspace, values: WorkspaceFormValues): WorkspaceUpd
 
 /** Workspaces index: list, create, edit, and delete the top-level containers. */
 export default function Workspaces() {
+  const { canCreateWorkspaces } = useAuth()
   const { data, isLoading, isError, error, refetch } = useWorkspaces()
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const close = () => setDialog({ kind: 'none' })
@@ -97,10 +99,12 @@ export default function Workspaces() {
             Top-level containers for your collections.
           </p>
         </div>
-        <Button onClick={() => setDialog({ kind: 'create' })}>
-          <Plus className="h-5 w-5" />
-          New workspace
-        </Button>
+        {canCreateWorkspaces && (
+          <Button onClick={() => setDialog({ kind: 'create' })}>
+            <Plus className="h-5 w-5" />
+            New workspace
+          </Button>
+        )}
       </header>
 
       <WorkspaceList
@@ -108,6 +112,7 @@ export default function Workspaces() {
         isLoading={isLoading}
         isError={isError}
         message={error?.message}
+        canCreate={canCreateWorkspaces}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(ws) => setDialog({ kind: 'edit', ws })}
@@ -144,6 +149,7 @@ function WorkspaceList({
   isLoading,
   isError,
   message,
+  canCreate,
   onRetry,
   onCreate,
   onEdit,
@@ -153,6 +159,7 @@ function WorkspaceList({
   isLoading: boolean
   isError: boolean
   message?: string
+  canCreate: boolean
   onRetry: () => void
   onCreate: () => void
   onEdit: (ws: Workspace) => void
@@ -175,8 +182,12 @@ function WorkspaceList({
       <EmptyState
         icon={<FolderKanban className="h-7 w-7" />}
         title="No workspaces yet"
-        description="Create your first workspace to start organising collections."
-        action={<Button onClick={onCreate}>New workspace</Button>}
+        description={
+          canCreate
+            ? 'Create your first workspace to start organising collections.'
+            : 'No workspaces are shared with you yet.'
+        }
+        action={canCreate ? <Button onClick={onCreate}>New workspace</Button> : undefined}
       />
     )
   }
@@ -234,26 +245,28 @@ function WorkspaceCard({
       </div>
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-faint">Created {formatDate(ws.created_at)}</span>
-        <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Edit ${ws.name}`}
-            onClick={stop(() => onEdit(ws))}
-            className="h-10 w-10 px-0"
-          >
-            <Pencil className="h-7 w-7" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`Delete ${ws.name}`}
-            onClick={stop(() => onDelete(ws))}
-            className="h-10 w-10 px-0 hover:text-err"
-          >
-            <Trash2 className="h-7 w-7" />
-          </Button>
-        </div>
+        {ws.can_write && (
+          <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Edit ${ws.name}`}
+              onClick={stop(() => onEdit(ws))}
+              className="h-10 w-10 px-0"
+            >
+              <Pencil className="h-7 w-7" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${ws.name}`}
+              onClick={stop(() => onDelete(ws))}
+              className="h-10 w-10 px-0 hover:text-err"
+            >
+              <Trash2 className="h-7 w-7" />
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   )

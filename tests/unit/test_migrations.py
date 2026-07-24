@@ -93,6 +93,26 @@ def test_documents_has_storage_backend_column(tmp_path):
     assert cols["storage_backend"]["nullable"] is True
 
 
+def test_users_has_login_columns(tmp_path):
+    """0009: users gains the console-login columns + a unique username index."""
+    db_path = str(tmp_path / "login.db")
+    _apply_migrations(db_path)
+    insp = inspect(create_engine(f"sqlite:///{db_path}", poolclass=NullPool))
+
+    cols = {c["name"] for c in insp.get_columns("users")}
+    assert {
+        "username",
+        "password_hash",
+        "must_change_password",
+        "password_changed_at",
+        "is_admin",
+    } <= cols
+
+    users_idx = {idx["name"]: idx for idx in insp.get_indexes("users")}
+    assert "users_username_key" in users_idx
+    assert users_idx["users_username_key"]["unique"]  # SQLite reports this as 1
+
+
 def test_migration_indexes_exist(tmp_path):
     """Expected indexes must be present after all migrations run."""
     db_path = str(tmp_path / "idx.db")

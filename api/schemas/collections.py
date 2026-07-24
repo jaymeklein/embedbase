@@ -1,4 +1,4 @@
-"""Request/response schemas for the collections and API-key endpoints."""
+"""Request/response schemas for the collections endpoints."""
 
 from pydantic import BaseModel
 
@@ -19,9 +19,3 @@ class CollectionUpdate(BaseModel):
     description: str | None = None
     color: str | None = None
     icon: str | None = None
-
-
-class APIKeyCreate(BaseModel):
-    """Body for POST /workspaces/{ws_id}/collections/{col_id}/keys."""
-
-    label: str = ""

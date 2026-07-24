@@ -25,6 +25,7 @@ from api.db import job_records as job_t
 from api.dependencies import get_app_config
 from api.models.config import ParserConfig, StorageConfig
 from api.models.document import DocumentListQuery
+from api.services import permissions
 from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.document_filters import build_specs, latest_status_subquery
@@ -228,8 +229,7 @@ async def ingest(
     When ``temporary`` is set and ``storage.temp_retention_hours > 0`` the document
     is stamped with an ``expires_at`` and later auto-purged by the worker sweep.
     """
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    await permissions.authorize_collection(db, principal, col_id, "write")
 
     filename = file.filename or "upload"
     ext = os.path.splitext(filename)[1].lower()
@@ -262,12 +262,18 @@ async def ingest_local_path(
     the MCP client can see inside the container), so nothing is streamed. ``temporary``
     behaves as in :func:`ingest` (stamps ``expires_at`` when retention is enabled).
 
+    **Master-only.** Referencing an arbitrary container-local path can copy any file
+    the server can reach (another tenant's document store, server files) into the
+    target collection, so this operator/bootstrap capability requires the master key.
+    Scoped users add documents by uploading bytes through :func:`ingest`, never by
+    server-side path.
+
     Raises:
-        HTTPException: 403 if the principal cannot access the collection, 415 for
-            an unsupported extension, or 404 if ``file_path`` does not exist.
+        HTTPException: 403 if the principal is not the master key, 415 for an
+            unsupported extension, or 404 if ``file_path`` does not exist.
     """
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    if not principal.is_master:
+        raise HTTPException(403, "Ingesting a container-local file path requires the master key")
 
     path = Path(file_path)
     ext = path.suffix.lower()
@@ -423,6 +429,9 @@ async def resolve_document_download(
         HTTPException: 404 if the document or its file is gone, 403 if the
             principal cannot access the owning collection.
     """
+    # Authorize before fetching so an unpermitted caller can't tell "forbidden"
+    # (403) from "nonexistent" (404) — both are 403.
+    await permissions.authorize_document(db, principal, doc_id, "read")
     row = (
         await db.execute(
             select(
@@ -433,8 +442,6 @@ async def resolve_document_download(
     ).fetchone()
     if not row:
         raise HTTPException(404, f"Document {doc_id!r} not found")
-    if not principal.can_access(row.collection_id):
-        raise HTTPException(403, "API key not valid for this collection")
 
     # NULL storage_backend = ingested before the column existed → bytes on local disk.
     storage = get_storage(_storage_config(), row.storage_backend or "local")

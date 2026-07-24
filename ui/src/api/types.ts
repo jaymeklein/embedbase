@@ -29,6 +29,9 @@ export interface Workspace {
   document_count?: number
   /** Present only on `POST /workspaces` (always 0 at creation). */
   chunk_count?: number
+  /** Whether the caller may write this workspace (create collections in it).
+   *  Present on `GET /workspaces` and `GET /workspaces/{id}`. */
+  can_write?: boolean
 }
 
 /** `GET /workspaces/{id}` — a workspace plus its (count-less) collection rows. */
@@ -52,6 +55,9 @@ export interface Collection {
   document_count?: number
   /** Present only on `POST .../collections` (always 0 at creation). */
   chunk_count?: number
+  /** Whether the caller may write (edit/delete, ingest into) this collection.
+   *  Present on `GET .../collections` and `GET .../collections/{id}`. */
+  can_write?: boolean
   /** Assigned tags, echoed by `GET .../collections`. */
   tags?: TagRef[]
 }
@@ -122,29 +128,80 @@ export interface GraphResponse {
   max_heat: number
 }
 
-// ── API keys ────────────────────────────────────────────────────────────────
+// ── Users, keys & permissions ────────────────────────────────────────────────
 
-/** Key metadata as returned by `GET .../keys` — never includes the secret. */
-export interface ApiKey {
+/** Key metadata embedded on a user (never the secret); null when the user has no key. */
+export interface UserKeySummary {
   id: string
-  collection_id: string
   key_prefix: string
   label: string
   created_at: string
   last_used_at: string | null
 }
 
-/**
- * `POST .../keys` — the only response that carries the raw secret (`raw_key`).
- * It is shown once and cannot be retrieved again; never persist it.
- */
-export interface MintedApiKey {
+/** A user row (`GET /users`, `GET /users/{id}`) with its API-key summary. */
+export interface User {
   id: string
-  collection_id: string
+  username: string
+  email: string
+  name: string
+  is_active: boolean
+  is_admin: boolean
+  must_change_password: boolean
+  created_at: string
+  updated_at: string
+  api_key: UserKeySummary | null
+  /** Whether the user may create workspaces. Present only on `GET /auth/me`. */
+  can_create_workspaces?: boolean
+}
+
+/** `POST /users` — the created user plus the one-time login password (shown once). */
+export interface CreatedUser extends User {
+  temp_password: string
+}
+
+/** `POST /users/{id}/reset-password` — a fresh one-time login password (shown once). */
+export interface ResetPasswordResponse {
+  temp_password: string
+}
+
+/**
+ * `POST /users/{id}/key` — the only response that carries the raw secret (`raw_key`).
+ * Shown once and never retrievable again; never persist it. Minting replaces any
+ * existing key (rotation).
+ */
+export interface MintedUserKey {
+  id: string
+  user_id: string
   key_prefix: string
   label: string
   created_at: string
   raw_key: string
+}
+
+/** `POST /auth/login` / `POST /auth/change-password` — the session token + change flag. */
+export interface SessionResponse {
+  access_token: string
+  token_type: string
+  must_change_password: boolean
+}
+
+export type PermissionLevel = 'read' | 'write'
+/** `capability` grants a non-resource privilege (e.g. `resource_id: 'create_workspace'`);
+ *  the others scope access to a workspace/collection/document. */
+export type ResourceType = 'workspace' | 'collection' | 'document' | 'capability'
+
+/** A grant row (`GET /users/{id}/permissions`) — one resource the user may access. */
+export interface Permission {
+  id: string
+  user_id: string
+  resource_type: ResourceType
+  resource_id: string
+  /** The resource's display name (workspace/collection name or document filename);
+   *  null when the resource has since been deleted (a harmless dangling grant). */
+  resource_name: string | null
+  level: PermissionLevel
+  created_at: string
 }
 
 // ── Documents ───────────────────────────────────────────────────────────────
@@ -503,6 +560,28 @@ export interface CollectionCreate {
 
 export type CollectionUpdate = Partial<CollectionCreate>
 
-export interface ApiKeyCreate {
+export interface UserCreate {
+  username: string
+  email: string
+  name?: string
+  is_active?: boolean
+  is_admin?: boolean
+}
+
+export type UserUpdate = Partial<{
+  username: string
+  email: string
+  name: string
+  is_active: boolean
+  is_admin: boolean
+}>
+
+export interface UserKeyCreate {
   label?: string
+}
+
+export interface GrantCreate {
+  resource_type: ResourceType
+  resource_id: string
+  level: PermissionLevel
 }

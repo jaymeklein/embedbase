@@ -112,20 +112,20 @@ function Row({ label, value, online }: { label: string; value: string; online?: 
   )
 }
 
-/** Master-key note plus a Lock action mirroring the Topbar. */
+/** Session note plus a Sign-out action mirroring the Topbar. */
 function SecurityPanel() {
-  const { lock } = useAuth()
+  const { logout } = useAuth()
   return (
     <Card className="flex items-center justify-between gap-4 p-5">
       <div>
-        <p className="text-[13px] text-ink">Master key</p>
+        <p className="text-[13px] text-ink">Session</p>
         <p className="mt-0.5 text-xs text-ink-muted">
-          Held in this browser only. Lock to clear it and return to the unlock screen.
+          Your credential is held in this browser only. Sign out to clear it.
         </p>
       </div>
-      <Button variant="secondary" onClick={lock}>
+      <Button variant="secondary" onClick={logout}>
         <Lock className="h-5 w-5" />
-        Lock console
+        Sign out
       </Button>
     </Card>
   )

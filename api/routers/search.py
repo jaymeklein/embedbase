@@ -1,6 +1,6 @@
 """Search router: POST /search — multi-collection hybrid search."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.base import EmbeddingAdapter, Reranker
@@ -14,7 +14,8 @@ from api.dependencies import (
 )
 from api.models.config import SearchConfig
 from api.models.search import SearchRequest, SearchResponse
-from api.services.auth import require_master
+from api.services import permissions
+from api.services.auth import Principal, require_auth
 from api.services.search import multi_collection_search
 
 router = APIRouter(tags=["search"])
@@ -24,7 +25,7 @@ router = APIRouter(tags=["search"])
 async def search(
     request: SearchRequest,
     db: AsyncSession = Depends(get_db),
-    _principal: object = Depends(require_master),
+    principal: Principal = Depends(require_auth),
     embedder: EmbeddingAdapter = Depends(require_embedding_adapter),
     vector_store: PgvectorAdapter = Depends(require_vector_store),
     reranker: Reranker | None = Depends(get_reranker),
@@ -32,10 +33,14 @@ async def search(
 ) -> SearchResponse:
     """Run a hybrid (semantic + BM25) search across one or more collections.
 
+    The request's ``collection_ids`` are narrowed to those the caller may read
+    (master sees all; a user sees the collections their grants cover). Searching
+    only unauthorized collections yields ``403``.
+
     Args:
         request: Search parameters including query, collection IDs, and filters.
         db: Injected async database session for collection metadata.
-        _principal: Authenticated master principal (enforces auth, value unused).
+        principal: Authenticated caller (master or user key).
         embedder: Embedding adapter injected via Depends.
         vector_store: Vector store adapter injected via Depends (also does FTS).
         reranker: Optional cross-encoder reranker (None when disabled/not loaded).
@@ -44,6 +49,10 @@ async def search(
     Returns:
         SearchResponse with ranked results and per-collection stats.
     """
+    allowed = await permissions.readable_collection_ids(db, principal, request.collection_ids)
+    if not allowed:
+        raise HTTPException(403, permissions.NO_READABLE_COLLECTIONS)
+    request = request.model_copy(update={"collection_ids": allowed})
     return await multi_collection_search(
         request,
         db=db,
