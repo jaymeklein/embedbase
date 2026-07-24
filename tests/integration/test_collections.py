@@ -215,22 +215,6 @@ async def test_delete_collection_not_found(master_client):
     assert r.status_code == 404
 
 
-async def test_delete_collection_cascades_to_api_keys(master_client):
-    ws_id = await _make_workspace(master_client)
-    col_id = (await _make_collection(master_client, ws_id, "C"))["id"]
-
-    r = await master_client.post(
-        f"/workspaces/{ws_id}/collections/{col_id}/keys", json={"label": "k"}
-    )
-    assert r.status_code == 201
-
-    await master_client.delete(f"/workspaces/{ws_id}/collections/{col_id}")
-
-    assert (
-        await master_client.get(f"/workspaces/{ws_id}/collections/{col_id}")
-    ).status_code == 404
-
-
 # ---------------------------------------------------------------------------
 # Auth — negative tests
 # ---------------------------------------------------------------------------
@@ -260,21 +244,152 @@ async def test_no_auth_delete_collection_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_collection_key_on_collection_route_returns_403(client):
-    """A collection-scoped key must be rejected (403) on management collection routes."""
+async def test_create_collection_unrestricted_user_allowed(client, make_user_key):
+    """A user with no permissions is unrestricted → may create collections."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    _, raw = await make_user_key()  # no grants → unrestricted
+
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections",
+        json={"name": "C"},
+        headers={"X-API-Key": raw},
+    )
+    assert r.status_code == 201
+
+
+async def test_create_collection_requires_workspace_write(client, make_user_key):
+    """A user scoped to the workspace read-only is denied (403); workspace write allows it."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+
+    _, ro = await make_user_key(grants=[("workspace", ws_id, "read")])
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers={"X-API-Key": ro}
+    )
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("workspace", ws_id, "write")])
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers={"X-API-Key": rw}
+    )
+    assert r.status_code == 201
+
+
+async def test_create_collection_denied_for_collection_grant_holder(client, make_user_key):
+    """A collection grant (not workspace) doesn't confer creating sibling collections."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_id = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "A"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(grants=[("collection", col_id, "write")])
+
+    r = await client.post(
+        f"/workspaces/{ws_id}/collections", json={"name": "B"}, headers={"X-API-Key": key}
+    )
+    assert r.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Edit / delete — scope-permissioned (write), not admin-only
+# ---------------------------------------------------------------------------
+
+
+async def test_update_collection_requires_write(client, make_user_key):
+    """Editing a collection needs write on it (or an ancestor); a read grant is denied (403)."""
     ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
     col_id = (
         await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
     ).json()["id"]
-    raw_key = (
-        await client.post(
-            f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH
-        )
-    ).json()["raw_key"]
 
-    r = await client.post(
-        f"/workspaces/{ws_id}/collections",
-        json={"name": "hack"},
-        headers={"Authorization": f"Bearer {raw_key}"},
+    _, ro = await make_user_key(grants=[("collection", col_id, "read")])
+    r = await client.patch(
+        f"/workspaces/{ws_id}/collections/{col_id}", json={"name": "X"}, headers={"X-API-Key": ro}
+    )
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("collection", col_id, "write")])
+    r = await client.patch(
+        f"/workspaces/{ws_id}/collections/{col_id}", json={"name": "Y"}, headers={"X-API-Key": rw}
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Y"
+
+
+async def test_update_collection_via_workspace_write(client, make_user_key):
+    """A workspace write grant covers editing the collections inside it (ancestor write)."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_id = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(grants=[("workspace", ws_id, "write")])
+    r = await client.patch(
+        f"/workspaces/{ws_id}/collections/{col_id}", json={"name": "Z"}, headers={"X-API-Key": key}
+    )
+    assert r.status_code == 200
+
+
+async def test_delete_collection_requires_write(client, make_user_key):
+    """Delete is a write: a read-scoped user is denied (403); collection-write succeeds (204)."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_ro = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "RO"}, headers=_MH)
+    ).json()["id"]
+    col_rw = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "RW"}, headers=_MH)
+    ).json()["id"]
+
+    _, ro = await make_user_key(grants=[("collection", col_ro, "read")])
+    r = await client.delete(
+        f"/workspaces/{ws_id}/collections/{col_ro}", headers={"X-API-Key": ro}
+    )
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("collection", col_rw, "write")])
+    r = await client.delete(
+        f"/workspaces/{ws_id}/collections/{col_rw}", headers={"X-API-Key": rw}
+    )
+    assert r.status_code == 204
+
+
+async def test_collection_list_reports_can_write(client, make_user_key):
+    """The collection list tags each row with can_write for the caller (read vs write grant)."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_r = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "R"}, headers=_MH)
+    ).json()["id"]
+    col_w = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "W"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(
+        grants=[("collection", col_r, "read"), ("collection", col_w, "write")]
+    )
+    r = await client.get(f"/workspaces/{ws_id}/collections", headers={"X-API-Key": key})
+    cols = {c["id"]: c for c in r.json()}
+    assert cols[col_r]["can_write"] is False
+    assert cols[col_w]["can_write"] is True
+
+
+async def test_collection_get_reports_can_write_for_unrestricted(client, make_user_key):
+    """A no-permission (unrestricted) user gets can_write True on the collection detail."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    col_id = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
+    ).json()["id"]
+    _, raw = await make_user_key()  # unrestricted
+    r = await client.get(
+        f"/workspaces/{ws_id}/collections/{col_id}", headers={"X-API-Key": raw}
+    )
+    assert r.status_code == 200
+    assert r.json()["can_write"] is True
+
+
+async def test_edit_nonexistent_collection_is_403_not_404_for_scoped_user(client, make_user_key):
+    """Authorize-before-existence: a scoped user gets a uniform 403, not a 404 existence oracle."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    other = (
+        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "Other"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(grants=[("collection", other, "write")])
+    r = await client.patch(
+        f"/workspaces/{ws_id}/collections/col_nope", json={"name": "X"}, headers={"X-API-Key": key}
     )
     assert r.status_code == 403

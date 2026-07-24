@@ -24,7 +24,9 @@ from api.services.filters import to_conditions
 from api.services.job_filters import build_specs
 
 
-async def list_jobs(db: AsyncSession, query: JobListQuery) -> dict:
+async def list_jobs(
+    db: AsyncSession, query: JobListQuery, collection_ids: list[str] | None = None
+) -> dict:
     """Return one filtered, paginated page of ingestion jobs across all collections.
 
     Ordering: actively-``processing`` jobs first (so the live card leads), then newest-first.
@@ -35,12 +37,19 @@ async def list_jobs(db: AsyncSession, query: JobListQuery) -> dict:
     Pagination and every (optional, AND-combined) filter come from ``query`` — see
     :class:`JobListQuery`; each filter is a ``FilterSpec`` in api/services/job_filters.py.
 
+    ``collection_ids`` is the caller's grant scope: ``None`` = unrestricted (master/admin);
+    a list restricts the page to those collections (an empty list reads nothing).
+
     Returns:
         ``{"items": [...], "total": N, "limit": L, "offset": O}`` — ``total`` is the full match
         count (for the pager); ``items`` is the requested page, each a mapping including
         ``collection_name`` and ``document_id`` (the latter lets the UI overlay live progress).
     """
+    if collection_ids is not None and not collection_ids:
+        return {"items": [], "total": 0, "limit": query.limit, "offset": query.offset}
     conds = await to_conditions(build_specs(query), db)
+    if collection_ids is not None:
+        conds.append(job_t.c.collection_id.in_(collection_ids))
 
     # LEFT join so a job whose collection was deleted still lists (with a NULL collection_name);
     # the join is 1:1, so it doesn't change the job row count the pager reports. `.where(*conds)`
@@ -88,14 +97,22 @@ async def list_jobs(db: AsyncSession, query: JobListQuery) -> dict:
     }
 
 
-async def job_status_counts(db: AsyncSession) -> dict[str, int]:
+async def job_status_counts(
+    db: AsyncSession, collection_ids: list[str] | None = None
+) -> dict[str, int]:
     """Count ingestion jobs per status, for the queue header's live totals — a real server-side
     depth that drains as jobs finish, unlike the WebSocket buffer that only ever accumulates.
     Statuses with no rows are simply absent from the returned map.
+
+    ``collection_ids`` is the caller's grant scope: ``None`` = unrestricted (master/admin);
+    a list restricts the counts to those collections (an empty list counts nothing).
     """
-    rows = (
-        await db.execute(select(job_t.c.status, func.count()).group_by(job_t.c.status))
-    ).all()
+    if collection_ids is not None and not collection_ids:
+        return {}
+    stmt = select(job_t.c.status, func.count()).group_by(job_t.c.status)
+    if collection_ids is not None:
+        stmt = stmt.where(job_t.c.collection_id.in_(collection_ids))
+    rows = (await db.execute(stmt)).all()
     return {status: count for status, count in rows}
 
 

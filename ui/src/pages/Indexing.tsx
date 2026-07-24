@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AlertTriangle, DatabaseZap, RefreshCw } from 'lucide-react'
+import { useAuth } from '../auth/AuthContext'
 import { useIndexStatus, useRetryFailedJobs } from '../api/hooks'
 import type { CollectionIndexStatus } from '../api/types'
 import {
@@ -93,6 +94,8 @@ function Header() {
  * documents — which re-embeds them, hence the confirmation. In-flight ones are left to finish.
  */
 function CollectionRow({ col }: { col: CollectionIndexStatus }) {
+  // A non-admin sees coverage for their permitted collections but can't retry (re-ingest).
+  const { isAdmin } = useAuth()
   const toast = useToast()
   const retryMut = useRetryFailedJobs()
   const [confirming, setConfirming] = useState(false)
@@ -140,9 +143,9 @@ function CollectionRow({ col }: { col: CollectionIndexStatus }) {
             </span>
           </div>
         </div>
-        {/* Only offer the retry when there is something stuck to retry: a document still
+        {/* Admins only, and only when there is something stuck to retry: a document still
             ingesting will finish on its own, and a fully-indexed collection has nothing to do. */}
-        {col.failed > 0 && (
+        {isAdmin && col.failed > 0 && (
           <Button
             variant="secondary"
             size="sm"

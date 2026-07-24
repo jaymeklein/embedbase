@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     database_path: str = "/store/embedbase.db"
     upload_dir: str = "/data"
 
+    # Console login sessions: how long a user's JWT is valid (default 12h). The
+    # signing key is derived from ``master_api_key`` (see api/services/session.py),
+    # so there is no separate session secret to configure.
+    session_ttl_seconds: int = 43200
+
     # Middleware / process — applied at app startup.
     log_level: str = "info"
     log_format: str = "json"

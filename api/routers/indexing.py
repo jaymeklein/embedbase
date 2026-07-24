@@ -6,25 +6,33 @@ lives in api/services/indexing.py.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.dependencies import get_db
 from api.models.indexing import IndexEnqueueResponse, IndexStatusResponse
-from api.services import documents as doc_svc
 from api.services import indexing as index_svc
-from api.services.auth import Principal, require_auth, require_master
+from api.services import permissions
+from api.services.access import (
+    AuthorizeCollection,
+    AuthorizeDocument,
+    CollectionInWorkspace,
+    CompositePolicy,
+)
+from api.services.auth import Principal, require_auth
 
 router = APIRouter(tags=["indexing"])
 
 
 @router.get("/indexing/status", response_model=IndexStatusResponse)
 async def index_status(
-    _principal: object = Depends(require_master),
+    principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> IndexStatusResponse:
-    """Return BM25 index coverage grouped by workspace and collection."""
-    return await index_svc.get_index_overview(db)
+    """Return BM25 index coverage grouped by workspace and collection, scoped to the caller's
+    grants: a non-admin sees only collections their grants can read; master/admin see all."""
+    scope = await permissions.readable_collection_scope(db, principal)
+    return await index_svc.get_index_overview(db, scope)
 
 
 @router.post(
@@ -38,9 +46,10 @@ async def index_collection(
     db: AsyncSession = Depends(get_db),
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of every active document in a collection."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    await CompositePolicy(
+        AuthorizeCollection(col_id, "write"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return index_svc.enqueue_collection(col_id)
 
 
@@ -56,7 +65,10 @@ async def index_document(
     db: AsyncSession = Depends(get_db),
 ) -> IndexEnqueueResponse:
     """Enqueue a BM25 (re)index of a single document."""
-    await doc_svc.resolve_collection(db, col_id, ws_id)
-    if not principal.can_access(col_id):
-        raise HTTPException(403, "API key not valid for this collection")
+    # Single-document op → authorize the document (honors document-level grants), then
+    # validate the URL's collection path. Authorize-first, so no existence oracle.
+    await CompositePolicy(
+        AuthorizeDocument(doc_id, "write"),
+        CollectionInWorkspace(ws_id, col_id),
+    ).apply(db, principal)
     return index_svc.enqueue_document(doc_id, col_id)

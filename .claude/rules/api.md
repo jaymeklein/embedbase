@@ -19,20 +19,25 @@ delegating call** to a service. No business logic, no raw SQL, no schema declara
 | Router | Base | Auth | Responsibility |
 |--------|------|------|----------------|
 | `health` | `/healthz`, `/metrics` | none | liveness snapshot |
-| `workspaces` | `/workspaces` | router `require_master` | workspace CRUD |
-| `collections` | `/workspaces/{ws}/collections` | router `require_master` | collection CRUD + API-key mgmt |
-| `documents` | nested + flat `/documents…` | per-route `require_auth` + `can_access` | upload / list / status / delete / download / reprocess |
+| `auth` | `/auth` | none (login) / `require_operator` | console login: `login`, `change-password`, `me` |
+| `workspaces` | `/workspaces` | reads `require_auth`+grant (report `can_write`); create `require_auth`+`create_workspace` cap; update/delete `require_auth`+workspace **write** | workspace CRUD (writes are grant-scoped) |
+| `collections` | `/workspaces/{ws}/collections` | reads `require_auth`+grant (list/get report `can_write`); create `require_auth`+workspace-write; update/delete `require_auth`+collection **write** | collection CRUD (writes are grant-scoped) |
+| `documents` | nested + flat `/documents…` | per-route `require_auth`; access policies (authorize→exist) on list/status/delete/reprocess; upload & raw authorize in-service | upload / list / status / delete / download / reprocess |
 | `tags` | `/workspaces/{ws}` | router `require_master` | tag CRUD, merge, assignment |
 | `graph` | `/workspaces/{ws}` | router `require_master` | tag-correlation graph |
-| `search` | `POST /search` | per-route `require_master` | multi-collection hybrid search |
-| `indexing` | `/indexing/…` | mixed master/auth | BM25 (re)index status + enqueue |
-| `jobs` | `/ingestion/jobs…` | `require_master` | ingestion-queue list, stats, retry-failed |
+| `search` | `POST /search` | per-route `require_auth` + grant filter | multi-collection hybrid search |
+| `indexing` | `/indexing/…` | per-route `require_auth` + grant | index status (grant-scoped read) + enqueue (access policies, write) |
+| `jobs` | `/ingestion/jobs…` | per-route: reads `require_auth`+grant, retry `require_master` | ingestion-queue list/stats (grant-scoped), retry-failed (admin) |
 | `config` | `/config` | router `require_master` | live config GET/PUT, ollama-models, reload-status |
-| `ws` | `WS /ws` | `?key=` query param | Redis pub/sub → WebSocket (ingestion progress) |
+| `users` | `/users` | router `require_master` | user CRUD (username/is_admin), activate/deactivate, keys, password reset, permission grants |
+| `ws` | `WS /ws` | `?key=` query param | Redis pub/sub → WebSocket (ingestion progress; global queue grant-filtered per event) |
 | `mcp` | mounted `/mcp` | in middleware | MCP ASGI sub-app, mounted **last** ([`mcp.md`](mcp.md)) |
 
 ## Adding an endpoint
 1. **Route** → the matching `api/routers/<domain>.py`; handler resolves/authorizes then `return await <svc>.<fn>(...)`.
+   Per-resource authorization uses **access policies** (`api/services/access.py`): apply one policy, or compose
+   several with `CompositePolicy` when the route both authorizes and confirms existence at the URL path —
+   authorization policies run first, so the 404 is never an existence oracle ([`permissions.md`](permissions.md)).
 2. **Model** → CRUD request bodies go in `api/schemas/<domain>.py`; richer domain/response/query models and
    config go in `api/models/<domain>.py`. (`schemas/` = per-endpoint DTOs; `models/` = shared domain/config
    contracts reused across layers. `api/tables/` is persistence, not Pydantic.)

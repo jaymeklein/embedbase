@@ -34,6 +34,7 @@ import {
 } from '../components/filters'
 import { cn } from '../lib/cn'
 import { timeAgo } from '../lib/format'
+import { useAuth } from '../auth/AuthContext'
 import { useJobs, useJobStats, useReprocessDocument, useRetryFailedJobs } from '../api/hooks'
 import type { JobQuery, JobSummary } from '../api/types'
 import { useIngestionQueue, type QueueItem } from '../realtime/useIngestionQueue'
@@ -50,6 +51,9 @@ const PAGE_SIZE = 50
  * jobs start and settle, so page 1 stays current without polling.
  */
 export default function IngestionQueue() {
+  // A non-admin views the queue scoped to their grants (the backend filters jobs, stats, and the
+  // live stream); retrying re-ingests documents, so it stays an admin action.
+  const { isAdmin } = useAuth()
   const [page, setPage] = useState(0)
   const [filters, setFiltersState] = useState<JobFilterValues>({})
 
@@ -104,7 +108,7 @@ export default function IngestionQueue() {
         connected={conn === 'open'}
         counts={stats?.counts ?? {}}
         pausedSeconds={stats?.paused_seconds ?? 0}
-        hasFailures={failedCount > 0}
+        canRetryAll={isAdmin && failedCount > 0}
         retrying={retryMut.isPending}
         onRetryAll={() => setConfirmRetry(true)}
       />
@@ -157,14 +161,14 @@ function Header({
   connected,
   counts,
   pausedSeconds,
-  hasFailures,
+  canRetryAll,
   retrying,
   onRetryAll,
 }: {
   connected: boolean
   counts: Record<string, number>
   pausedSeconds: number
-  hasFailures: boolean
+  canRetryAll: boolean
   retrying: boolean
   onRetryAll: () => void
 }) {
@@ -194,9 +198,9 @@ function Header({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-3">
-        {/* Shown only when the queue holds failures. The action re-queues every currently-failed
-            document matching the active filters (see retryAllFailed). */}
-        {hasFailures && (
+        {/* Admins only, and only when the queue holds failures. The action re-queues every
+            currently-failed document matching the active filters (see retryAllFailed). */}
+        {canRetryAll && (
           <Button variant="secondary" size="sm" onClick={onRetryAll} disabled={retrying}>
             <RotateCcw className={cn('h-4 w-4', retrying && 'animate-spin')} />
             {retrying ? 'Retrying…' : 'Retry all failed'}
@@ -430,6 +434,7 @@ function OpenInCollection({
 /** A static queue row for a job with no live stream (finished, failed, or not currently in the
  *  live buffer). The failure reason ships in the row payload, so no extra request is needed. */
 function JobRow({ job }: { job: JobSummary }) {
+  const { isAdmin } = useAuth()
   const [showError, setShowError] = useState(false)
   const failed = job.status === 'failed'
   const toast = useToast()
@@ -464,7 +469,7 @@ function JobRow({ job }: { job: JobSummary }) {
               {showError ? 'Hide' : 'Why?'}
             </button>
           )}
-          {failed && (
+          {failed && isAdmin && (
             <button
               type="button"
               disabled={reprocessMut.isPending}

@@ -204,19 +204,117 @@ async def test_no_auth_delete_returns_401(client):
     assert r.status_code == 401
 
 
-async def test_collection_key_on_workspace_route_returns_403(client):
-    """A collection-scoped key must be rejected (403) on management routes."""
-    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
-    col_id = (
-        await client.post(f"/workspaces/{ws_id}/collections", json={"name": "C"}, headers=_MH)
-    ).json()["id"]
-    raw_key = (
-        await client.post(f"/workspaces/{ws_id}/collections/{col_id}/keys", json={}, headers=_MH)
-    ).json()["raw_key"]
+async def test_create_workspace_without_capability_returns_403(client, make_user_key):
+    """A user without the create_workspace capability cannot create workspaces."""
+    _, raw_key = await make_user_key()  # no capability
 
     r = await client.post(
         "/workspaces",
         json={"name": "hack"},
         headers={"Authorization": f"Bearer {raw_key}"},
     )
+    assert r.status_code == 403
+
+
+async def test_create_workspace_with_capability_returns_201(client, make_user_key):
+    _, key = await make_user_key(grants=[("capability", "create_workspace", "write")])
+    r = await client.post("/workspaces", json={"name": "Mine"}, headers={"X-API-Key": key})
+    assert r.status_code == 201
+
+
+async def test_scoped_creator_can_use_the_workspace_they_made(client, make_user_key):
+    # Scope the user to some existing collection, then give them the create capability.
+    ws0 = (await client.post("/workspaces", json={"name": "Other"}, headers=_MH)).json()["id"]
+    col0 = (
+        await client.post(f"/workspaces/{ws0}/collections", json={"name": "C"}, headers=_MH)
+    ).json()["id"]
+    _, key = await make_user_key(
+        grants=[("collection", col0, "read"), ("capability", "create_workspace", "write")]
+    )
+    uh = {"X-API-Key": key}
+
+    created = (await client.post("/workspaces", json={"name": "Mine"}, headers=uh)).json()
+    # A scoped creator would not otherwise see a new top-level workspace — the auto-grant
+    # gives them write, so it lists with can_write and they can add collections to it.
+    listed = {w["id"]: w for w in (await client.get("/workspaces", headers=uh)).json()}
+    assert listed.get(created["id"], {}).get("can_write") is True
+    r = await client.post(
+        f"/workspaces/{created['id']}/collections", json={"name": "New"}, headers=uh
+    )
+    assert r.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Edit / delete — scope-permissioned (write), not admin-only
+# ---------------------------------------------------------------------------
+
+
+async def test_update_workspace_unrestricted_user_allowed(client, make_user_key):
+    """A user with no permissions is unrestricted → may edit any workspace."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+    _, raw = await make_user_key()  # no grants → unrestricted
+    r = await client.patch(
+        f"/workspaces/{ws_id}", json={"name": "Renamed"}, headers={"X-API-Key": raw}
+    )
+    assert r.status_code == 200
+    assert r.json()["name"] == "Renamed"
+
+
+async def test_update_workspace_requires_write(client, make_user_key):
+    """A workspace read grant scopes visibility but denies edits (403); write allows them."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+
+    _, ro = await make_user_key(grants=[("workspace", ws_id, "read")])
+    r = await client.patch(f"/workspaces/{ws_id}", json={"name": "X"}, headers={"X-API-Key": ro})
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("workspace", ws_id, "write")])
+    r = await client.patch(f"/workspaces/{ws_id}", json={"name": "Y"}, headers={"X-API-Key": rw})
+    assert r.status_code == 200
+
+
+async def test_delete_workspace_requires_write(client, make_user_key):
+    """Delete is a write: a read-scoped user is denied (403); a write-scoped one succeeds (204)."""
+    ws_ro = (await client.post("/workspaces", json={"name": "RO"}, headers=_MH)).json()["id"]
+    ws_rw = (await client.post("/workspaces", json={"name": "RW"}, headers=_MH)).json()["id"]
+
+    _, ro = await make_user_key(grants=[("workspace", ws_ro, "read")])
+    r = await client.delete(f"/workspaces/{ws_ro}", headers={"X-API-Key": ro})
+    assert r.status_code == 403
+
+    _, rw = await make_user_key(grants=[("workspace", ws_rw, "write")])
+    r = await client.delete(f"/workspaces/{ws_rw}", headers={"X-API-Key": rw})
+    assert r.status_code == 204
+
+
+async def test_edit_workspace_out_of_scope_denied(client, make_user_key):
+    """A user scoped to a different workspace can't edit an unrelated one (not even visible)."""
+    target = (await client.post("/workspaces", json={"name": "Target"}, headers=_MH)).json()["id"]
+    other = (await client.post("/workspaces", json={"name": "Other"}, headers=_MH)).json()["id"]
+    _, key = await make_user_key(grants=[("workspace", other, "write")])
+    r = await client.patch(f"/workspaces/{target}", json={"name": "X"}, headers={"X-API-Key": key})
+    assert r.status_code == 403
+
+
+async def test_workspace_list_and_get_report_can_write(client, make_user_key):
+    """The workspace list + detail tag each row with can_write for the caller."""
+    ws_id = (await client.post("/workspaces", json={"name": "WS"}, headers=_MH)).json()["id"]
+
+    _, ro = await make_user_key(grants=[("workspace", ws_id, "read")])
+    r = await client.get("/workspaces", headers={"X-API-Key": ro})
+    listed = {w["id"]: w for w in r.json()}
+    assert listed[ws_id]["can_write"] is False
+    detail = await client.get(f"/workspaces/{ws_id}", headers={"X-API-Key": ro})
+    assert detail.json()["can_write"] is False
+
+    _, rw = await make_user_key(grants=[("workspace", ws_id, "write")])
+    detail = await client.get(f"/workspaces/{ws_id}", headers={"X-API-Key": rw})
+    assert detail.json()["can_write"] is True
+
+
+async def test_edit_nonexistent_workspace_is_403_not_404_for_scoped_user(client, make_user_key):
+    """Authorize-before-existence: a scoped user can't probe which workspaces exist via edit."""
+    other = (await client.post("/workspaces", json={"name": "Other"}, headers=_MH)).json()["id"]
+    _, key = await make_user_key(grants=[("workspace", other, "write")])
+    r = await client.patch("/workspaces/ws_nope", json={"name": "X"}, headers={"X-API-Key": key})
     assert r.status_code == 403

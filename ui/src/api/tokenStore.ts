@@ -1,56 +1,92 @@
 /**
- * Master-key holder, decoupled from React so the fetch client can read it
- * without importing component state.
+ * Bearer-credential holder, decoupled from React so the fetch client and the
+ * WebSocket can read it without importing component state.
  *
- * Security trade-off (CAP-style note): the key is persisted in `localStorage`
- * so a reload keeps the operator unlocked. That exposes it to any XSS on this
- * origin. Accepted for a single-operator, local-first admin tool — the key is
- * never logged, never sent anywhere but the same-origin `/api` proxy, and the
- * operator can Lock to clear it. See [[D5.2 - API Client & Auth]].
+ * Two credentials, both sent as `Authorization: Bearer`:
+ *  - a **session token** — the JWT from `POST /auth/login` (a user is signed in);
+ *  - the **master key** — the bootstrap/break-glass admin credential.
+ * `getToken()` prefers the session; the master key is the fallback. Sign-out
+ * (`clearAll`) forgets both.
+ *
+ * Security trade-off (CAP-style note): both are persisted in `localStorage` so a
+ * reload keeps the operator signed in. That exposes them to any XSS on this
+ * origin. Accepted for a local-first admin tool — neither is ever logged nor sent
+ * anywhere but the same-origin `/api` proxy, and sign-out clears them.
  */
 
-const STORAGE_KEY = 'embedbase.masterKey'
+const MASTER_STORAGE_KEY = 'embedbase.masterKey'
+const SESSION_STORAGE_KEY = 'embedbase.session'
 
-let currentKey: string | null = readStored()
+let masterKey: string | null = readStored(MASTER_STORAGE_KEY)
+let sessionToken: string | null = readStored(SESSION_STORAGE_KEY)
 let onUnauthorized: (() => void) | null = null
 
-function readStored(): string | null {
+function readStored(storageKey: string): string | null {
   try {
-    return window.localStorage.getItem(STORAGE_KEY)
+    return window.localStorage.getItem(storageKey)
   } catch {
     // Private-mode / storage-disabled: fall back to in-memory only.
     return null
   }
 }
 
-/** The current master key, or `null` when locked. */
+function persist(storageKey: string, value: string | null): void {
+  try {
+    if (value === null) window.localStorage.removeItem(storageKey)
+    else window.localStorage.setItem(storageKey, value)
+  } catch {
+    // Storage unavailable — the in-memory value still applies for this session.
+  }
+}
+
+/** The active bearer credential — a login session takes precedence over the master key. */
+export function getToken(): string | null {
+  return sessionToken ?? masterKey
+}
+
+/** The current master key, or `null`. */
 export function getMasterKey(): string | null {
-  return currentKey
+  return masterKey
 }
 
-/** Persist and activate a master key. */
+/** Persist + activate the master key (bootstrap unlock). */
 export function setMasterKey(key: string): void {
-  currentKey = key
-  try {
-    window.localStorage.setItem(STORAGE_KEY, key)
-  } catch {
-    // Storage unavailable — keep the in-memory key for this session only.
-  }
+  masterKey = key
+  persist(MASTER_STORAGE_KEY, key)
 }
 
-/** Forget the master key everywhere (Lock). */
+/** Forget the master key. */
 export function clearMasterKey(): void {
-  currentKey = null
-  try {
-    window.localStorage.removeItem(STORAGE_KEY)
-  } catch {
-    // Nothing persisted to clear.
-  }
+  masterKey = null
+  persist(MASTER_STORAGE_KEY, null)
+}
+
+/** The current login-session JWT, or `null`. */
+export function getSessionToken(): string | null {
+  return sessionToken
+}
+
+/** Persist + activate a login-session JWT. */
+export function setSessionToken(token: string): void {
+  sessionToken = token
+  persist(SESSION_STORAGE_KEY, token)
+}
+
+/** Forget the login session. */
+export function clearSessionToken(): void {
+  sessionToken = null
+  persist(SESSION_STORAGE_KEY, null)
+}
+
+/** Forget every credential (full sign-out). */
+export function clearAll(): void {
+  clearSessionToken()
+  clearMasterKey()
 }
 
 /**
- * Register the callback fired when the API returns 401 (e.g. the key was
- * revoked mid-session). The auth provider wires this to its `lock()`.
+ * Register the callback fired when the API returns 401 (e.g. an expired session or
+ * a revoked key). The auth provider wires this to its sign-out.
  */
 export function registerUnauthorizedHandler(fn: () => void): void {
   onUnauthorized = fn

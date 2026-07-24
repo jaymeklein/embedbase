@@ -8,9 +8,9 @@ paths:
 
 # Metadata DB — ORM only
 
-The metadata DB (**workspaces, collections, documents, tags, api_keys, job_records**) goes through the
-**SQLAlchemy 2.0 async ORM**. The `chunks` table is **not** here — it's the vector store's, raw asyncpg,
-see [`vector-db.md`](vector-db.md).
+The metadata DB (**workspaces, collections, documents, tags, users, api_keys, permissions, job_records**) goes
+through the **SQLAlchemy 2.0 async ORM**. The `chunks` table is **not** here — it's the vector store's, raw
+asyncpg, see [`vector-db.md`](vector-db.md).
 
 ## The rules
 - **Engine + session factory live in `api/db.py`** (`engine`, `AsyncSessionLocal`, `init_db`). Table objects
@@ -26,5 +26,12 @@ see [`vector-db.md`](vector-db.md).
 - URL comes from `DATABASE_URL` (e.g. `postgresql+psycopg://…`); the dev fallback is
   `sqlite+aiosqlite:///…`. SQLite-only pragmas (WAL, `foreign_keys=ON`) are set on the sync connection at
   connect time — don't apply them to Postgres.
-- Hierarchy is `workspaces → collections → (documents, api_keys, job_records)` with FK `CASCADE`.
+- Hierarchy is `workspaces → collections → (documents, job_records)` with FK `CASCADE`. **Users** own their
+  data separately: `users → (api_keys [UNIQUE(user_id)], permissions)` with FK `CASCADE`. The `permissions`
+  `resource_id` is a plain string (polymorphic, no FK — like `job_records`).
+- **Users login (migration 0009):** `users` also carries `username` (`UNIQUE` via the `users_username_key`
+  index — declared as an `Index(..., unique=True)`, not a `UniqueConstraint`, so the migration's
+  `create_index` and the table metadata agree for the parity test), `password_hash`, `must_change_password`,
+  `password_changed_at` (the JWT session epoch), and `is_admin`. All have server defaults so 0009 adds them
+  one-shot; existing rows backfill `username = email`. Never `select`-project or serialize `password_hash`.
 - `expire_on_commit=False`, `autoflush=False` — flush/commit intentionally explicit.

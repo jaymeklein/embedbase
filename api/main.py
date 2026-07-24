@@ -21,6 +21,7 @@ from api.dependencies import (
 from api.middleware import RequestIDMiddleware, configure_logging
 from api.models.config import AppConfig
 from api.routers import (
+    auth,
     collections,
     config,
     documents,
@@ -31,6 +32,7 @@ from api.routers import (
     mcp,
     search,
     tags,
+    users,
     workspaces,
     ws,
 )
@@ -224,6 +226,7 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
 
     app.include_router(health.router)
+    app.include_router(auth.router)
     app.include_router(workspaces.router)
     app.include_router(collections.router)
     app.include_router(documents.router)
@@ -233,6 +236,7 @@ def create_app() -> FastAPI:
     app.include_router(indexing.router)
     app.include_router(jobs.router)
     app.include_router(config.router)
+    app.include_router(users.router)
     app.include_router(ws.router)
 
     # Standalone OpenAPI reference of just the integration endpoints (after routers
