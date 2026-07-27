@@ -57,8 +57,9 @@ export default function Collections() {
   const workspace = useWorkspace(wsId)
   // Creating a collection needs write on the workspace; the API reports it per workspace.
   const canWrite = workspace.data?.can_write ?? false
-  // Tag management + the Tags page are admin-only (the tags router is master-gated).
-  const { isAdmin } = useAuth()
+  // Tag management + the Tags page need admin or the `manage_tags` capability.
+  const { isAdmin, canManageTags } = useAuth()
+  const canTag = isAdmin || canManageTags
   const { data, isLoading, isError, error, refetch } = useCollections(wsId)
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const [tagFilter, setTagFilter] = useState<string[]>([])
@@ -138,7 +139,7 @@ export default function Collections() {
           </p>
         </div>
         <div className="flex gap-2">
-          {isAdmin && (
+          {canTag && (
             <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
               <TagsIcon className="h-5 w-5" />
               Tags
@@ -270,7 +271,11 @@ function CollectionCard({
   onDelete: (col: Collection) => void
 }) {
   const navigate = useNavigate()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canManageTags } = useAuth()
+  // (Un)assigning a collection tag needs the manage_tags privilege AND write on the collection —
+  // mirror the backend (authorize_tag_management + authorize_collection write) so we don't offer a
+  // control that would 403. Existing tags still render read-only below without write.
+  const canManageColTags = (isAdmin || canManageTags) && (col.can_write ?? false)
   const toast = useToast()
   const assignMut = useAssignCollectionTag(wsId)
   const unassignMut = useUnassignCollectionTag(wsId)
@@ -319,7 +324,7 @@ function CollectionCard({
           </p>
         </div>
       </div>
-      {((col.tags ?? []).length > 0 || isAdmin) && (
+      {((col.tags ?? []).length > 0 || canManageColTags) && (
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
           {(col.tags ?? []).map((t) => (
             <TagChip
@@ -327,13 +332,13 @@ function CollectionCard({
               name={t.name}
               color={t.color}
               onRemove={
-                isAdmin
+                canManageColTags
                   ? () => unassignMut.mutate({ colId: col.id, tagId: t.id }, { onError: onErr })
                   : undefined
               }
             />
           ))}
-          {isAdmin && (
+          {canManageColTags && (
             <TagPicker
               wsId={wsId}
               assigned={col.tags ?? []}

@@ -13,6 +13,7 @@ SSE transport required); the auth + rate-limit behaviour is exercised at the
 ASGI layer through the middleware that guards the mounted MCP app.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -31,6 +32,7 @@ from api.services.mcp.middleware import MCPAuthRateLimitMiddleware
 from api.services.mcp.rate_limit import TokenBucketRateLimiter
 from api.tables import collections as collections_t
 from api.tables import documents as documents_t
+from api.tables import job_records as job_records_t
 from api.tables import metadata
 from api.tables import permissions as permissions_t
 from api.tables import users as users_t
@@ -106,6 +108,47 @@ class _SeededVectorStore:
     def delete_collection(self, *args: object) -> None: ...
     def list_documents(self, *args: object) -> list:
         return []
+
+    def _doc_chunks_sorted(self, collection_id: str, document_id: str) -> list[SearchResult]:
+        items = [
+            r for r in self._by.get(collection_id, [])
+            if r.metadata.get("document_id") == document_id
+        ]
+        return sorted(items, key=lambda r: r.metadata.get("chunk_index", 0))
+
+    def document_chunks(
+        self, collection_id: str, document_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[SearchResult], int]:
+        ordered = self._doc_chunks_sorted(collection_id, document_id)
+        return ordered[offset : offset + limit], len(ordered)
+
+    def chunks_by_ids(self, collection_id: str, chunk_ids: list[str]) -> list[SearchResult]:
+        wanted = set(chunk_ids)
+        return [r for r in self._by.get(collection_id, []) if r.chunk_id in wanted]
+
+
+class _FakePresignStorage:
+    """Storage double for the presigned two-step upload: hands out fake PUT/GET URLs and
+    records which objects have been 'uploaded' so object_head reflects the client's PUT."""
+
+    def __init__(self) -> None:
+        self._objects: dict[str, int] = {}
+
+    def presigned_put(self, key: str) -> str:
+        return f"https://minio.test/put/{key}"
+
+    def presigned_get(self, key: str, filename: str) -> str:
+        return f"https://minio.test/get/{key}?f={filename}"
+
+    def object_head(self, key: str) -> int | None:
+        return self._objects.get(key)
+
+    def receive(self, key: str, size: int = 42) -> None:
+        """Simulate the client PUTting bytes to the presigned URL."""
+        self._objects[key] = size
+
+    def delete(self, key: str) -> None:
+        self._objects.pop(key, None)
 
 
 @pytest.fixture
@@ -281,6 +324,456 @@ async def test_delete_document_unknown_id_is_404(seeded):
     assert exc.value.status_code == 404
 
 
+# ── Document lifecycle: presigned upload / status / download / chunks ─────────
+
+
+def _use_presign_storage(monkeypatch) -> "_FakePresignStorage":
+    """Point the document service at a presigning storage double + stub the ingest broker."""
+    storage = _FakePresignStorage()
+    monkeypatch.setattr("api.services.documents.get_storage", lambda cfg, name=None: storage)
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest", lambda *a, **k: "task-ingest"
+    )
+    return storage
+
+
+async def test_presigned_upload_confirm_roundtrip(seeded, monkeypatch):
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        reserved = await tools.request_upload(
+            collection_id="colA", filename="report.txt", retention_days=7,
+            db=db, principal=MASTER,
+        )
+        assert reserved["upload_url"].startswith("https://minio.test/put/")
+        doc_id = reserved["document_id"]
+        # An awaiting_upload doc stays hidden from listings until confirmed.
+        listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
+        assert doc_id not in {d["document_id"] for d in listed["documents"]}
+        # Simulate the client PUT to the presigned URL, then confirm.
+        storage.receive(document_key("colA", doc_id, ".txt"), size=123)
+        confirmed = await tools.confirm_upload(document_id=doc_id, db=db, principal=MASTER)
+        assert confirmed["status"] == "pending"
+        assert confirmed["file_size"] == 123
+        status = await tools.get_document_status(document_id=doc_id, db=db, principal=MASTER)
+        assert status["status"] == "pending"
+        # Now confirmed → it shows up in the listing.
+        listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
+        assert doc_id in {d["document_id"] for d in listed["documents"]}
+
+
+async def test_confirm_upload_twice_is_409(seeded, monkeypatch):
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        reserved = await tools.request_upload(
+            collection_id="colA", filename="x.txt", db=db, principal=MASTER
+        )
+        doc_id = reserved["document_id"]
+        storage.receive(document_key("colA", doc_id, ".txt"))
+        first = await tools.confirm_upload(document_id=doc_id, db=db, principal=MASTER)
+        assert first["status"] == "pending"
+        # A second confirm on an already-active doc is a no-op 409 (no duplicate job).
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_upload(document_id=doc_id, db=db, principal=MASTER)
+    assert exc.value.status_code == 409
+
+
+async def test_confirm_upload_without_bytes_is_409(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        reserved = await tools.request_upload(
+            collection_id="colA", filename="x.txt", db=db, principal=MASTER
+        )
+        # No client PUT → object_head returns None → confirm 409s.
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_upload(
+                document_id=reserved["document_id"], db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 409
+
+
+async def test_confirm_upload_oversized_is_413_and_purged(seeded, monkeypatch):
+    from api.models.config import AppConfig
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    # 1 MiB cap so the "uploaded" object (2 MiB) exceeds it.
+    monkeypatch.setattr(
+        "api.services.documents.get_app_config", lambda: AppConfig(max_file_size_mb=1)
+    )
+    async with factory() as db:
+        reserved = await tools.request_upload(
+            collection_id="colA", filename="big.txt", db=db, principal=MASTER
+        )
+        key = document_key("colA", reserved["document_id"], ".txt")
+        storage.receive(key, size=2 * 1024 * 1024)  # over the 1 MiB cap
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_upload(
+                document_id=reserved["document_id"], db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 413
+    assert storage.object_head(key) is None  # oversized object was purged
+
+
+async def test_request_upload_local_backend_is_400(seeded, monkeypatch):
+    factory, _ = seeded
+
+    class _NoPresign:
+        def presigned_put(self, key: str) -> None:
+            return None
+
+    monkeypatch.setattr("api.services.documents.get_storage", lambda cfg, name=None: _NoPresign())
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_upload(
+                collection_id="colA", filename="x.txt", db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 400
+
+
+async def test_request_upload_outside_scope_403(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])  # no write on colA
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_upload(
+                collection_id="colA", filename="x.txt", db=db, principal=USER
+            )
+    assert exc.value.status_code == 403
+
+
+async def test_download_document_returns_presigned_url(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        out = await tools.download_document(document_id="docA", db=db, principal=MASTER)
+    assert out["url"].startswith("https://minio.test/get/")
+    assert out["filename"] == "docA.txt"
+
+
+async def test_download_document_outside_scope_403(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])  # docA is in colA
+        with pytest.raises(HTTPException) as exc:
+            await tools.download_document(document_id="docA", db=db, principal=USER)
+    assert exc.value.status_code == 403
+
+
+async def test_get_document_chunks_paged_ordered_by_index(seeded):
+    factory, store = seeded
+    # Three out-of-order chunks for docA; the paged mode returns them by chunk_index with a total.
+    store._by["colA"] = [
+        _result("a-1", 0.0, document_id="docA", chunk_index=1),
+        _result("a-0", 0.0, document_id="docA", chunk_index=0),
+        _result("a-2", 0.0, document_id="docA", chunk_index=2),
+    ]
+    async with factory() as db:
+        out = await tools.get_document_chunks(
+            document_id="docA", db=db, principal=MASTER, vector_store=store
+        )
+    assert out["count"] == 3
+    assert out["total"] == 3
+    assert out["has_more"] is False
+    assert [c["chunk_id"] for c in out["chunks"]] == ["a-0", "a-1", "a-2"]
+
+
+async def test_get_document_chunks_paginates(seeded):
+    factory, store = seeded
+    store._by["colA"] = [
+        _result(f"a-{i}", 0.0, document_id="docA", chunk_index=i) for i in range(5)
+    ]
+    async with factory() as db:
+        page1 = await tools.get_document_chunks(
+            document_id="docA", limit=2, offset=0, db=db, principal=MASTER, vector_store=store
+        )
+        page3 = await tools.get_document_chunks(
+            document_id="docA", limit=2, offset=4, db=db, principal=MASTER, vector_store=store
+        )
+    assert [c["chunk_id"] for c in page1["chunks"]] == ["a-0", "a-1"]
+    assert page1["total"] == 5 and page1["has_more"] is True
+    # Last page: one leftover chunk, no more after it.
+    assert [c["chunk_id"] for c in page3["chunks"]] == ["a-4"]
+    assert page3["has_more"] is False
+
+
+async def test_get_document_chunks_by_ids(seeded):
+    factory, store = seeded
+    store._by["colA"] = [
+        _result("a-0", 0.0, document_id="docA", chunk_index=0),
+        _result("a-1", 0.0, document_id="docA", chunk_index=1),
+        _result("a-2", 0.0, document_id="docA", chunk_index=2),
+    ]
+    async with factory() as db:
+        out = await tools.get_document_chunks(
+            document_id="docA", chunk_ids=["a-2", "a-0"],
+            db=db, principal=MASTER, vector_store=store,
+        )
+    # Only the requested chunks, returned in chunk_index order (not request order).
+    assert out["requested"] == 2
+    assert [c["chunk_id"] for c in out["chunks"]] == ["a-0", "a-2"]
+
+
+async def test_get_document_chunks_by_ids_ignores_other_documents(seeded):
+    factory, store = seeded
+    # docA and docA2 both live in colA; a chunk_id from docA2 must not leak through a docA request.
+    store._by["colA"] = [
+        _result("a-0", 0.0, document_id="docA", chunk_index=0),
+        _result("other", 0.0, document_id="docA2", chunk_index=0),
+    ]
+    async with factory() as db:
+        out = await tools.get_document_chunks(
+            document_id="docA", chunk_ids=["a-0", "other"],
+            db=db, principal=MASTER, vector_store=store,
+        )
+    assert [c["chunk_id"] for c in out["chunks"]] == ["a-0"]
+
+
+async def test_get_document_chunks_outside_scope_403(seeded):
+    factory, store = seeded
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])  # docA is in colA
+        with pytest.raises(HTTPException) as exc:
+            await tools.get_document_chunks(
+                document_id="docA", db=db, principal=USER, vector_store=store
+            )
+    assert exc.value.status_code == 403
+
+
+async def test_reprocess_document_reenqueues(seeded, monkeypatch):
+    factory, _ = seeded
+    monkeypatch.setattr(
+        "api.services.documents.task_producer.enqueue_ingest", lambda *a, **k: "task-x"
+    )
+    async with factory() as db:
+        out = await tools.reprocess_document(document_id="docA", db=db, principal=MASTER)
+    assert out["document_id"] == "docA"
+    assert out["status"] == "pending"
+
+
+# ── Workspace & collection CRUD ───────────────────────────────────────────────
+
+
+async def test_workspace_crud_roundtrip(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_workspace(name="New WS", db=db, principal=MASTER)
+        ws_id = created["id"]
+        assert created["name"] == "New WS"
+        updated = await tools.update_workspace(
+            workspace_id=ws_id, name="Renamed", db=db, principal=MASTER
+        )
+        assert updated["name"] == "Renamed"
+        deleted = await tools.delete_workspace(
+            workspace_id=ws_id, db=db, principal=MASTER
+        )
+        assert deleted == {"workspace_id": ws_id, "status": "deleted"}
+
+
+async def test_collection_crud_roundtrip(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_collection(
+            workspace_id="ws1", name="New Col", db=db, principal=MASTER
+        )
+        col_id = created["id"]
+        updated = await tools.update_collection(
+            workspace_id="ws1", collection_id=col_id, description="desc",
+            db=db, principal=MASTER,
+        )
+        assert updated["description"] == "desc"
+        deleted = await tools.delete_collection(
+            workspace_id="ws1", collection_id=col_id, db=db, principal=MASTER
+        )
+        assert deleted["status"] == "deleted"
+
+
+async def test_create_workspace_requires_capability(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colA", "read")])  # scoped, no capability
+        with pytest.raises(HTTPException) as exc:
+            await tools.create_workspace(name="X", db=db, principal=USER)
+    assert exc.value.status_code == 403
+
+
+async def test_create_collection_requires_workspace_write(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colA", "read")])  # read-only in ws1
+        with pytest.raises(HTTPException) as exc:
+            await tools.create_collection(workspace_id="ws1", name="X", db=db, principal=USER)
+    assert exc.value.status_code == 403
+
+
+async def test_update_collection_outside_scope_403(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colB", "write")])  # colA out of scope
+        with pytest.raises(HTTPException) as exc:
+            await tools.update_collection(
+                workspace_id="ws1", collection_id="colA", name="X", db=db, principal=USER
+            )
+    assert exc.value.status_code == 403
+
+
+# ── Tags (MCP) ────────────────────────────────────────────────────────────────
+
+
+async def test_tag_tools_roundtrip(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_tag(
+            workspace_id="ws1", name="python", db=db, principal=MASTER
+        )
+        tag_id = created["id"]
+        listed = await tools.list_tags(workspace_id="ws1", db=db, principal=MASTER)
+        assert tag_id in {t["id"] for t in listed["tags"]}
+        a1 = await tools.assign_tag(
+            workspace_id="ws1", tag_id=tag_id, target="collection",
+            collection_id="colA", db=db, principal=MASTER,
+        )
+        assert a1["status"] == "assigned"
+        a2 = await tools.assign_tag(
+            workspace_id="ws1", tag_id=tag_id, target="document",
+            collection_id="colA", document_id="docA", db=db, principal=MASTER,
+        )
+        assert a2["status"] == "assigned"
+        u = await tools.unassign_tag(
+            workspace_id="ws1", tag_id=tag_id, target="collection",
+            collection_id="colA", db=db, principal=MASTER,
+        )
+        assert u["status"] == "unassigned"
+        renamed = await tools.update_tag(
+            workspace_id="ws1", tag_id=tag_id, name="py", db=db, principal=MASTER
+        )
+        assert renamed["name"] == "py"
+        deleted = await tools.delete_tag(
+            workspace_id="ws1", tag_id=tag_id, db=db, principal=MASTER
+        )
+        assert deleted["status"] == "deleted"
+
+
+async def test_tag_tools_require_capability(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colA", "write")])  # no manage_tags
+        with pytest.raises(HTTPException) as exc:
+            await tools.create_tag(workspace_id="ws1", name="x", db=db, principal=USER)
+    assert exc.value.status_code == 403
+
+
+async def test_tag_assignment_requires_target_write(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_tag(workspace_id="ws1", name="t", db=db, principal=MASTER)
+        # manage_tags but only READ on colA → can't tag it.
+        await _seed_user_with_grants(
+            db, [("collection", "colA", "read"), ("capability", "manage_tags", "write")]
+        )
+        with pytest.raises(HTTPException) as exc:
+            await tools.assign_tag(
+                workspace_id="ws1", tag_id=created["id"], target="collection",
+                collection_id="colA", db=db, principal=USER,
+            )
+    assert exc.value.status_code == 403
+
+
+async def test_tag_assignment_missing_collection_id_422(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_tag(workspace_id="ws1", name="t", db=db, principal=MASTER)
+        with pytest.raises(HTTPException) as exc:
+            await tools.assign_tag(
+                workspace_id="ws1", tag_id=created["id"], target="collection",
+                db=db, principal=MASTER,
+            )
+    assert exc.value.status_code == 422
+
+
+async def test_tag_assignment_workspace_target_rejects_resource_id_422(seeded):
+    # A resource id on a workspace target is rejected, so a caller who forgot target="collection"
+    # doesn't silently tag the whole workspace instead of the collection they named.
+    factory, _ = seeded
+    async with factory() as db:
+        created = await tools.create_tag(workspace_id="ws1", name="t", db=db, principal=MASTER)
+        with pytest.raises(HTTPException) as exc:
+            await tools.assign_tag(
+                workspace_id="ws1", tag_id=created["id"], target="workspace",
+                collection_id="colA", db=db, principal=MASTER,
+            )
+    assert exc.value.status_code == 422
+
+
+# ── Ops: ingestion queue / stats / rate limit ────────────────────────────────
+
+
+async def _seed_job(db, *, job_id, doc_id, col_id, status):
+    await db.execute(
+        insert(job_records_t).values(
+            job_id=job_id, document_id=doc_id, collection_id=col_id,
+            filename=f"{doc_id}.txt", file_type=".txt", status=status,
+            created_at="t", updated_at="t",
+        )
+    )
+    await db.commit()
+
+
+async def test_list_ingestion_jobs_scoped_to_grants(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_job(db, job_id="j1", doc_id="docA", col_id="colA", status="done")
+        await _seed_job(db, job_id="j2", doc_id="docB", col_id="colB", status="failed")
+        # Master sees every collection's jobs.
+        assert (await tools.list_ingestion_jobs(db=db, principal=MASTER))["total"] == 2
+        # A user scoped to colA sees only colA's job.
+        await _seed_user_with_grants(db, [("collection", "colA", "read")])
+        scoped = await tools.list_ingestion_jobs(db=db, principal=USER)
+    assert scoped["total"] == 1
+    assert {j["job_id"] for j in scoped["items"]} == {"j1"}
+
+
+async def test_list_ingestion_jobs_clamps_page_size(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        # Out-of-range page args are clamped (not a validation error), like search_documents' top_k.
+        over = await tools.list_ingestion_jobs(limit=999, offset=-5, db=db, principal=MASTER)
+        assert over["limit"] == 200 and over["offset"] == 0
+        under = await tools.list_ingestion_jobs(limit=0, db=db, principal=MASTER)
+        assert under["limit"] == 1
+
+
+async def test_get_ingestion_stats_counts_and_pause(seeded):
+    factory, _ = seeded
+    async with factory() as db:
+        await _seed_job(db, job_id="j1", doc_id="docA", col_id="colA", status="done")
+        await _seed_job(db, job_id="j2", doc_id="docA2", col_id="colA", status="pending")
+        out = await tools.get_ingestion_stats(
+            embedding_pause_seconds=42, db=db, principal=MASTER
+        )
+    assert out["counts"].get("done") == 1
+    assert out["counts"].get("pending") == 1
+    assert out["embedding_paused_seconds"] == 42
+
+
+async def test_get_rate_limit_assembles_budget_and_pause():
+    out = await tools.get_rate_limit(
+        rate_limit={"limit_rpm": 60, "remaining": 12, "reset_seconds": 0.0},
+        embedding_pause_seconds=15,
+    )
+    assert out["mcp"]["remaining"] == 12
+    assert out["ingestion"]["embedding_paused_seconds"] == 15
+
+
 # ── Per-user enforcement (grants) ─────────────────────────────────────────────
 
 
@@ -427,6 +920,52 @@ async def test_rate_limit_rejects_61st_request_with_429():
         statuses = [(await ac.get("/sse", headers=headers)).status_code for _ in range(61)]
     assert statuses[:60] == [200] * 60
     assert statuses[60] == 429
+
+
+async def test_per_user_override_throttles_below_the_global():
+    """A user's configured rate_limit_rpm caps their key well below the global default.
+
+    The cap is enforced by a post-auth token bucket sized to the user's limit, so it is
+    exact: with global=60 and the user's limit=3, only 3 requests succeed before 429 —
+    far below the 60 an un-overridden key would get.
+    """
+
+    async def _resolve_capped(_raw_key: str) -> Principal:
+        return Principal(is_master=False, user_id="usr_capped", rate_limit_rpm=3)
+
+    mw = MCPAuthRateLimitMiddleware(
+        _ok_app,
+        resolve_principal=_resolve_capped,
+        rate_limiter=TokenBucketRateLimiter(lambda: 60),
+    )
+    headers = {"X-API-Key": "user-key"}
+    async with AsyncClient(transport=ASGITransport(app=mw), base_url="http://mcp") as ac:
+        statuses = [(await ac.get("/sse", headers=headers)).status_code for _ in range(10)]
+    assert statuses[:3] == [200] * 3
+    assert all(s == 429 for s in statuses[3:])
+
+
+async def test_per_user_override_holds_under_concurrent_cold_start():
+    """Regression: N simultaneous requests must not drain the global bucket before the
+    per-user cap is installed. Enforcing the cap post-auth on a user-id bucket sized
+    before its first check means exactly ``limit`` succeed, even on a cold start.
+    """
+
+    async def _resolve_capped(_raw_key: str) -> Principal:
+        # Yield like the real DB-backed resolver, so every request clears the pre-auth
+        # guard before the first one installs the override — the race being guarded.
+        await asyncio.sleep(0)
+        return Principal(is_master=False, user_id="usr_burst", rate_limit_rpm=3)
+
+    mw = MCPAuthRateLimitMiddleware(
+        _ok_app,
+        resolve_principal=_resolve_capped,
+        rate_limiter=TokenBucketRateLimiter(lambda: 60),
+    )
+    headers = {"X-API-Key": "user-key"}
+    async with AsyncClient(transport=ASGITransport(app=mw), base_url="http://mcp") as ac:
+        results = await asyncio.gather(*(ac.get("/sse", headers=headers) for _ in range(30)))
+    assert sum(r.status_code == 200 for r in results) == 3  # the cap, not the global 60
 
 
 def test_malformed_header_bytes_decode_without_error():

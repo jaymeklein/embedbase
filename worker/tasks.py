@@ -16,12 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select, update
 
 from api.constants import EMBEDDING_PAUSE_KEY
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from api.services import realtime
+from api.services.upload import resolve_max_bytes
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import (
@@ -395,6 +396,16 @@ def _embed_and_store(
     emit("storing", current=total, total=total)
 
 
+class NonRetryableIngestError(Exception):
+    """An ingest failure that must NOT be retried — the input can't succeed on a re-run.
+
+    Raised for a permanent, deterministic problem with the stored object itself (e.g. it exceeds the
+    size cap), where Celery's retry ladder would only re-fail three times before giving up. The
+    outer task marks the job failed and re-raises plainly (like ``SoftTimeLimitExceeded``), instead
+    of routing it through ``self.retry``.
+    """
+
+
 def _run_ingestion(
     job_id: str,
     file_path: str,
@@ -503,6 +514,20 @@ def _run_ingestion(
     try:
         # --- Parse → chunk ---------------------------------------------------
         try:
+            # Size guard at the point of consumption. A presigned upload's PUT URL is reusable
+            # within its validity, so the stored object is mutable until ingest reads it — a
+            # confirm-time check can be bypassed by re-PUTting a larger object. head the object
+            # *before* downloading and refuse an over-cap one, so an oversized object can't DoS the
+            # single-process worker (huge download + parse, temp-dir fill). Cheap (metadata only);
+            # a None size (backend without head support) skips the check.
+            max_bytes = resolve_max_bytes(config.max_file_size_bytes)
+            obj_size = storage.object_head(file_path)
+            if obj_size is not None and obj_size > max_bytes:
+                # Non-retryable: the object won't shrink on a re-run, so fail terminally rather than
+                # burn the 3-retry ladder re-heading + re-failing the same oversized object.
+                raise NonRetryableIngestError(
+                    f"Stored object is {obj_size} bytes, over the {max_bytes}-byte size limit"
+                )
             # Pull the document's bytes from its backend to a local path to parse.
             local_file = storage.fetch_to_temp(file_path)
             emit("parsing")
@@ -726,6 +751,12 @@ def ingest_document(
         logger.warning("task exceeded time limit", job_id=job_id)
         _mark_failed(job_id, "Ingestion exceeded time limit")
         raise  # plain raise — never self.retry()
+    except NonRetryableIngestError as exc:
+        # A permanent problem with the object (e.g. over the size cap): retrying can only re-fail.
+        # Mark failed and raise plainly — the beat sweep never re-enqueues a ``failed`` job.
+        logger.warning("ingest failed (non-retryable)", job_id=job_id, error=str(exc))
+        _mark_failed(job_id, str(exc))
+        raise  # plain raise — never self.retry()
     except Exception as exc:
         if _is_rate_limit(exc):
             # Provider quota reached — NOT a failure. The chunks embedded so far are already
@@ -858,6 +889,10 @@ def index_collection(self, collection_id: str) -> None:
 # flooding the queue at once. ponytail: LIMIT 500/run — tighten the beat interval
 # (PURGE_INTERVAL_SECONDS) if a backlog ever builds up.
 _PURGE_BATCH = 500
+# How long an unconfirmed presigned upload (documents.create_upload → status "awaiting_upload")
+# may sit before the sweep reaps it — so an abandoned reservation (client crashed before
+# confirm_upload) doesn't accumulate as an invisible, permanent row.
+_AWAITING_UPLOAD_TTL_HOURS = 24
 
 
 @celery_app.task(
@@ -869,7 +904,9 @@ _PURGE_BATCH = 500
 def purge_expired_documents(self) -> int:
     """Enqueue deletes for temporary documents whose retention window has elapsed.
 
-    Selects rows with a due ``expires_at`` and fans each out to :func:`delete_document`,
+    Selects rows with a due ``expires_at`` — plus unconfirmed presigned uploads
+    (``awaiting_upload``) older than ``_AWAITING_UPLOAD_TTL_HOURS``, so an abandoned reservation
+    doesn't linger as an invisible permanent row — and fans each out to :func:`delete_document`,
     which already routes through ``get_storage(backend).delete(key)`` plus vector/row
     cleanup — one uniform purge path for local and every S3 backend (PR 4). Fanning out
     (rather than deleting inline) keeps this single worker free to interleave the deletes
@@ -878,10 +915,21 @@ def purge_expired_documents(self) -> int:
     needed. Returns the number of deletes enqueued.
     """
     now = datetime.now(UTC).replace(tzinfo=None)  # naive UTC — matches the stored column
+    # created_at is an ISO-8601 *string* column, so compare against an isoformat cutoff
+    # (lexicographic == chronological for this fixed format, as the job-list range filters do).
+    stale_reservation = (datetime.now(UTC) - timedelta(hours=_AWAITING_UPLOAD_TTL_HOURS)).isoformat()
     with SessionLocal() as db:
         rows = db.execute(
             select(documents.c.id, documents.c.collection_id)
-            .where(documents.c.expires_at.is_not(None), documents.c.expires_at <= now)
+            .where(
+                or_(
+                    and_(documents.c.expires_at.is_not(None), documents.c.expires_at <= now),
+                    and_(
+                        documents.c.status == "awaiting_upload",
+                        documents.c.created_at < stale_reservation,
+                    ),
+                )
+            )
             .limit(_PURGE_BATCH)
         ).fetchall()
     for row in rows:

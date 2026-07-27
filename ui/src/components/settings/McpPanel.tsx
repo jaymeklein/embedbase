@@ -1,16 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Download, ExternalLink } from 'lucide-react'
 import { api } from '../../api/client'
-import { Button, Card, CopyButton, Field, Input } from '../ui'
+import { useMcpTools } from '../../api/hooks'
+import type { McpToolGroup } from '../../api/types'
+import { Button, Card, CopyButton, Field, Input, QueryError, Skeleton } from '../ui'
 
-/** The five tools the MCP server exposes (mirrors api/services/mcp/server.py). */
-const TOOLS: { name: string; sig: string; desc: string }[] = [
-  { name: 'list_workspaces', sig: '()', desc: 'List all workspaces with their collections and document counts. Start here to discover collection ids.' },
-  { name: 'search_documents', sig: '(query, collection_ids, top_k=5, hybrid=true, filters?)', desc: 'Hybrid semantic + keyword search across one or more collections.' },
-  { name: 'list_documents', sig: '(collection_id)', desc: "List a collection's documents and their ingestion status." },
-  { name: 'ingest_document', sig: '(collection_id, file_path)', desc: 'Ingest a server-local file (by path) into a collection.' },
-  { name: 'delete_document', sig: '(document_id)', desc: 'Delete a document and enqueue vector + keyword cleanup.' },
-]
+/** All tag tools need the manage_tags capability; assign/unassign also need write on the target. */
+const TAGS_NOTE = 'Tag tools need the manage_tags permission; assigning to a collection/document also needs write on it.'
 
 /** Generic MCP-client config snippet pointing at this deployment's streamable-HTTP endpoint. */
 function clientConfig(origin: string): string {
@@ -20,7 +16,7 @@ function clientConfig(origin: string): string {
         embedbase: {
           type: 'http',
           url: `${origin}/api/mcp/`,
-          headers: { Authorization: 'Bearer <YOUR_MASTER_API_KEY>' },
+          headers: { Authorization: 'Bearer <YOUR_API_KEY>' },
         },
       },
     },
@@ -29,32 +25,70 @@ function clientConfig(origin: string): string {
   )
 }
 
-/** The SKILL.md handed to an agent so it knows how to drive this MCP server. */
-function skillMd(origin: string): string {
+/** The SKILL.md handed to an agent so it knows how to drive this MCP server. The tool list is the
+ *  live catalogue from the server, so it tracks the real surface with no hand-kept copy. */
+function skillMd(origin: string, groups: McpToolGroup[]): string {
+  const tools = groups
+    .map(
+      (g) =>
+        `### ${g.group}\n${g.tools.map((t) => `- ${t.name}${t.signature} — ${t.summary}`).join('\n')}`,
+    )
+    .join('\n\n')
   return `---
 name: embedbase
-description: Search, ingest, and manage the user's documents through the EmbedBase MCP server. Use when the user asks to query their knowledge base, add or remove documents, or inspect workspaces and collections.
+description: Drive EmbedBase entirely from chat through its MCP server — search, upload/download, re-ingest, and check ingestion status of documents, and manage workspaces, collections, and tags. Use when the user asks to query their knowledge base, add/remove/re-ingest documents, or organize workspaces, collections, and tags.
 ---
 
 # EmbedBase MCP
 
-EmbedBase is a local-first document embedding and retrieval system. This skill
-connects to its MCP server to work with the user's document collections.
+EmbedBase is a local-first document embedding and retrieval system. This skill connects to its MCP
+server to run it end to end from chat — search, upload/download, ingestion status, and
+workspace/collection/tag management — without opening the console.
 
 ## Connection
 
 - Transport: HTTP (streamable)
 - URL: ${origin}/api/mcp/
-- Auth: send the master API key on every request, either
-  - Authorization: Bearer <MASTER_API_KEY>, or
-  - X-API-Key: <MASTER_API_KEY>
+- Auth: send your EmbedBase API key on every request, either
+  - Authorization: Bearer <API_KEY>, or
+  - X-API-Key: <API_KEY>
 
-A missing or wrong key returns 401. The server is rate-limited per key (429 when
-the budget is exceeded).
+Use the master key, or a per-user key for scoped access. Every tool acts as that key's user and
+respects its read/write grants — you only see and change what it is allowed to. A missing or wrong
+key returns 401; the server is rate-limited per key (429 when the budget is exceeded). Admin
+concerns (app config, user/key management) stay in the console and are not exposed as tools.
 
 ## Tools
 
-${TOOLS.map((t) => `- ${t.name}${t.sig} — ${t.desc}`).join('\n')}
+${tools}
+
+${TAGS_NOTE}
+
+## Documents & formats
+
+Only three upload formats are accepted — reject anything else before uploading:
+
+- .pdf
+- .md / .markdown
+- .txt
+
+When you produce the content yourself, prefer Markdown — structure survives as text, so it embeds and
+retrieves best.
+
+### Converting a PDF before upload
+
+A raw PDF buries structure and non-text data that plain extraction drops. When a PDF holds tables or
+images, do not upload lossily-extracted text — convert the whole document to full text and upload it
+as .md (or .txt) so nothing searchable is lost:
+
+- Text — transcribe the complete document text in reading order; never summarise or truncate.
+- Tables — reproduce each one as a real Markdown table (a header row, a divider row, and one row per
+  record). Never flatten a table into prose.
+- Images, figures, charts, and diagrams — replace each with both a short description (what it shows)
+  and a text transcription (every label, caption, axis value, and any text visible in the image).
+
+The uploaded file should read as a faithful, fully-textual rendering of the source — so search can
+reach the tables and image content a raw PDF would otherwise hide.
 
 ## REST API reference
 
@@ -67,9 +101,14 @@ Read the spec to learn the exact request/response shapes behind the tools.
 
 ## Typical workflow
 
-1. list_workspaces() to discover collection ids — never invent them.
-2. search_documents(query, [collection_id]) to retrieve relevant chunks.
-3. Cite results by filename; resolve every id from list_workspaces first.
+1. list_workspaces() to discover workspace + collection ids — never invent them.
+2. search_documents(query, [collection_id]) to retrieve relevant chunks; pass a result's chunk_id
+   to get_document_chunks for the surrounding context.
+3. Upload a file (accepted: .pdf, .md/.markdown, .txt — see "Documents & formats" to convert a PDF
+   with tables or images to full text first) in two steps: request_upload(collection_id, filename) →
+   PUT the bytes to the returned upload_url → confirm_upload(document_id); then poll
+   get_document_status until "done".
+4. Cite results by filename; resolve every id from list_workspaces first.
 `
 }
 
@@ -89,11 +128,11 @@ function ValueRow({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * MCP server tab: connection details, a client-config snippet, the downloadable
- * SKILL.md, the tool catalogue, and links to the live Swagger / OpenAPI reference.
- * The endpoint is derived from the current origin so it's correct wherever the
- * console is served. The master key is shown only as a placeholder — substitute
- * your own; it is never embedded here.
+ * MCP server tab: connection details, a client-config snippet, the downloadable SKILL.md, the tool
+ * catalogue, and links to the live Swagger / OpenAPI reference. The endpoint is derived from the
+ * current origin so it's correct wherever the console is served; the API key is only a placeholder,
+ * never embedded. The tool list + SKILL.md are built from the live `GET /mcp-tools` catalogue, so
+ * they track the registered tools automatically.
  */
 export function McpPanel() {
   // Address an MCP client uses to reach this server. Defaults to how the console
@@ -117,10 +156,14 @@ export function McpPanel() {
         // Offline / unreachable — leave the localhost default; the hint still guides.
       })
   }, [])
-  const skill = skillMd(address)
+  // Tool list comes live from the server, so the catalogue + SKILL.md never drift from the tools.
+  const toolsQuery = useMcpTools()
+  const groups = toolsQuery.data?.groups ?? []
   const config = clientConfig(address)
+  const skill = groups.length ? skillMd(address, groups) : ''
 
   const downloadSkill = () => {
+    if (!skill) return
     const url = URL.createObjectURL(new Blob([skill], { type: 'text/markdown' }))
     const a = document.createElement('a')
     a.href = url
@@ -162,10 +205,11 @@ export function McpPanel() {
             </div>
           </div>
           <p className="text-xs text-ink-muted">
-            Send your <strong>master API key</strong> on every request as{' '}
+            Send an <strong>API key</strong> on every request as{' '}
             <code className="font-mono">Authorization: Bearer &lt;key&gt;</code> or{' '}
-            <code className="font-mono">X-API-Key: &lt;key&gt;</code>. The key lives only in
-            this browser — substitute your own in the snippets below.
+            <code className="font-mono">X-API-Key: &lt;key&gt;</code> — the master key, or a{' '}
+            <strong>per-user key</strong> for scoped access (each tool respects that user's
+            read/write grants). Substitute your own in the snippets below; nothing is embedded here.
           </p>
         </Card>
       </section>
@@ -186,32 +230,71 @@ export function McpPanel() {
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-ink">Agent skill (SKILL.md)</h2>
-          <div className="flex gap-2">
-            <CopyButton text={skill} label="Copy" />
-            <Button variant="secondary" size="sm" onClick={downloadSkill}>
-              <Download className="h-4 w-4" />
-              Download
-            </Button>
-          </div>
+          {skill && (
+            <div className="flex gap-2">
+              <CopyButton text={skill} label="Copy" />
+              <Button variant="secondary" size="sm" onClick={downloadSkill}>
+                <Download className="h-4 w-4" />
+                Download
+              </Button>
+            </div>
+          )}
         </div>
-        <Card className="p-0">
-          <CodeBlock text={skill} className="max-h-96" />
-        </Card>
+        {toolsQuery.isLoading ? (
+          <Skeleton className="h-96 w-full rounded-card" />
+        ) : skill ? (
+          <Card className="p-0">
+            <CodeBlock text={skill} className="max-h-96" />
+          </Card>
+        ) : (
+          <p className="text-xs text-ink-muted">
+            SKILL.md is unavailable — the tool catalogue could not be loaded.
+          </p>
+        )}
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-ink">Tools</h2>
-        <Card className="divide-y divide-border p-0">
-          {TOOLS.map((t) => (
-            <div key={t.name} className="p-4">
-              <p className="font-mono text-[13px] text-ink">
-                {t.name}
-                <span className="text-ink-faint">{t.sig}</span>
-              </p>
-              <p className="mt-0.5 text-xs text-ink-muted">{t.desc}</p>
-            </div>
-          ))}
-        </Card>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-ink">Tools</h2>
+          {groups.length > 0 && (
+            <span className="text-xs text-ink-faint">
+              {groups.reduce((n, g) => n + g.tools.length, 0)} tools · each respects your grants
+            </span>
+          )}
+        </div>
+        {toolsQuery.isError ? (
+          <QueryError
+            title="Could not load the tool catalogue"
+            message={(toolsQuery.error as Error)?.message}
+            onRetry={() => void toolsQuery.refetch()}
+          />
+        ) : toolsQuery.isLoading ? (
+          <Skeleton className="h-64 w-full rounded-card" />
+        ) : (
+          <>
+            <Card className="divide-y divide-border p-0">
+              {groups.map((g) => (
+                <div key={g.group} className="p-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
+                    {g.group}
+                  </p>
+                  <div className="space-y-3">
+                    {g.tools.map((t) => (
+                      <div key={t.name}>
+                        <p className="font-mono text-[13px] text-ink">
+                          {t.name}
+                          <span className="text-ink-faint">{t.signature}</span>
+                        </p>
+                        <p className="mt-0.5 text-xs text-ink-muted">{t.summary}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </Card>
+            <p className="text-xs text-ink-muted">{TAGS_NOTE}</p>
+          </>
+        )}
       </section>
 
       <section className="space-y-3">

@@ -15,10 +15,14 @@ The middleware resets the value in a ``finally`` regardless.
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
+from typing import Any
 
 from api.services.auth import Principal
 
 _principal_ctx: ContextVar[Principal | None] = ContextVar("mcp_principal", default=None)
+# The caller's post-throttle rate-limit snapshot (limit/remaining/reset), bound alongside the
+# principal by the middleware so the ``get_rate_limit`` tool can report the caller's own budget.
+_rate_limit_ctx: ContextVar[dict[str, Any] | None] = ContextVar("mcp_rate_limit", default=None)
 
 
 def set_current_principal(principal: Principal) -> Token[Principal | None]:
@@ -37,3 +41,21 @@ def current_principal() -> Principal:
     if principal is None:
         raise RuntimeError("No authenticated principal for this MCP request")
     return principal
+
+
+def set_current_rate_limit(snapshot: dict[str, Any]) -> Token[dict[str, Any] | None]:
+    """Bind the caller's rate-limit snapshot for the current MCP request."""
+    return _rate_limit_ctx.set(snapshot)
+
+
+def reset_current_rate_limit(token: Token[dict[str, Any] | None]) -> None:
+    """Clear the snapshot bound by :func:`set_current_rate_limit`."""
+    _rate_limit_ctx.reset(token)
+
+
+def current_rate_limit() -> dict[str, Any]:
+    """Return the current request's rate-limit snapshot, or raise if the middleware skipped it."""
+    snapshot = _rate_limit_ctx.get()
+    if snapshot is None:
+        raise RuntimeError("No rate-limit snapshot for this MCP request")
+    return snapshot

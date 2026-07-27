@@ -101,3 +101,71 @@ def test_lowered_rpm_shrinks_an_already_full_bucket() -> None:
 
     rpm = 5
     assert sum(limiter.allow("k") for _ in range(100)) == 5  # clamped to the new capacity
+
+
+def test_snapshot_is_non_consuming() -> None:
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 5, now=clock)
+    # A fresh key is at full capacity; snapshotting must not spend a token.
+    snap = limiter.snapshot("k")
+    assert snap == {"limit_rpm": 5, "remaining": 5, "reset_seconds": 0.0}
+    assert limiter.snapshot("k")["remaining"] == 5  # still full — read-only
+    assert all(limiter.allow("k") for _ in range(5))  # all 5 tokens really available
+
+
+def test_snapshot_reports_remaining_and_reset_after_exhaustion() -> None:
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 60, now=clock)  # 1 token/sec
+    for _ in range(60):
+        limiter.allow("k")
+    snap = limiter.snapshot("k")
+    assert snap["remaining"] == 0
+    # Empty bucket at 1 token/sec → ~1s until the next call is allowed.
+    assert snap["reset_seconds"] == 1.0
+    clock.advance(0.5)  # halfway to the next token
+    assert limiter.snapshot("k")["reset_seconds"] == 0.5
+
+
+# ── per-key overrides (the console's per-user MCP rate limit) ──────────────────
+
+
+def test_set_key_limit_caps_a_key_below_the_global() -> None:
+    """A per-key override throttles that key at its own rate, not the global default."""
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 60, now=clock)
+    limiter.set_key_limit("k", 3)
+    assert sum(limiter.allow("k") for _ in range(100)) == 3  # capped at 3, not 60
+    # A key with no override still gets the full global default — the override is per key.
+    assert sum(limiter.allow("other") for _ in range(100)) == 60
+
+
+def test_set_key_limit_can_raise_a_key_above_the_global() -> None:
+    """An override can also lift a single key above the global default."""
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 5, now=clock)
+    limiter.set_key_limit("k", 20)
+    assert sum(limiter.allow("k") for _ in range(100)) == 20
+
+
+def test_clearing_key_limit_reverts_to_the_global() -> None:
+    """0/None clears the override so the key falls back to the live global rate."""
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 10, now=clock)
+    limiter.set_key_limit("k", 2)
+    assert sum(limiter.allow("k") for _ in range(100)) == 2
+
+    clock.advance(3600.0)  # let the bucket refill fully under whichever cap applies
+    limiter.set_key_limit("k", None)  # clear → back to the global 10
+    assert sum(limiter.allow("k") for _ in range(100)) == 10
+
+    clock.advance(3600.0)
+    limiter.set_key_limit("k", 0)  # 0 means "inherit" too
+    assert sum(limiter.allow("k") for _ in range(100)) == 10
+
+
+def test_snapshot_reports_the_key_override() -> None:
+    """get_rate_limit reads snapshot(), which must report the per-key ceiling, not the global."""
+    clock = _FakeClock()
+    limiter = TokenBucketRateLimiter(rpm=lambda: 60, now=clock)
+    limiter.set_key_limit("k", 4)
+    assert limiter.snapshot("k") == {"limit_rpm": 4, "remaining": 4, "reset_seconds": 0.0}
