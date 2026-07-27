@@ -26,7 +26,8 @@ async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
     Mint their API key separately via POST /users/{id}/key.
     """
     return await user_svc.create_user(
-        body.username, body.email, body.name, body.is_active, body.is_admin, db
+        body.username, body.email, body.name, body.is_active, body.is_admin, db,
+        rate_limit_rpm=body.rate_limit_rpm,
     )
 
 
@@ -44,7 +45,10 @@ async def get_user(user_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.patch("/{user_id}")
 async def update_user(user_id: str, body: UserUpdate, db: AsyncSession = Depends(get_db)):
-    """Update name/email or activate/deactivate a user (an inactive user's key stops working)."""
+    """Update identity/role, the per-user MCP rate limit, or (de)activate a user.
+
+    Deactivating stops their API key from authenticating.
+    """
     return await user_svc.update_user(user_id, body, db)
 
 

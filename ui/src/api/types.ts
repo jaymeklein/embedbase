@@ -143,16 +143,21 @@ export interface UserKeySummary {
 export interface User {
   id: string
   username: string
-  email: string
+  /** Optional — an account is identified by its username; null when it has no email. */
+  email: string | null
   name: string
   is_active: boolean
   is_admin: boolean
+  /** Per-user MCP rate limit (requests/min); 0 = inherit the global default. */
+  rate_limit_rpm: number
   must_change_password: boolean
   created_at: string
   updated_at: string
   api_key: UserKeySummary | null
   /** Whether the user may create workspaces. Present only on `GET /auth/me`. */
   can_create_workspaces?: boolean
+  /** Whether the user may manage tags (the `manage_tags` capability). Present only on `GET /auth/me`. */
+  can_manage_tags?: boolean
 }
 
 /** `POST /users` — the created user plus the one-time login password (shown once). */
@@ -228,6 +233,12 @@ export interface DocumentSummary {
   embedding_model?: string | null
   /** Storage backend holding the file (`local` / a configured S3 name). */
   storage_backend?: string | null
+  /** Whether an original source file is attached alongside the parse (downloadable). */
+  has_original?: boolean
+  /** Filename of the attached original source file, when `has_original`. */
+  original_filename?: string | null
+  /** Size (bytes) of the attached original source file, when `has_original`. */
+  original_file_size?: number | null
 }
 
 /** `GET .../documents` — one page of documents plus the full match count for the pager. */
@@ -497,13 +508,16 @@ export interface StorageBackend {
 }
 
 /**
- * Storage registry config. Backend *selection* stays in config.yaml/env; the UI
- * only shows the active backend read-only and edits `temp_retention_hours`.
+ * Storage registry config. Backend *selection* stays in config.yaml/env; the UI only shows the
+ * active backend read-only. Retention is now per-file (`retention_days` at upload), so the config
+ * carries no live retention knob.
  */
 export interface StorageConfig {
   default: string
   backends: Record<string, StorageBackend>
-  temp_retention_hours: number // 0 = temporary uploads never expire (feature off)
+  /** @deprecated Superseded by per-file `retention_days`; no upload path reads this. Kept so an
+   *  existing config.yaml that sets it still round-trips. */
+  temp_retention_hours: number
 }
 
 /**
@@ -516,6 +530,26 @@ export interface MCPConfig {
   enabled: boolean
   rate_limit_rpm: number
   max_results: number
+}
+
+/** One MCP tool in the `GET /mcp-tools` catalogue — introspected from the live server. */
+export interface McpToolInfo {
+  name: string
+  /** Python-like call signature synthesized from the tool's input schema, e.g. `(query, top_k=5)`. */
+  signature: string
+  /** One-line summary (first paragraph of the tool's description). */
+  summary: string
+}
+
+/** A domain group of MCP tools (`GET /mcp-tools`). */
+export interface McpToolGroup {
+  group: string
+  tools: McpToolInfo[]
+}
+
+/** `GET /mcp-tools` — the MCP tool surface, grouped by domain, that drives the MCP settings page. */
+export interface McpToolCatalog {
+  groups: McpToolGroup[]
 }
 
 /** `GET /config/accelerator` — GPU suitability for the docling PDF backend. */
@@ -562,10 +596,13 @@ export type CollectionUpdate = Partial<CollectionCreate>
 
 export interface UserCreate {
   username: string
-  email: string
+  /** Optional — omit or send blank for an account with no email. */
+  email?: string
   name?: string
   is_active?: boolean
   is_admin?: boolean
+  /** Per-user MCP rate limit (requests/min); 0 = inherit the global default. */
+  rate_limit_rpm?: number
 }
 
 export type UserUpdate = Partial<{
@@ -574,6 +611,7 @@ export type UserUpdate = Partial<{
   name: string
   is_active: boolean
   is_admin: boolean
+  rate_limit_rpm: number
 }>
 
 export interface UserKeyCreate {

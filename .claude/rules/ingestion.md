@@ -25,11 +25,26 @@ Flow: **upload → parse → chunk → embed → store**. The DI seam is `worker
   a size guard (`api/services/upload.py`, `.tmp` + atomic `os.replace`), insert `documents` + `job_records`,
   enqueue. The **API never imports the worker package** — `api/services/tasks.py::enqueue_ingest` dispatches by
   task-name string over Redis, keeping heavy parser/embedding deps out of the API image.
-- **Worker** (`worker/tasks.py::ingest_document → _run_ingestion`): fetch bytes to a local temp
-  (`storage.fetch_to_temp`), **parse** (`get_parser(...)`), **chunk** (`api/services/ingestion.py::sliding_window`,
-  tiktoken `cl100k_base`, called inside the txt/markdown parsers), **embed + store** in resumable batches
-  (`_embed_and_store` → `embedder.embed_batch` → `vector_store.upsert`), mark done.
+- **Worker** (`worker/tasks.py::ingest_document → _run_ingestion`): **size-guard** the stored object
+  (`storage.object_head` vs `resolve_max_bytes`, before download — a presigned upload's PUT URL is reusable, so
+  the object is mutable until ingest reads it), fetch bytes to a local temp (`storage.fetch_to_temp`), **parse**
+  (`get_parser(...)`), **chunk** (`api/services/ingestion.py::sliding_window`, tiktoken `cl100k_base`, called
+  inside the txt/markdown parsers), **embed + store** in resumable batches (`_embed_and_store` →
+  `embedder.embed_batch` → `vector_store.upsert`), mark done.
 - **BM25 is not a stage** — it's the stored `chunks.text_tsv` maintained by the upsert ([`vector-db.md`](vector-db.md)).
+- **Upload entry points + retention**: REST multipart (`documents.ingest`, streamed + size-guarded), the
+  presigned two-step for MCP (`documents.create_upload` → `awaiting_upload` row + presigned PUT →
+  `documents.confirm_upload`, [`mcp.md`](mcp.md)), and the master-only container path (`ingest_local_path`). The
+  presigned **confirm** steps additionally **content-type-validate** the bytes (`Storage.read_head` +
+  `upload.validate_content` — 415 + purge if the object isn't the declared type); the REST path is unchanged
+  (extension + size only; a wrong-content parse just fails downstream in the worker). All
+  take a per-file **`retention_days` (1-30; omit = permanent)** → `_expiry` stamps `documents.expires_at` (422
+  outside the band), which the purge sweep reaps. This **supersedes** the old global `storage.temp_retention_hours`
+  + boolean `temporary` (the config field is kept for back-compat but no longer read by uploads).
+- **Attached originals are not an ingestion input.** An optional *original source file* (`documents.original_*`,
+  attached via `create_original_upload`/`confirm_original_upload` — see [`mcp.md`](mcp.md) +
+  [`database.md`](database.md)) is stored alongside a document for download only. It is **never**
+  parsed/chunked/embedded — it adds no chunks and never enters this pipeline; only the parse does.
 
 ## Jobs, status, progress
 - **`job_records` table.** Status: `pending → processing → done | failed | rate_limited`. `_claim_job` atomically
@@ -61,7 +76,8 @@ lazy prod singleton; unit tests pass fakes ([`testing.md`](testing.md)). Keep ne
 - **Beat sweeps** (`worker/celery_app.py`, embedded `-B`, every 300s): `retry_rate_limited_ingests` requeues
   `rate_limited` + stale-heartbeat `processing` + orphaned `pending` via `_requeue_by_status` — re-enqueued as
   **fresh** Celery tasks (uncapped lineage), **same `job_id`** (so `_claim_job` dedups), bounded batch. Gated
-  off while paused. `purge_expired_documents` cleans temp docs.
+  off while paused. `purge_expired_documents` reaps due-`expires_at` docs **and** abandoned presigned-upload
+  reservations (`status="awaiting_upload"` older than `_AWAITING_UPLOAD_TTL_HOURS`).
 - **Retry all failed**: `POST /ingestion/jobs/retry-failed` → `api/services/jobs.py::reprocess_failed_documents`
   re-enqueues every **currently**-failed doc (latest attempt failed) matching the queue's active filters, each
   via `documents.py::reprocess_document` (idempotent). **Single retry**: `POST /documents/{id}/reprocess`.

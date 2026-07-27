@@ -16,12 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select, update
 
 from api.constants import EMBEDDING_PAUSE_KEY
 from api.constants import REDIS_URL as _REDIS_URL_DEFAULT
 from api.services import realtime
+from api.services.upload import resolve_max_bytes
 from worker.celery_app import celery_app
 from worker.config import get_config
 from worker.db import (
@@ -395,6 +396,16 @@ def _embed_and_store(
     emit("storing", current=total, total=total)
 
 
+class NonRetryableIngestError(Exception):
+    """An ingest failure that must NOT be retried — the input can't succeed on a re-run.
+
+    Raised for a permanent, deterministic problem with the stored object itself (e.g. it exceeds the
+    size cap), where Celery's retry ladder would only re-fail three times before giving up. The
+    outer task marks the job failed and re-raises plainly (like ``SoftTimeLimitExceeded``), instead
+    of routing it through ``self.retry``.
+    """
+
+
 def _run_ingestion(
     job_id: str,
     file_path: str,
@@ -503,6 +514,20 @@ def _run_ingestion(
     try:
         # --- Parse → chunk ---------------------------------------------------
         try:
+            # Size guard at the point of consumption. A presigned upload's PUT URL is reusable
+            # within its validity, so the stored object is mutable until ingest reads it — a
+            # confirm-time check can be bypassed by re-PUTting a larger object. head the object
+            # *before* downloading and refuse an over-cap one, so an oversized object can't DoS the
+            # single-process worker (huge download + parse, temp-dir fill). Cheap (metadata only);
+            # a None size (backend without head support) skips the check.
+            max_bytes = resolve_max_bytes(config.max_file_size_bytes)
+            obj_size = storage.object_head(file_path)
+            if obj_size is not None and obj_size > max_bytes:
+                # Non-retryable: the object won't shrink on a re-run, so fail terminally rather than
+                # burn the 3-retry ladder re-heading + re-failing the same oversized object.
+                raise NonRetryableIngestError(
+                    f"Stored object is {obj_size} bytes, over the {max_bytes}-byte size limit"
+                )
             # Pull the document's bytes from its backend to a local path to parse.
             local_file = storage.fetch_to_temp(file_path)
             emit("parsing")
@@ -675,28 +700,46 @@ def clear_embedding_pause() -> None:
 
 
 def _delete_stored_object(document_id: str, collection_id: str) -> None:
-    """Delete a document's stored original from its backend (best-effort).
+    """Delete a document's stored objects from its backend (best-effort).
 
-    Reads the backend + file type from the still-present row to rebuild the storage
-    key, then deletes. Fully best-effort: any failure (row read or backend delete) is
-    logged, not raised, so the vector/row cleanup still proceeds — a leaked object is
-    strictly better than a stuck delete.
+    Reads the backend + file type(s) from the still-present row to rebuild the storage
+    key(s), then deletes the parse and any attached original source file. Fully best-effort:
+    any failure (row read or backend delete) is logged, not raised, so the vector/row cleanup
+    still proceeds — a leaked object is strictly better than a stuck delete.
     """
     try:
         with SessionLocal() as db:
             meta = db.execute(
-                select(documents.c.storage_backend, documents.c.file_type)
+                select(
+                    documents.c.storage_backend,
+                    documents.c.file_type,
+                    documents.c.original_file_type,
+                )
                 .where(documents.c.id == document_id)
             ).fetchone()
         if meta is None:
             return
-        from api.services.documents import document_key
+        from api.services.documents import document_key, original_key
         from api.services.storage import get_storage
 
-        key = document_key(collection_id, document_id, meta.file_type)
-        get_storage(get_config().storage, meta.storage_backend or "local").delete(key)
-    except Exception as exc:  # best-effort: never block row/vector cleanup
+        storage = get_storage(get_config().storage, meta.storage_backend or "local")
+    except Exception as exc:  # row read / backend resolve failed — nothing safe to delete
         logger.warning("stored object delete skipped", document_id=document_id, error=str(exc))
+        return
+
+    # The parse and any attached original are independent objects — delete each on its own so a
+    # failure on one never leaks the other. The original is keyed off original_file_type (set when
+    # the upload is *requested*), so a PUT-but-never-confirmed original is reaped too. Best-effort.
+    keys = [document_key(collection_id, document_id, meta.file_type)]
+    if meta.original_file_type:
+        keys.append(original_key(collection_id, document_id, meta.original_file_type))
+    for key in keys:
+        try:
+            storage.delete(key)
+        except Exception as exc:  # best-effort: never block row/vector cleanup
+            logger.warning(
+                "stored object delete skipped", document_id=document_id, key=key, error=str(exc)
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +768,12 @@ def ingest_document(
     except SoftTimeLimitExceeded:
         logger.warning("task exceeded time limit", job_id=job_id)
         _mark_failed(job_id, "Ingestion exceeded time limit")
+        raise  # plain raise — never self.retry()
+    except NonRetryableIngestError as exc:
+        # A permanent problem with the object (e.g. over the size cap): retrying can only re-fail.
+        # Mark failed and raise plainly — the beat sweep never re-enqueues a ``failed`` job.
+        logger.warning("ingest failed (non-retryable)", job_id=job_id, error=str(exc))
+        _mark_failed(job_id, str(exc))
         raise  # plain raise — never self.retry()
     except Exception as exc:
         if _is_rate_limit(exc):
@@ -858,6 +907,10 @@ def index_collection(self, collection_id: str) -> None:
 # flooding the queue at once. ponytail: LIMIT 500/run — tighten the beat interval
 # (PURGE_INTERVAL_SECONDS) if a backlog ever builds up.
 _PURGE_BATCH = 500
+# How long an unconfirmed presigned upload (documents.create_upload → status "awaiting_upload")
+# may sit before the sweep reaps it — so an abandoned reservation (client crashed before
+# confirm_upload) doesn't accumulate as an invisible, permanent row.
+_AWAITING_UPLOAD_TTL_HOURS = 24
 
 
 @celery_app.task(
@@ -869,7 +922,9 @@ _PURGE_BATCH = 500
 def purge_expired_documents(self) -> int:
     """Enqueue deletes for temporary documents whose retention window has elapsed.
 
-    Selects rows with a due ``expires_at`` and fans each out to :func:`delete_document`,
+    Selects rows with a due ``expires_at`` — plus unconfirmed presigned uploads
+    (``awaiting_upload``) older than ``_AWAITING_UPLOAD_TTL_HOURS``, so an abandoned reservation
+    doesn't linger as an invisible permanent row — and fans each out to :func:`delete_document`,
     which already routes through ``get_storage(backend).delete(key)`` plus vector/row
     cleanup — one uniform purge path for local and every S3 backend (PR 4). Fanning out
     (rather than deleting inline) keeps this single worker free to interleave the deletes
@@ -878,10 +933,21 @@ def purge_expired_documents(self) -> int:
     needed. Returns the number of deletes enqueued.
     """
     now = datetime.now(UTC).replace(tzinfo=None)  # naive UTC — matches the stored column
+    # created_at is an ISO-8601 *string* column, so compare against an isoformat cutoff
+    # (lexicographic == chronological for this fixed format, as the job-list range filters do).
+    stale_reservation = (datetime.now(UTC) - timedelta(hours=_AWAITING_UPLOAD_TTL_HOURS)).isoformat()
     with SessionLocal() as db:
         rows = db.execute(
             select(documents.c.id, documents.c.collection_id)
-            .where(documents.c.expires_at.is_not(None), documents.c.expires_at <= now)
+            .where(
+                or_(
+                    and_(documents.c.expires_at.is_not(None), documents.c.expires_at <= now),
+                    and_(
+                        documents.c.status == "awaiting_upload",
+                        documents.c.created_at < stale_reservation,
+                    ),
+                )
+            )
             .limit(_PURGE_BATCH)
         ).fetchall()
     for row in rows:

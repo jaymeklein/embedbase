@@ -242,6 +242,47 @@ async def test_unknown_capability_grant_raises_422(db_session):
     assert exc.value.status_code == 422
 
 
+async def test_tag_management_requires_capability(db_session):
+    await _seed(db_session)
+    # A no-permission user is unrestricted for data but does NOT get the capability implicitly.
+    with pytest.raises(HTTPException) as exc:
+        await permissions.authorize_tag_management(db_session, _USER, "ws1")
+    assert exc.value.status_code == 403
+    await permissions.authorize_tag_management(db_session, _MASTER, "ws1")  # master always may
+
+
+async def test_capability_grant_allows_tag_management(db_session):
+    await _seed(db_session)
+    await _grant(db_session, "capability", permissions.CAP_MANAGE_TAGS, "write")
+    # Capability + (unrestricted → readable) workspace → allowed.
+    await permissions.authorize_tag_management(db_session, _USER, "ws1")  # no raise
+    assert await permissions.has_capability(db_session, _USER, permissions.CAP_MANAGE_TAGS)
+
+
+async def test_tag_management_denied_outside_workspace_scope(db_session):
+    await _seed(db_session)  # ws1 → {colA, colB}
+    # A second workspace the user IS scoped to, leaving ws1 out of their read scope.
+    await db_session.execute(
+        insert(ws_t).values(
+            id="ws2", name="W2", description="", color="", icon="", created_at="t", updated_at="t"
+        )
+    )
+    await db_session.execute(
+        insert(col_t).values(
+            id="colC", workspace_id="ws2", name="colC", description="", color="",
+            icon="", created_at="t", updated_at="t",
+        )
+    )
+    await db_session.commit()
+    await _grant(db_session, "collection", "colC", "read")  # scopes the user to ws2 only
+    await _grant(db_session, "capability", permissions.CAP_MANAGE_TAGS, "write")
+    # Holds the capability, but ws1 is outside their scope → cannot manage its tags.
+    with pytest.raises(HTTPException) as exc:
+        await permissions.authorize_tag_management(db_session, _USER, "ws1")
+    assert exc.value.status_code == 403
+    await permissions.authorize_tag_management(db_session, _USER, "ws2")  # own scope is fine
+
+
 async def test_writable_workspace_ids(db_session):
     await _seed(db_session)
     assert await permissions.writable_workspace_ids(db_session, _MASTER, ["ws1"]) == ["ws1"]
