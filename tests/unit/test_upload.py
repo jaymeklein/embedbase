@@ -104,3 +104,31 @@ def test_validate_content_rejects_mismatch(ext, head):
     with pytest.raises(HTTPException) as exc:
         validate_content(ext, head)
     assert exc.value.status_code == 415
+
+
+async def test_empty_file_rejected_and_cleaned_up(tmp_path):
+    dest = tmp_path / "empty.txt"
+    with pytest.raises(HTTPException) as exc:
+        await stream_upload_with_size_guard(FakeUpload(b""), dest, max_bytes=100)
+    assert exc.value.status_code == 422
+    assert not dest.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+async def test_whitespace_only_file_rejected(tmp_path):
+    # The real incident: a lone CRLF is 2 bytes but parses to zero chunks.
+    dest = tmp_path / "blank.md"
+    with pytest.raises(HTTPException) as exc:
+        await stream_upload_with_size_guard(FakeUpload(b"\r\n"), dest, max_bytes=100)
+    assert exc.value.status_code == 422
+    assert not dest.exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+async def test_content_with_surrounding_whitespace_is_accepted(tmp_path):
+    dest = tmp_path / "ok.txt"
+    written = await stream_upload_with_size_guard(
+        FakeUpload(b"  hi  \n"), dest, max_bytes=100
+    )
+    assert written == 7
+    assert dest.read_bytes() == b"  hi  \n"
