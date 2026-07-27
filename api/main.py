@@ -238,6 +238,7 @@ def create_app() -> FastAPI:
     app.include_router(config.router)
     app.include_router(users.router)
     app.include_router(ws.router)
+    app.include_router(mcp.router)  # GET /mcp-tools catalogue (distinct from the mounted /mcp app)
 
     # Standalone OpenAPI reference of just the integration endpoints (after routers
     # are registered so their routes exist to filter).

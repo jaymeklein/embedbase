@@ -32,18 +32,18 @@ async def upload_document(
     ws_id: str,
     col_id: str,
     file: UploadFile = File(...),
-    temporary: bool = Form(False),
+    retention_days: int | None = Form(None),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and enqueue a document for ingestion.
 
     Accepted formats: PDF, TXT, and Markdown; DOCX and PPTX also require the docling
-    parser backend (``parsers.pdf_backend: docling``). Set ``temporary`` to auto-purge
-    the document after ``storage.temp_retention_hours`` (no-op when 0).
+    parser backend (``parsers.pdf_backend: docling``). Set ``retention_days`` (1-30) to
+    auto-purge the document after that many days; omit it for a permanent document.
     """
     await doc_svc.resolve_collection(db, col_id, ws_id)
-    return await doc_svc.ingest(db, col_id, file, principal, temporary=temporary)
+    return await doc_svc.ingest(db, col_id, file, principal, retention_days=retention_days)
 
 
 @router.get("/workspaces/{ws_id}/collections/{col_id}/documents")
@@ -110,24 +110,33 @@ async def delete_document(
 async def upload_document_flat(
     collection_id: str = Form(...),
     file: UploadFile = File(...),
-    temporary: bool = Form(False),
+    retention_days: int | None = Form(None),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upload a document by collection ID without the nested workspace path."""
+    """Upload a document by collection ID without the nested workspace path.
+
+    Set ``retention_days`` (1-30) to auto-purge after that many days; omit for permanent.
+    """
     await doc_svc.resolve_collection(db, collection_id)
-    return await doc_svc.ingest(db, collection_id, file, principal, temporary=temporary)
+    return await doc_svc.ingest(
+        db, collection_id, file, principal, retention_days=retention_days
+    )
 
 
 @router.get("/documents/{doc_id}/raw")
 async def get_document_raw(
     doc_id: str,
+    original: bool = Query(
+        False, description="Serve the attached original source file instead of the parse."
+    ),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Serve a document's original bytes: inline FileResponse (local) or 302 to a
-    presigned URL (S3), resolved from the document's storage backend."""
-    return await doc_svc.resolve_document_download(db, doc_id, principal)
+    """Serve a document's bytes: inline FileResponse (local) or 302 to a presigned URL
+    (S3), resolved from the document's storage backend. ``?original=1`` serves the attached
+    original source file instead of the parse (404 if none is attached)."""
+    return await doc_svc.resolve_document_download(db, doc_id, principal, original=original)
 
 
 @router.delete("/documents/{doc_id}", status_code=204)

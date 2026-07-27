@@ -49,6 +49,7 @@ export const qk = {
   user: (id: string) => ['users', id] as const,
   permissions: (userId: string) => ['users', userId, 'permissions'] as const,
   config: ['config'] as const,
+  mcpTools: ['mcp-tools'] as const,
   jobs: ['jobs'] as const,
   jobStats: ['jobs', 'stats'] as const,
   ollamaModels: (baseUrl: string) => ['config', 'ollama-models', baseUrl] as const,
@@ -75,6 +76,12 @@ export function useConfig() {
 /** GPU suitability for the docling PDF backend (drives the backend picker's default + warning). */
 export function useAccelerator() {
   return useQuery({ queryKey: ['config', 'accelerator'], queryFn: () => api.getAccelerator(), retry: false })
+}
+
+/** The MCP tool catalogue (grouped), introspected live from the server — drives the MCP settings
+ *  page + its generated SKILL.md so both track the real tool surface. */
+export function useMcpTools() {
+  return useQuery({ queryKey: qk.mcpTools, queryFn: () => api.mcpTools(), retry: false })
 }
 
 /**
@@ -439,8 +446,8 @@ function useInvalidateDocuments(wsId: string, colId: string): () => Promise<void
 export function useUploadDocument(wsId: string, colId: string) {
   const invalidate = useInvalidateDocuments(wsId, colId)
   return useMutation({
-    mutationFn: ({ file, temporary }: { file: File; temporary: boolean }) =>
-      api.uploadDocument(wsId, colId, file, temporary),
+    mutationFn: ({ file, retentionDays }: { file: File; retentionDays: number | null }) =>
+      api.uploadDocument(wsId, colId, file, retentionDays),
     // The list is paginated + filtered (many cache entries keyed by the active query), so a
     // single optimistic row can't be reliably prepended. The 202 returns fast and this refetch
     // surfaces the new pending row — the UploadZone shows the in-flight state meanwhile.

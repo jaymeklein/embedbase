@@ -17,7 +17,7 @@ import Users from './pages/Users'
 import Settings from './pages/Settings'
 
 export default function App() {
-  const { isAuthed, mustChangePassword, isAdmin, hydrating } = useAuth()
+  const { isAuthed, mustChangePassword, isAdmin, canManageTags, hydrating } = useAuth()
   if (hydrating) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-canvas">
@@ -40,12 +40,16 @@ export default function App() {
         <Route path="/search" element={<Search />} />
         <Route path="/indexing" element={<Indexing />} />
         <Route path="/ingestion-queue" element={<IngestionQueue />} />
+        {/* Tag management — admins or a user holding the `manage_tags` capability.
+            Kept out of the admin-only block below so a granted non-admin can reach it. */}
+        {(isAdmin || canManageTags) && (
+          <Route path="/workspaces/:wsId/tags" element={<Tags />} />
+        )}
         {/* Admin-only management plane (master key or an admin session). Routes are
             omitted for non-admins, so a direct hit falls through to the catch-all. */}
         {isAdmin ? (
           <>
             <Route path="/" element={<Dashboard />} />
-            <Route path="/workspaces/:wsId/tags" element={<Tags />} />
             <Route path="/graph" element={<Graph />} />
             <Route path="/users" element={<Users />} />
             <Route path="/settings" element={<Settings />} />

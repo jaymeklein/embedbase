@@ -3,7 +3,7 @@
 import pytest
 from fastapi import HTTPException
 
-from api.services.upload import stream_upload_with_size_guard
+from api.services.upload import stream_upload_with_size_guard, validate_content
 from tests.unit.fakes import FakeUpload
 
 
@@ -58,6 +58,52 @@ async def test_exact_limit_is_accepted(tmp_path):
     )
     assert written == 100
     assert dest.exists()
+
+
+# ── Content-type validation (magic bytes at confirm time) ─────────────────────
+
+_PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+
+@pytest.mark.parametrize(
+    "ext,head",
+    [
+        (".pdf", b"%PDF-1.7\n1 0 obj"),
+        (".pdf", b"\x00\x00%PDF-1.4"),  # a few junk bytes before %PDF- are tolerated
+        (".docx", b"PK\x03\x04\x14\x00"),
+        (".pptx", b"PK\x03\x04rest"),
+        (".xlsx", b"PK\x03\x04rest"),
+        (".txt", b"just some plain text\n"),
+        (".md", "# título com acento é\n".encode()),  # UTF-8 text is fine
+        (".csv", b"a,b,c\n1,2,3\n"),
+        (".txt", b""),  # empty text is allowed
+        (".txt", "﻿bom text".encode()),  # UTF-8 BOM
+        (".txt", "unicode".encode("utf-16")),  # UTF-16 (BOM + NUL bytes) is still valid text
+        (".csv", "a,b\n1,2\n".encode("utf-16")),
+        (".zip", b"PK\x03\x04"),  # ext with no known signature → not content-checked
+        (".xyz", _PNG),  # unknown ext → allowed even for binary
+    ],
+)
+def test_validate_content_accepts_matching(ext, head):
+    validate_content(ext, head)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "ext,head",
+    [
+        (".pdf", _PNG),  # a PNG uploaded as a .pdf — the headline case
+        (".pdf", b"this is definitely not a pdf"),
+        (".docx", b"plain text, not a zip container"),
+        (".xlsx", b"%PDF-1.4 not a spreadsheet"),
+        (".md", _PNG),  # a PNG renamed .md
+        (".txt", b"looks texty\x00but has a NUL"),
+        (".md", b"%PDF-1.4 a pdf pretending to be markdown"),
+    ],
+)
+def test_validate_content_rejects_mismatch(ext, head):
+    with pytest.raises(HTTPException) as exc:
+        validate_content(ext, head)
+    assert exc.value.status_code == 415
 
 
 async def test_empty_file_rejected_and_cleaned_up(tmp_path):

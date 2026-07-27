@@ -31,5 +31,13 @@ documents = Table(
     # permanent (every existing row + every non-temporary upload). Naive UTC to match
     # processing_started_at, so ``expires_at <= now`` compares uniformly on any dialect.
     Column("expires_at", DateTime, nullable=True),
+    # Optional *original source file* kept alongside the parse (e.g. the raw PDF a Markdown
+    # upload was converted from), stored as a second object under this same row — never
+    # embedded. All NULL = none attached. ``original_file_type`` is set when the upload is
+    # requested (so cleanup can delete the object even if never confirmed); ``original_file_size``
+    # only at confirm (so listings/downloads treat it as present only once bytes land).
+    Column("original_filename", String, nullable=True),
+    Column("original_file_type", String, nullable=True),
+    Column("original_file_size", Integer, nullable=True),
     Index("documents_collection_idx", "collection_id"),
 )

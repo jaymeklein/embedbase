@@ -22,7 +22,12 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from api.db import AsyncSessionLocal
 from api.services.auth import Principal, authenticate_api_key, record_key_use
-from api.services.mcp.context import reset_current_principal, set_current_principal
+from api.services.mcp.context import (
+    reset_current_principal,
+    reset_current_rate_limit,
+    set_current_principal,
+    set_current_rate_limit,
+)
 from api.services.mcp.rate_limit import TokenBucketRateLimiter
 
 PrincipalResolver = Callable[[str], Awaitable[Principal]]
@@ -101,9 +106,9 @@ class MCPAuthRateLimitMiddleware:
         if not raw_key:
             await _send_json(send, 401, {"detail": "Missing or invalid API key"})
             return
-        # Throttle before authenticating: resolving a principal is DB-backed (and
-        # bcrypt on a prefix hit), so gating it behind the per-key limiter keeps a
-        # single key from flooding the expensive auth path.
+        # Coarse pre-auth guard on the raw key: gates the DB-backed, bcrypt-on-hit auth
+        # below so a single key can't flood it. Sized to the caller's own rate — the global
+        # default until their override is learned post-auth, then their configured limit.
         if not self._limiter.allow(raw_key):
             await _send_json(send, 429, {"detail": "Rate limit exceeded"}, [(b"retry-after", b"1")])
             return
@@ -112,11 +117,34 @@ class MCPAuthRateLimitMiddleware:
         except HTTPException as exc:
             await _send_json(send, exc.status_code, {"detail": str(exc.detail)})
             return
-        token = set_current_principal(principal)
+        # Enforce the caller's configured rate limit (0/None → the global default). Exact
+        # enforcement is a *post-auth* token bucket keyed by user id: sized to the limit
+        # before its first allow(), so a concurrent cold-start burst can't slip past at the
+        # global rate before the override is known, and keyed by user id (not the raw key)
+        # so rotating the key can't reset the quota. The same limit is pushed onto the
+        # pre-auth guard too, so an above-global override isn't capped by it on later
+        # requests. The master key has no user id → only the coarse guard above applies.
+        budget_key = raw_key
+        if principal.user_id is not None:
+            limit = principal.rate_limit_rpm or None
+            budget_key = f"user:{principal.user_id}"
+            self._limiter.set_key_limit(raw_key, limit)
+            self._limiter.set_key_limit(budget_key, limit)
+            if not self._limiter.allow(budget_key):
+                await _send_json(
+                    send, 429, {"detail": "Rate limit exceeded"}, [(b"retry-after", b"1")]
+                )
+                return
+        # Snapshot the caller's binding budget (their per-user quota, or the coarse guard
+        # for the master key) for the get_rate_limit tool. Non-consuming.
+        rate_limit = self._limiter.snapshot(budget_key)
+        principal_token = set_current_principal(principal)
+        rate_limit_token = set_current_rate_limit(rate_limit)
         try:
             await self._app(scope, receive, send)
         finally:
-            reset_current_principal(token)
+            reset_current_rate_limit(rate_limit_token)
+            reset_current_principal(principal_token)
 
 
 def build_mcp_middleware(

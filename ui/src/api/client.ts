@@ -9,6 +9,7 @@
  */
 
 import { getToken, notifyUnauthorized } from './tokenStore'
+import { saveBlob } from '../lib/download'
 import type {
   Accelerator,
   AppConfig,
@@ -26,6 +27,7 @@ import type {
   JobQuery,
   JobStats,
   JobStatus,
+  McpToolCatalog,
   MintedUserKey,
   Permission,
   ResetPasswordResponse,
@@ -246,10 +248,16 @@ export const api = {
     request<DocumentListResponse>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents${toQueryString(query)}`,
     ),
-  uploadDocument: (wsId: string, colId: string, file: File, temporary = false) => {
+  uploadDocument: (
+    wsId: string,
+    colId: string,
+    file: File,
+    retentionDays: number | null = null,
+  ) => {
     const form = new FormData()
     form.append('file', file)
-    if (temporary) form.append('temporary', 'true')
+    // Omit for a permanent document; 1-30 keeps it that many days (server validates).
+    if (retentionDays != null) form.append('retention_days', String(retentionDays))
     return request<UploadAccepted>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`,
       { method: 'POST', body: form },
@@ -300,19 +308,16 @@ export const api = {
     }
   },
   /**
-   * Download a document's original file under its real filename. Uses an anchor
-   * with `download` (not a popup), so no synchronous-gesture trick is needed.
+   * Download a document's file under its real filename. Uses an anchor with
+   * `download` (not a popup), so no synchronous-gesture trick is needed. Pass
+   * `{ original: true }` to fetch the attached original source file instead of the parse.
    */
-  downloadDocument: async (docId: string, filename: string) => {
+  downloadDocument: async (docId: string, filename: string, opts?: { original?: boolean }) => {
     const { headers } = buildHeaders(undefined)
-    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+    const path = `/documents/${enc(docId)}/raw${opts?.original ? '?original=1' : ''}`
+    const res = await fetch(`${BASE}${path}`, { headers })
     await raiseForStatus(res)
-    const url = URL.createObjectURL(await res.blob())
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    saveBlob(await res.blob(), filename)
   },
 
   // ── Ingestion queue (job history) ─────────────────────────────────────────
@@ -344,6 +349,11 @@ export const api = {
   listOllamaModels: (baseUrl?: string) =>
     request<string[]>(`/config/ollama-models${baseUrl ? `?base_url=${enc(baseUrl)}` : ''}`),
   getAccelerator: () => request<Accelerator>('/config/accelerator'),
+
+  // ── MCP ───────────────────────────────────────────────────────────────────
+  // The tool catalogue is introspected live from the server, so the MCP settings page + SKILL.md
+  // never drift from the registered tools.
+  mcpTools: () => request<McpToolCatalog>('/mcp-tools'),
 
   // ── System ────────────────────────────────────────────────────────────────
   healthz: () => request<Health>('/healthz'),
