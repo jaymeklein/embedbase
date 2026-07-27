@@ -12,8 +12,9 @@ day-to-day work. No resources/prompts, just tools, grouped by domain:
 
 - **Read/search:** `list_workspaces`, `search_documents`, `list_documents`, `get_document_chunks`.
 - **Document lifecycle:** `request_upload` + `confirm_upload` (the presigned two-step upload — see below),
-  `ingest_document` (container-local path, **master-only**), `download_document` (presigned GET URL),
-  `get_document_status`, `reprocess_document`, `delete_document`.
+  `request_original_upload` + `confirm_original_upload` (attach an optional original source file — see below),
+  `ingest_document` (container-local path, **master-only**), `download_document` (presigned GET URL;
+  `original=true` targets the attached original), `get_document_status`, `reprocess_document`, `delete_document`.
 - **Structure CRUD:** `create_workspace` / `update_workspace` / `delete_workspace`,
   `create_collection` / `update_collection` / `delete_collection`.
 - **Tags:** `list_tags` / `create_tag` / `update_tag` / `delete_tag` / `merge_tags`,
@@ -31,8 +32,9 @@ exposed via MCP.
   `_DOMAIN_REGISTRARS` — **the registrar a tool sits in IS its catalogue group**, so add a tool to the right
   `_register_*` and it groups correctly everywhere. `build_tool_catalog()` probes those same helpers to emit
   the grouped catalogue (name + synthesized signature + one-line summary) for **`GET /mcp-tools`**
-  (`api/routers/mcp.py`, `require_auth`), which the **Settings → MCP** page + its generated SKILL.md render
-  from — so the console tool list never drifts from the registered tools. No hand-kept mirror.
+  (`api/routers/mcp.py`, `require_auth`), which the **Settings → MCP** page + its generated skill bundle
+  (`references/tools.md`) render from — so the console tool list never drifts from the registered tools.
+  No hand-kept mirror.
 - `api/services/mcp/tools.py` — framework-agnostic tool **implementations**, sectioned by domain; thin
   wrappers over existing services.
 - `api/services/mcp/middleware.py` — raw ASGI middleware: API-key auth (resolves the caller's `Principal`) +
@@ -52,11 +54,25 @@ The store is MinIO/S3, so a scoped user uploads bytes **directly to storage**, n
 tool call: `request_upload` (`documents.create_upload`, needs collection **write**) reserves a document row
 with status `awaiting_upload` and returns a **presigned PUT `upload_url`**; the client `PUT`s the file to it;
 `confirm_upload` (`documents.confirm_upload`, document **write**) verifies the object landed (`object_head`),
-re-enforces the size cap, flips the row active, and enqueues ingestion. An `awaiting_upload` row is hidden
+re-enforces the size cap, **validates the content-type** (sniffs the object head via `Storage.read_head` +
+`upload.validate_content` — a caller can't reserve `.pdf` and PUT a `.png`; a mismatch is a **415** and the
+object is purged), flips the row active, and enqueues ingestion. An `awaiting_upload` row is hidden
 from every listing/count/search until confirmed, is cancelable via `delete_document`, and an abandoned one is
 reaped by the worker purge sweep (`_AWAITING_UPLOAD_TTL_HOURS`). The presigned PUT URL is reusable within its
 validity, so the **worker re-checks the object size before fetching** (`worker/tasks.py`) — a confirm-time
 check alone is bypassable. Presigned upload needs an S3/MinIO backend; local-disk deployments upload via REST.
+
+**Attaching an original source file (optional).** A document may keep its *original* alongside the parse —
+e.g. the raw PDF a Markdown upload was converted from. Same presigned two-step, document **write**:
+`request_original_upload` (`documents.create_original_upload`) presigns a PUT to a **second object** keyed by
+`original_key(col, doc, ext)` (the `.orig` marker keeps it from ever colliding with the parse's key) and
+records `original_file_type` up front; `confirm_original_upload` verifies the bytes landed, re-checks the size
+cap **and the content-type** (same `read_head` + `validate_content` guard as the parse — 415 + purge on a
+type mismatch), and stamps `original_file_size` — which is what flips the original *present* (listings/downloads
+gate on it). The original is **never embedded** (no duplicate search hits); fetch it via
+`download_document(document_id, original=true)` or REST `GET /documents/{id}/raw?original=1`. Both objects are
+deleted together on delete/purge (the one `worker/tasks.py::_delete_stored_object` chokepoint), and cleanup
+keys off `original_file_type` so a PUT-but-never-confirmed original is still reaped.
 
 ## Adding / changing a tool — two layers, always both
 1. **Implement** in `tools.py` as an `async def`, keyword-only, that **delegates to an existing service** and
@@ -110,8 +126,9 @@ Don't put business logic in the wrapper or the router; don't resolve deps in `to
 ## Delegates to (point here, don't duplicate)
 `workspaces.{list_workspace_tree,create_workspace,update_workspace,delete_workspace}`,
 `collections.{create_collection,update_collection,delete_collection}`, `search.multi_collection_search`,
-`documents.{create_upload,confirm_upload,ingest_local_path,list_documents,get_document_status,
-resolve_download_url,delete_document,reprocess_document,resolve_document_collection}`,
+`documents.{create_upload,confirm_upload,create_original_upload,confirm_original_upload,ingest_local_path,
+list_documents,get_document_status,resolve_download_url,delete_document,reprocess_document,
+resolve_document_collection}`,
 `tags.{list_tags,create_tag,update_tag,delete_tag,merge_tags,assign_*,unassign_*}`,
 `jobs.{list_jobs,job_status_counts,embedding_pause_seconds}`, the vector store's `document_chunks`,
 `permissions.{authorize_collection,authorize_document,authorize_workspace,authorize_workspace_creation,

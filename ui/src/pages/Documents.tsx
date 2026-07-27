@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileDown, FileText, Trash2 } from 'lucide-react'
 import {
   useAssignDocumentTag,
   useCollection,
@@ -438,6 +438,7 @@ function DocumentRow({
               {doc.chunk_count != null &&
                 ` · ${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}{' '}
               · updated {timeAgo(doc.updated_at)}
+              {doc.has_original && ` · original: ${doc.original_filename ?? doc.filename}`}
             </p>
           </div>
         </div>
@@ -502,6 +503,23 @@ function DocumentRow({
           >
             <Download className="h-7 w-7" />
           </Button>
+          {doc.has_original && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Download original source file (${doc.original_filename ?? doc.filename})`}
+              onClick={() =>
+                void api
+                  .downloadDocument(doc.document_id, doc.original_filename ?? doc.filename, {
+                    original: true,
+                  })
+                  .catch((e) => onErr(e as Error))
+              }
+              className="h-10 w-10 px-0"
+            >
+              <FileDown className="h-7 w-7" />
+            </Button>
+          )}
           {canWrite && (
             <Button
               variant="ghost"

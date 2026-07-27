@@ -128,11 +128,14 @@ class _SeededVectorStore:
 
 
 class _FakePresignStorage:
-    """Storage double for the presigned two-step upload: hands out fake PUT/GET URLs and
-    records which objects have been 'uploaded' so object_head reflects the client's PUT."""
+    """Storage double for the presigned two-step upload: hands out fake PUT/GET URLs and records
+    the 'uploaded' object bytes so object_head + read_head reflect the client's PUT. For tests that
+    only care about size (the oversize path, rejected before the content read), pass ``size=``
+    instead of ``data=`` to register a size without materialising bytes."""
 
     def __init__(self) -> None:
-        self._objects: dict[str, int] = {}
+        self._objects: dict[str, bytes] = {}
+        self._sizes: dict[str, int] = {}
 
     def presigned_put(self, key: str) -> str:
         return f"https://minio.test/put/{key}"
@@ -141,14 +144,31 @@ class _FakePresignStorage:
         return f"https://minio.test/get/{key}?f={filename}"
 
     def object_head(self, key: str) -> int | None:
-        return self._objects.get(key)
+        if key in self._objects:
+            return len(self._objects[key])
+        return self._sizes.get(key)
 
-    def receive(self, key: str, size: int = 42) -> None:
-        """Simulate the client PUTting bytes to the presigned URL."""
-        self._objects[key] = size
+    def read_head(self, key: str, n: int) -> bytes | None:
+        data = self._objects.get(key)
+        return None if data is None else data[:n]
+
+    def receive(self, key: str, data: bytes | None = None, size: int | None = None) -> None:
+        """Simulate the client PUTting bytes. Pass real ``data`` (content-validated at confirm), or
+        a ``size`` for size-only tests where the bytes are never read (the oversize path)."""
+        if data is not None:
+            self._objects[key] = data
+        else:
+            self._sizes[key] = size if size is not None else 42
 
     def delete(self, key: str) -> None:
         self._objects.pop(key, None)
+        self._sizes.pop(key, None)
+
+
+def _typed_bytes(ext: str, size: int) -> bytes:
+    """Exactly ``size`` bytes that pass content validation for ``ext`` (PDF magic or plain text)."""
+    head = b"%PDF-1.4\n" if ext == ".pdf" else b""
+    return (head + b"x" * size)[:size] if size >= len(head) else head
 
 
 @pytest.fixture
@@ -353,7 +373,7 @@ async def test_presigned_upload_confirm_roundtrip(seeded, monkeypatch):
         listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
         assert doc_id not in {d["document_id"] for d in listed["documents"]}
         # Simulate the client PUT to the presigned URL, then confirm.
-        storage.receive(document_key("colA", doc_id, ".txt"), size=123)
+        storage.receive(document_key("colA", doc_id, ".txt"), data=_typed_bytes(".txt", 123))
         confirmed = await tools.confirm_upload(document_id=doc_id, db=db, principal=MASTER)
         assert confirmed["status"] == "pending"
         assert confirmed["file_size"] == 123
@@ -374,7 +394,7 @@ async def test_confirm_upload_twice_is_409(seeded, monkeypatch):
             collection_id="colA", filename="x.txt", db=db, principal=MASTER
         )
         doc_id = reserved["document_id"]
-        storage.receive(document_key("colA", doc_id, ".txt"))
+        storage.receive(document_key("colA", doc_id, ".txt"), data=_typed_bytes(".txt", 20))
         first = await tools.confirm_upload(document_id=doc_id, db=db, principal=MASTER)
         assert first["status"] == "pending"
         # A second confirm on an already-active doc is a no-op 409 (no duplicate job).
@@ -422,6 +442,25 @@ async def test_confirm_upload_oversized_is_413_and_purged(seeded, monkeypatch):
     assert storage.object_head(key) is None  # oversized object was purged
 
 
+async def test_confirm_upload_content_mismatch_is_415_and_purged(seeded, monkeypatch):
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        reserved = await tools.request_upload(
+            collection_id="colA", filename="report.pdf", db=db, principal=MASTER
+        )
+        key = document_key("colA", reserved["document_id"], ".pdf")
+        storage.receive(key, data=b"\x89PNG\r\n\x1a\n\x00\x00\x00\r")  # a PNG, not a PDF
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_upload(
+                document_id=reserved["document_id"], db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 415
+    assert storage.object_head(key) is None  # the mismatched object was purged
+
+
 async def test_request_upload_local_backend_is_400(seeded, monkeypatch):
     factory, _ = seeded
 
@@ -448,6 +487,207 @@ async def test_request_upload_outside_scope_403(seeded, monkeypatch):
                 collection_id="colA", filename="x.txt", db=db, principal=USER
             )
     assert exc.value.status_code == 403
+
+
+# ── Attach an original source file (second object under the same document) ─────
+
+
+async def test_attach_original_roundtrip(seeded, monkeypatch):
+    from api.services.documents import original_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        # docA is already an active document; attach the source PDF its parse came from.
+        reserved = await tools.request_original_upload(
+            document_id="docA", filename="report.pdf", db=db, principal=MASTER
+        )
+        assert reserved["upload_url"].startswith("https://minio.test/put/")
+        # Requested but not yet PUT → not surfaced as present.
+        listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
+        docA = next(d for d in listed["documents"] if d["document_id"] == "docA")
+        assert docA["has_original"] is False
+        # Simulate the client PUT to the presigned URL, then confirm.
+        storage.receive(original_key("colA", "docA", ".pdf"), data=_typed_bytes(".pdf", 456))
+        confirmed = await tools.confirm_original_upload(
+            document_id="docA", db=db, principal=MASTER
+        )
+        assert confirmed["status"] == "attached"
+        assert confirmed["original_file_size"] == 456
+        # Now present in the listing under its original filename.
+        listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
+        docA = next(d for d in listed["documents"] if d["document_id"] == "docA")
+        assert docA["has_original"] is True
+        assert docA["original_filename"] == "report.pdf"
+        # Downloadable via the original flag (distinct from the parse's own bytes).
+        dl = await tools.download_document(
+            document_id="docA", original=True, db=db, principal=MASTER
+        )
+        assert dl["filename"] == "report.pdf"
+        assert original_key("colA", "docA", ".pdf") in dl["url"]
+
+
+async def test_download_original_without_attach_is_404(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.download_document(
+                document_id="docA", original=True, db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 404
+
+
+async def test_confirm_original_without_request_is_409(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        # No request_original_upload → no original_file_type recorded → confirm 409s.
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_original_upload(document_id="docA", db=db, principal=MASTER)
+    assert exc.value.status_code == 409
+
+
+async def test_confirm_original_without_bytes_is_409(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await tools.request_original_upload(
+            document_id="docA", filename="report.pdf", db=db, principal=MASTER
+        )
+        # No client PUT → object_head returns None → confirm 409s.
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_original_upload(document_id="docA", db=db, principal=MASTER)
+    assert exc.value.status_code == 409
+
+
+async def test_attach_original_oversized_is_413_and_purged(seeded, monkeypatch):
+    from api.models.config import AppConfig
+    from api.services.documents import original_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    monkeypatch.setattr(
+        "api.services.documents.get_app_config", lambda: AppConfig(max_file_size_mb=1)
+    )
+    async with factory() as db:
+        await tools.request_original_upload(
+            document_id="docA", filename="big.pdf", db=db, principal=MASTER
+        )
+        key = original_key("colA", "docA", ".pdf")
+        storage.receive(key, size=2 * 1024 * 1024)  # over the 1 MiB cap
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_original_upload(document_id="docA", db=db, principal=MASTER)
+    assert exc.value.status_code == 413
+    assert storage.object_head(key) is None  # oversized object was purged
+
+
+async def test_confirm_original_content_mismatch_is_415_and_purged(seeded, monkeypatch):
+    from api.services.documents import original_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await tools.request_original_upload(
+            document_id="docA", filename="report.pdf", db=db, principal=MASTER
+        )
+        key = original_key("colA", "docA", ".pdf")
+        storage.receive(key, data=b"\x89PNG\r\n\x1a\n\x00\x00\x00\r")  # a PNG, not a PDF
+        with pytest.raises(HTTPException) as exc:
+            await tools.confirm_original_upload(document_id="docA", db=db, principal=MASTER)
+    assert exc.value.status_code == 415
+    assert storage.object_head(key) is None  # the mismatched object was purged
+
+
+async def test_request_original_outside_scope_403(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colA", "read")])  # read, not write
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_original_upload(
+                document_id="docA", filename="report.pdf", db=db, principal=USER
+            )
+    assert exc.value.status_code == 403
+
+
+async def test_request_original_local_backend_is_400(seeded, monkeypatch):
+    factory, _ = seeded
+
+    class _NoPresign:
+        def presigned_put(self, key: str) -> None:
+            return None
+
+    monkeypatch.setattr("api.services.documents.get_storage", lambda cfg, name=None: _NoPresign())
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_original_upload(
+                document_id="docA", filename="report.pdf", db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 400
+
+
+async def test_attach_original_accepts_non_parseable_type(seeded, monkeypatch):
+    # The original is stored for download only — never parsed — so a non-ingestible source type
+    # (e.g. .docx with docling off) is accepted, unlike the parse upload.
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        reserved = await tools.request_original_upload(
+            document_id="docA", filename="source.docx", db=db, principal=MASTER
+        )
+    assert reserved["original_filename"] == "source.docx"
+    assert reserved["upload_url"].startswith("https://minio.test/put/")
+
+
+async def test_attach_original_invalid_extension_is_415(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_original_upload(
+                document_id="docA", filename="badext.h@ck", db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 415
+
+
+async def test_reattach_original_different_ext_deletes_previous(seeded, monkeypatch):
+    from api.services.documents import original_key
+
+    factory, _ = seeded
+    storage = _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await tools.request_original_upload(
+            document_id="docA", filename="src.pdf", db=db, principal=MASTER
+        )
+        pdf_key = original_key("colA", "docA", ".pdf")
+        storage.receive(pdf_key, data=_typed_bytes(".pdf", 100))
+        await tools.confirm_original_upload(document_id="docA", db=db, principal=MASTER)
+        assert storage.object_head(pdf_key) == 100
+        # Re-attach a different type → the previous .pdf object is purged (no orphan leak).
+        reserved = await tools.request_original_upload(
+            document_id="docA", filename="src.docx", db=db, principal=MASTER
+        )
+        assert storage.object_head(pdf_key) is None
+        assert original_key("colA", "docA", ".docx") in reserved["upload_url"]
+        # Back to not-present until the new one is confirmed.
+        listed = await tools.list_documents(collection_id="colA", db=db, principal=MASTER)
+        docA = next(d for d in listed["documents"] if d["document_id"] == "docA")
+        assert docA["has_original"] is False
+
+
+async def test_attach_original_on_deleting_doc_is_409(seeded, monkeypatch):
+    factory, _ = seeded
+    _use_presign_storage(monkeypatch)
+    async with factory() as db:
+        await db.execute(
+            documents_t.update().where(documents_t.c.id == "docA").values(status="deleting")
+        )
+        with pytest.raises(HTTPException) as exc:
+            await tools.request_original_upload(
+                document_id="docA", filename="src.pdf", db=db, principal=MASTER
+            )
+    assert exc.value.status_code == 409
 
 
 async def test_download_document_returns_presigned_url(seeded, monkeypatch):

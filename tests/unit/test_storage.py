@@ -106,6 +106,16 @@ def test_local_local_path_points_under_base(tmp_path):
     assert LocalStorage(tmp_path).local_path("c/d.txt") == tmp_path / "c" / "d.txt"
 
 
+async def test_local_read_head_returns_prefix_and_none_for_missing(tmp_path):
+    store = LocalStorage(tmp_path)
+    src = tmp_path / "s.bin"
+    src.write_bytes(b"%PDF-1.7 hello world")
+    store.put_path(src, "c/d.pdf")
+    assert store.read_head("c/d.pdf", 5) == b"%PDF-"
+    assert store.read_head("c/d.pdf", 999) == b"%PDF-1.7 hello world"  # fewer than n → all bytes
+    assert store.read_head("c/missing.pdf", 8) is None
+
+
 # ── S3 backend (moto) ─────────────────────────────────────────────────────────
 
 
@@ -340,3 +350,20 @@ async def test_s3_put_path_uploads_local_file(tmp_path):
 def test_s3_local_path_is_none():
     with mock_aws():
         assert S3Storage(_s3_cfg()).local_path("c/d.txt") is None  # remote → presign, no FileResponse
+
+
+async def test_s3_read_head_returns_ranged_prefix_and_none_for_missing():
+    with mock_aws():
+        store = S3Storage(_s3_cfg())
+        await store.put_upload(FakeUpload(b"%PDF-1.4 abcdefghij"), "c/d.pdf", max_bytes=1000)
+        assert store.read_head("c/d.pdf", 5) == b"%PDF-"  # ranged GET, not a full download
+        assert store.read_head("c/missing.pdf", 8) is None
+
+
+async def test_s3_read_head_empty_object_returns_empty_bytes():
+    with mock_aws():
+        store = S3Storage(_s3_cfg())
+        store._ensure_bucket()
+        store._s3.put_object(Bucket="embedbase", Key="c/empty.txt", Body=b"")
+        # A ranged read of a 0-byte object → InvalidRange (416) → b"", not an error.
+        assert store.read_head("c/empty.txt", 8) == b""

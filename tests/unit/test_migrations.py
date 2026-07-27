@@ -128,6 +128,18 @@ def test_users_email_is_nullable(tmp_path):
     assert "users_email_unique" in {u["name"] for u in insp.get_unique_constraints("users")}
 
 
+def test_documents_has_original_columns(tmp_path):
+    """0012: documents gains the nullable original-source-file columns (attach an original)."""
+    db_path = str(tmp_path / "orig.db")
+    _apply_migrations(db_path)
+    insp = inspect(create_engine(f"sqlite:///{db_path}", poolclass=NullPool))
+
+    cols = {c["name"]: c for c in insp.get_columns("documents")}
+    for name in ("original_filename", "original_file_type", "original_file_size"):
+        assert name in cols, f"missing column {name!r}"
+        assert cols[name]["nullable"] is True
+
+
 def test_migration_indexes_exist(tmp_path):
     """Expected indexes must be present after all migrations run."""
     db_path = str(tmp_path / "idx.db")

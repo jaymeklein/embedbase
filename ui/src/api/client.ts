@@ -9,6 +9,7 @@
  */
 
 import { getToken, notifyUnauthorized } from './tokenStore'
+import { saveBlob } from '../lib/download'
 import type {
   Accelerator,
   AppConfig,
@@ -307,19 +308,16 @@ export const api = {
     }
   },
   /**
-   * Download a document's original file under its real filename. Uses an anchor
-   * with `download` (not a popup), so no synchronous-gesture trick is needed.
+   * Download a document's file under its real filename. Uses an anchor with
+   * `download` (not a popup), so no synchronous-gesture trick is needed. Pass
+   * `{ original: true }` to fetch the attached original source file instead of the parse.
    */
-  downloadDocument: async (docId: string, filename: string) => {
+  downloadDocument: async (docId: string, filename: string, opts?: { original?: boolean }) => {
     const { headers } = buildHeaders(undefined)
-    const res = await fetch(`${BASE}/documents/${enc(docId)}/raw`, { headers })
+    const path = `/documents/${enc(docId)}/raw${opts?.original ? '?original=1' : ''}`
+    const res = await fetch(`${BASE}${path}`, { headers })
     await raiseForStatus(res)
-    const url = URL.createObjectURL(await res.blob())
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    saveBlob(await res.blob(), filename)
   },
 
   // ── Ingestion queue (job history) ─────────────────────────────────────────

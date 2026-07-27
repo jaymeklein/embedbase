@@ -700,28 +700,46 @@ def clear_embedding_pause() -> None:
 
 
 def _delete_stored_object(document_id: str, collection_id: str) -> None:
-    """Delete a document's stored original from its backend (best-effort).
+    """Delete a document's stored objects from its backend (best-effort).
 
-    Reads the backend + file type from the still-present row to rebuild the storage
-    key, then deletes. Fully best-effort: any failure (row read or backend delete) is
-    logged, not raised, so the vector/row cleanup still proceeds — a leaked object is
-    strictly better than a stuck delete.
+    Reads the backend + file type(s) from the still-present row to rebuild the storage
+    key(s), then deletes the parse and any attached original source file. Fully best-effort:
+    any failure (row read or backend delete) is logged, not raised, so the vector/row cleanup
+    still proceeds — a leaked object is strictly better than a stuck delete.
     """
     try:
         with SessionLocal() as db:
             meta = db.execute(
-                select(documents.c.storage_backend, documents.c.file_type)
+                select(
+                    documents.c.storage_backend,
+                    documents.c.file_type,
+                    documents.c.original_file_type,
+                )
                 .where(documents.c.id == document_id)
             ).fetchone()
         if meta is None:
             return
-        from api.services.documents import document_key
+        from api.services.documents import document_key, original_key
         from api.services.storage import get_storage
 
-        key = document_key(collection_id, document_id, meta.file_type)
-        get_storage(get_config().storage, meta.storage_backend or "local").delete(key)
-    except Exception as exc:  # best-effort: never block row/vector cleanup
+        storage = get_storage(get_config().storage, meta.storage_backend or "local")
+    except Exception as exc:  # row read / backend resolve failed — nothing safe to delete
         logger.warning("stored object delete skipped", document_id=document_id, error=str(exc))
+        return
+
+    # The parse and any attached original are independent objects — delete each on its own so a
+    # failure on one never leaks the other. The original is keyed off original_file_type (set when
+    # the upload is *requested*), so a PUT-but-never-confirmed original is reaped too. Best-effort.
+    keys = [document_key(collection_id, document_id, meta.file_type)]
+    if meta.original_file_type:
+        keys.append(original_key(collection_id, document_id, meta.original_file_type))
+    for key in keys:
+        try:
+            storage.delete(key)
+        except Exception as exc:  # best-effort: never block row/vector cleanup
+            logger.warning(
+                "stored object delete skipped", document_id=document_id, key=key, error=str(exc)
+            )
 
 
 # ---------------------------------------------------------------------------

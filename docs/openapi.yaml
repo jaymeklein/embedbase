@@ -975,10 +975,13 @@ paths:
       tags:
       - documents
       summary: Get Document Raw
-      description: 'Serve a document''s original bytes: inline FileResponse (local)
-        or 302 to a
+      description: 'Serve a document''s bytes: inline FileResponse (local) or 302
+        to a presigned URL
 
-        presigned URL (S3), resolved from the document''s storage backend.'
+        (S3), resolved from the document''s storage backend. ``?original=1`` serves
+        the attached
+
+        original source file instead of the parse (404 if none is attached).'
       operationId: get_document_raw_documents__doc_id__raw_get
       parameters:
       - name: doc_id
@@ -987,6 +990,15 @@ paths:
         schema:
           type: string
           title: Doc Id
+      - name: original
+        in: query
+        required: false
+        schema:
+          type: boolean
+          description: Serve the attached original source file instead of the parse.
+          default: false
+          title: Original
+        description: Serve the attached original source file instead of the parse.
       - name: authorization
         in: header
         required: false

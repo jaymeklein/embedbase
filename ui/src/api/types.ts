@@ -233,6 +233,12 @@ export interface DocumentSummary {
   embedding_model?: string | null
   /** Storage backend holding the file (`local` / a configured S3 name). */
   storage_backend?: string | null
+  /** Whether an original source file is attached alongside the parse (downloadable). */
+  has_original?: boolean
+  /** Filename of the attached original source file, when `has_original`. */
+  original_filename?: string | null
+  /** Size (bytes) of the attached original source file, when `has_original`. */
+  original_file_size?: number | null
 }
 
 /** `GET .../documents` — one page of documents plus the full match count for the pager. */
