@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_PRESIGN_EXPIRY = 3600  # seconds a presigned download URL stays valid
+PRESIGN_EXPIRY = 3600  # seconds a presigned upload/download URL stays valid
 
 
 def _guess_content_type(name: str) -> str:
@@ -73,6 +73,15 @@ class Storage(ABC):
         """A short-lived download URL, or ``None`` for local (served via FileResponse)."""
 
     @abstractmethod
+    def presigned_put(self, key: str) -> str | None:
+        """A short-lived upload URL the client ``PUT``s bytes to, or ``None`` when the
+        backend can't presign (local disk — clients upload via the REST endpoint instead)."""
+
+    @abstractmethod
+    def object_head(self, key: str) -> int | None:
+        """The stored object's size in bytes, or ``None`` if it does not exist."""
+
+    @abstractmethod
     def local_path(self, key: str) -> Path | None:
         """The on-disk path for a ``FileResponse``, or ``None`` for remote backends."""
 
@@ -105,6 +114,13 @@ class LocalStorage(Storage):
 
     def presigned_get(self, key: str, filename: str) -> str | None:
         return None  # local downloads use FileResponse, not a redirect
+
+    def presigned_put(self, key: str) -> str | None:
+        return None  # no presign on local disk — clients upload via the REST endpoint
+
+    def object_head(self, key: str) -> int | None:
+        path = self._path(key)
+        return path.stat().st_size if path.is_file() else None
 
     def local_path(self, key: str) -> Path | None:
         return self._path(key)
@@ -272,8 +288,31 @@ class S3Storage(Storage):
                 "ResponseContentType": _guess_content_type(filename),
                 "ResponseContentDisposition": f'inline; filename="{safe}"',
             },
-            ExpiresIn=_PRESIGN_EXPIRY,
+            ExpiresIn=PRESIGN_EXPIRY,
         )
+
+    def presigned_put(self, key: str) -> str | None:
+        # Signed against the *public* endpoint the client reaches (same as presigned_get).
+        # Content-Type is deliberately NOT signed, so the client can PUT with any/no
+        # content-type header; downloads override it via presigned_get's ResponseContentType.
+        self._ensure_bucket()
+        return self._presign_s3.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=PRESIGN_EXPIRY,
+        )
+
+    def object_head(self, key: str) -> int | None:
+        from botocore.exceptions import ClientError
+
+        try:
+            resp = self._s3.head_object(Bucket=self._bucket, Key=key)
+        except ClientError as exc:
+            # A missing object is the expected "not uploaded yet" signal, not an error.
+            if exc.response["Error"]["Code"] in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise
+        return int(resp["ContentLength"])
 
     def local_path(self, key: str) -> Path | None:
         return None  # remote object — served via presigned_get, not FileResponse

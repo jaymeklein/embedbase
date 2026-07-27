@@ -57,7 +57,7 @@ export function UserKeyModal({
     })
 
   return (
-    <Modal open={open} onClose={onClose} title={`API key — ${user.email}`} className="max-w-lg">
+    <Modal open={open} onClose={onClose} title={`API key — ${user.email ?? user.username}`} className="max-w-lg">
       {minted ? (
         // Close on Done rather than returning to the management view: the `user`
         // prop is a frozen snapshot, so its key metadata is stale post-rotation.

@@ -26,6 +26,16 @@ class FileTooLargeError(HTTPException):
         )
 
 
+def resolve_max_bytes(max_bytes: int | None) -> int:
+    """The effective upload size cap — the caller's configured limit, or the fallback default.
+
+    Shared so the streaming guard (:func:`stream_upload_with_size_guard`) and the presigned-upload
+    confirm check (``documents.confirm_upload``) apply the *same* limit — the presigned PUT lands
+    bytes in storage directly, bypassing the stream guard, so confirm re-checks the size here.
+    """
+    return max_bytes if max_bytes is not None else _DEFAULT_MAX_BYTES
+
+
 async def stream_upload_with_size_guard(
     upload: UploadFile,
     dest_path: str | Path,
@@ -38,7 +48,7 @@ async def stream_upload_with_size_guard(
     fast-path rejection before reading any body, then re-checks the running total
     while streaming (the header is advisory and may be absent or wrong).
     """
-    limit = max_bytes if max_bytes is not None else _DEFAULT_MAX_BYTES
+    limit = resolve_max_bytes(max_bytes)
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")

@@ -22,6 +22,21 @@ import {
   useToast,
 } from '../ui'
 
+/** Grantable capabilities — privileges not tied to a resource (backend `_CAPABILITIES`).
+ *  The `id` must match the backend capability string. */
+const CAPABILITIES = [
+  {
+    id: 'create_workspace',
+    label: 'Create workspaces',
+    help: 'Lets this user create new workspaces — they get write access to any they create.',
+  },
+  {
+    id: 'manage_tags',
+    label: 'Manage tags',
+    help: 'Lets this user create, edit, delete, and assign tags in any workspace they can read.',
+  },
+] as const
+
 /**
  * Permission editor for one user. Permissions SCOPE A USER DOWN: with none the user
  * sees and writes everything; each permission narrows what they reach. A workspace
@@ -93,6 +108,7 @@ function GrantForm({ userId }: { userId: string }) {
   const [wsId, setWsId] = useState('')
   const [colId, setColId] = useState('')
   const [docId, setDocId] = useState('')
+  const [capabilityId, setCapabilityId] = useState<string>(CAPABILITIES[0].id)
   const [level, setLevel] = useState<PermissionLevel>('read')
   const toast = useToast()
 
@@ -102,7 +118,7 @@ function GrantForm({ userId }: { userId: string }) {
 
   const resourceId =
     resourceType === 'capability'
-      ? 'create_workspace'
+      ? capabilityId
       : resourceType === 'workspace'
         ? wsId
         : resourceType === 'collection'
@@ -140,7 +156,7 @@ function GrantForm({ userId }: { userId: string }) {
             <option value="workspace">Workspace</option>
             <option value="collection">Collection</option>
             <option value="document">Document</option>
-            <option value="capability">Create workspaces</option>
+            <option value="capability">Capability</option>
           </Select>
         </Field>
         {resourceType !== 'capability' && (
@@ -154,9 +170,18 @@ function GrantForm({ userId }: { userId: string }) {
       </div>
 
       {resourceType === 'capability' && (
-        <p className="text-xs text-ink-muted">
-          Lets this user create new workspaces — they get write access to any they create.
-        </p>
+        <Field label="Capability">
+          <Select value={capabilityId} onChange={(e) => setCapabilityId(e.target.value)}>
+            {CAPABILITIES.map((cap) => (
+              <option key={cap.id} value={cap.id}>
+                {cap.label}
+              </option>
+            ))}
+          </Select>
+          <p className="mt-1.5 text-xs text-ink-muted">
+            {CAPABILITIES.find((cap) => cap.id === capabilityId)?.help}
+          </p>
+        </Field>
       )}
 
       {resourceType === 'workspace' && (

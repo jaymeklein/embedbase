@@ -63,6 +63,7 @@ def _serialize_user(row: Any, api_key: dict[str, Any] | None) -> dict[str, Any]:
         "name": row.name,
         "is_active": bool(row.is_active),
         "is_admin": bool(row.is_admin),
+        "rate_limit_rpm": int(row.rate_limit_rpm or 0),
         "must_change_password": bool(row.must_change_password),
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -107,14 +108,24 @@ async def _require_username_free(
 
 
 async def create_user(
-    username: str, email: str, name: str, is_active: bool, is_admin: bool, db: AsyncSession
+    username: str,
+    email: str | None,
+    name: str,
+    is_active: bool,
+    is_admin: bool,
+    db: AsyncSession,
+    *,
+    rate_limit_rpm: int = 0,
 ) -> dict[str, Any]:
-    """Create a user (unique username + email) with a random one-time password.
+    """Create a user (unique username; email optional) with a random one-time password.
 
     Returns the user plus ``temp_password`` — shown **once** (like a minted key);
-    the user must change it on first login. No API key is minted yet.
+    the user must change it on first login. No API key is minted yet. ``email`` may be
+    ``None`` (an account is identified by its username). ``rate_limit_rpm`` is the per-user
+    MCP override (0 = inherit the global default).
     """
-    await _require_email_free(email, db)
+    if email is not None:
+        await _require_email_free(email, db)
     await _require_username_free(username, db)
     now = _now()
     user_id = f"usr_{uuid4().hex[:12]}"
@@ -122,7 +133,7 @@ async def create_user(
     await db.execute(
         insert(users_t).values(
             id=user_id, username=username, email=email, name=name,
-            is_active=is_active, is_admin=is_admin,
+            is_active=is_active, is_admin=is_admin, rate_limit_rpm=rate_limit_rpm,
             password_hash=session.hash_password(temp_password),
             must_change_password=True, password_changed_at=now,
             created_at=now, updated_at=now,
@@ -166,15 +177,19 @@ async def get_user(user_id: str, db: AsyncSession) -> dict[str, Any]:
 
 
 async def update_user(user_id: str, body: UserUpdate, db: AsyncSession) -> dict[str, Any]:
-    """Apply the non-null fields of ``body`` (username/name/email/is_active/is_admin).
+    """Apply the provided fields of ``body`` (username/name/email/is_active/is_admin/rate_limit_rpm).
 
-    Passwords are not updatable here — use :func:`reset_password` (admin) or
-    :func:`change_password` (self-service).
+    Email is optional: an explicitly-provided blank clears it (set to NULL). Passwords are
+    not updatable here — use :func:`reset_password` (admin) or :func:`change_password`.
     """
     await require_user(user_id, db)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
-    if "email" in updates:
-        await _require_email_free(updates["email"], db, exclude_id=user_id)
+    # Email is nullable, so a provided blank/null must clear it — the None-filter above
+    # would otherwise drop it as "field omitted". model_fields_set distinguishes the two.
+    if "email" in body.model_fields_set:
+        updates["email"] = body.email
+        if body.email is not None:
+            await _require_email_free(body.email, db, exclude_id=user_id)
     if "username" in updates:
         await _require_username_free(updates["username"], db, exclude_id=user_id)
     if updates:

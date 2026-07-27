@@ -113,6 +113,21 @@ def test_users_has_login_columns(tmp_path):
     assert users_idx["users_username_key"]["unique"]  # SQLite reports this as 1
 
 
+def test_users_email_is_nullable(tmp_path):
+    """0011: users.email is relaxed to nullable (optional email) while the unique index stays."""
+    db_path = str(tmp_path / "email.db")
+    _apply_migrations(db_path)
+    insp = inspect(create_engine(f"sqlite:///{db_path}", poolclass=NullPool))
+
+    cols = {c["name"]: c for c in insp.get_columns("users")}
+    assert cols["email"]["nullable"] is True
+    # The unique username index survives the batch table rebuild that 0011 performs.
+    assert "users_username_key" in {idx["name"] for idx in insp.get_indexes("users")}
+    # UNIQUE(email) must also survive the rebuild — the whole feature relies on it still
+    # forbidding duplicate addresses (while permitting multiple NULLs).
+    assert "users_email_unique" in {u["name"] for u in insp.get_unique_constraints("users")}
+
+
 def test_migration_indexes_exist(tmp_path):
     """Expected indexes must be present after all migrations run."""
     db_path = str(tmp_path / "idx.db")

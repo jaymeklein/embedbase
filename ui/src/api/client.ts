@@ -26,6 +26,7 @@ import type {
   JobQuery,
   JobStats,
   JobStatus,
+  McpToolCatalog,
   MintedUserKey,
   Permission,
   ResetPasswordResponse,
@@ -246,10 +247,16 @@ export const api = {
     request<DocumentListResponse>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents${toQueryString(query)}`,
     ),
-  uploadDocument: (wsId: string, colId: string, file: File, temporary = false) => {
+  uploadDocument: (
+    wsId: string,
+    colId: string,
+    file: File,
+    retentionDays: number | null = null,
+  ) => {
     const form = new FormData()
     form.append('file', file)
-    if (temporary) form.append('temporary', 'true')
+    // Omit for a permanent document; 1-30 keeps it that many days (server validates).
+    if (retentionDays != null) form.append('retention_days', String(retentionDays))
     return request<UploadAccepted>(
       `/workspaces/${enc(wsId)}/collections/${enc(colId)}/documents`,
       { method: 'POST', body: form },
@@ -344,6 +351,11 @@ export const api = {
   listOllamaModels: (baseUrl?: string) =>
     request<string[]>(`/config/ollama-models${baseUrl ? `?base_url=${enc(baseUrl)}` : ''}`),
   getAccelerator: () => request<Accelerator>('/config/accelerator'),
+
+  // ── MCP ───────────────────────────────────────────────────────────────────
+  // The tool catalogue is introspected live from the server, so the MCP settings page + SKILL.md
+  // never drift from the registered tools.
+  mcpTools: () => request<McpToolCatalog>('/mcp-tools'),
 
   // ── System ────────────────────────────────────────────────────────────────
   healthz: () => request<Health>('/healthz'),

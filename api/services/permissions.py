@@ -62,8 +62,12 @@ NO_READABLE_COLLECTIONS = "API key not authorized to read the requested collecti
 # permissions table as ``resource_type="capability"`` and ignored by data-scope
 # resolution, so a capability grant never scopes a user's read/write access.
 CAP_CREATE_WORKSPACE = "create_workspace"
-_CAPABILITIES = {CAP_CREATE_WORKSPACE}
-_CAPABILITY_LABELS = {CAP_CREATE_WORKSPACE: "Create workspaces"}
+CAP_MANAGE_TAGS = "manage_tags"
+_CAPABILITIES = {CAP_CREATE_WORKSPACE, CAP_MANAGE_TAGS}
+_CAPABILITY_LABELS = {
+    CAP_CREATE_WORKSPACE: "Create workspaces",
+    CAP_MANAGE_TAGS: "Manage tags",
+}
 
 
 def _denied(need: str) -> str:
@@ -376,6 +380,33 @@ async def filter_workspace_tree(
     return filtered
 
 
+async def filter_tag_items(
+    db: AsyncSession, principal: Principal, items: dict[str, Any]
+) -> dict[str, Any]:
+    """Prune a ``tag_items`` payload to the collections/documents ``principal`` may read.
+
+    ``tag_items`` enumerates every collection + active document carrying a tag across the whole
+    workspace; without this a *scoped* tag-manager (``manage_tags`` capability + only a
+    collection/document grant) could read resource names their data grants otherwise hide. Master
+    and no-permission users keep everything (``readable_collection_ids`` returns all candidates); a
+    scoped user keeps only browse-readable collections and documents in a browse-readable
+    collection. (A document reachable *only* via a direct document grant is dropped — safe
+    under-inclusion, since a tag-manager normally holds collection/workspace grants.)
+    """
+    cols = items.get("collections", [])
+    docs = items.get("documents", [])
+    readable_cols = set(
+        await readable_collection_ids(db, principal, [c["id"] for c in cols])
+    )
+    readable_doc_cols = set(
+        await readable_collection_ids(db, principal, [d["collection_id"] for d in docs])
+    )
+    return {
+        "collections": [c for c in cols if c["id"] in readable_cols],
+        "documents": [d for d in docs if d["collection_id"] in readable_doc_cols],
+    }
+
+
 async def readable_workspace_ids(
     db: AsyncSession, principal: Principal, candidate_ids: list[str]
 ) -> list[str]:
@@ -472,6 +503,25 @@ async def authorize_workspace_creation(db: AsyncSession, principal: Principal) -
     """
     if not await has_capability(db, principal, CAP_CREATE_WORKSPACE):
         raise HTTPException(403, "Not authorized to create workspaces")
+
+
+async def authorize_tag_management(
+    db: AsyncSession, principal: Principal, workspace_id: str
+) -> None:
+    """Raise ``403`` unless ``principal`` may manage ``workspace_id``'s tags.
+
+    Master/admin always may; a non-admin needs the ``manage_tags`` capability grant **and**
+    read access to the workspace — so a capability holder can't reach tags in a workspace
+    outside their scope. Like ``create_workspace``, the capability is a deliberate privilege a
+    no-permission user does *not* get implicitly; read visibility then scopes *which*
+    workspaces' tags they can touch. Gates the workspace-level tag routes (create/update/
+    delete/merge/list) — the finer collection/document assignment routes layer a
+    ``authorize_collection``/``authorize_document`` write check on top. The MCP tag tools reuse
+    this same authority.
+    """
+    if not await has_capability(db, principal, CAP_MANAGE_TAGS):
+        raise HTTPException(403, "Not authorized to manage tags")
+    await authorize_workspace(db, principal, workspace_id, "read")
 
 
 async def grant_creator_access(

@@ -65,4 +65,7 @@ async def me(
     user["can_create_workspaces"] = await permissions.has_capability(
         db, principal, permissions.CAP_CREATE_WORKSPACE
     )
+    user["can_manage_tags"] = await permissions.has_capability(
+        db, principal, permissions.CAP_MANAGE_TAGS
+    )
     return user

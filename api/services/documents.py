@@ -15,10 +15,11 @@ from uuid import uuid4
 import structlog
 from fastapi import HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import and_, delete, func, insert, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.adapters.parsers import DOCLING_EXTENSIONS, supported_extensions
+from api.constants import MAX_RETENTION_DAYS, MIN_RETENTION_DAYS
 from api.db import collections as col_t
 from api.db import documents as doc_t
 from api.db import job_records as job_t
@@ -30,9 +31,15 @@ from api.services import tasks as task_producer
 from api.services.auth import Principal
 from api.services.document_filters import build_specs, latest_status_subquery
 from api.services.filters import to_conditions
-from api.services.storage import get_storage
+from api.services.storage import PRESIGN_EXPIRY, Storage, get_storage
+from api.services.upload import FileTooLargeError, resolve_max_bytes
 
 logger = structlog.get_logger()
+
+# Status marker for a document reserved by ``create_upload`` whose bytes have not yet been
+# PUT to the presigned URL. Excluded from listings (which filter ``status IS NULL``) until
+# ``confirm_upload`` flips it active; distinct from the ``deleting`` tombstone.
+_AWAITING_UPLOAD = "awaiting_upload"
 
 
 def _storage_config() -> StorageConfig:
@@ -74,18 +81,23 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _expiry(storage_cfg: StorageConfig, temporary: bool) -> datetime | None:
-    """Absolute purge time for a temporary upload, or None (permanent).
+def _expiry(retention_days: int | None) -> datetime | None:
+    """Absolute purge time for a temporary upload, or ``None`` (permanent).
 
-    A temporary upload lives ``temp_retention_hours`` from now; the feature is off
-    (returns None) when the upload isn't flagged temporary or retention is 0 — so a
-    ``temporary=true`` upload with retention 0 is byte-identical to a normal one.
-    Naive UTC to match the stored column (see api/tables/documents.py).
+    ``retention_days`` keeps the document that many days from now; the worker sweep
+    (``purge_expired_documents``) deletes it once ``expires_at`` passes. ``None`` means
+    permanent. A value outside ``[MIN_RETENTION_DAYS, MAX_RETENTION_DAYS]`` is rejected at
+    this single chokepoint, so every upload path (REST + MCP) validates identically. Naive
+    UTC to match the stored column (see api/tables/documents.py).
     """
-    hours = storage_cfg.temp_retention_hours
-    if not temporary or hours <= 0:
+    if retention_days is None:
         return None
-    return datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=hours)
+    if not MIN_RETENTION_DAYS <= retention_days <= MAX_RETENTION_DAYS:
+        raise HTTPException(
+            422,
+            f"retention_days must be between {MIN_RETENTION_DAYS} and {MAX_RETENTION_DAYS}",
+        )
+    return datetime.now(UTC).replace(tzinfo=None) + timedelta(days=retention_days)
 
 
 async def resolve_collection(
@@ -191,6 +203,8 @@ async def reprocess_document(db: AsyncSession, col_id: str, doc_id: str) -> dict
         raise HTTPException(404, f"Document {doc_id!r} not found")
     if row.status == "deleting":
         raise HTTPException(409, "Document is being deleted; cannot reprocess")
+    if row.status == _AWAITING_UPLOAD:
+        raise HTTPException(409, "Document upload not confirmed yet; cannot reprocess")
     # Don't pile a duplicate onto a document that's already queued or running — that attempt will
     # finish, or the beat sweep resumes it. Minting a second job_id here would defeat _claim_job's
     # dedup (it keys on job_id) and, under a multi-process worker, embed the document twice. Return
@@ -222,14 +236,18 @@ async def reprocess_document(db: AsyncSession, col_id: str, doc_id: str) -> dict
 
 async def ingest(
     db: AsyncSession, col_id: str, file: UploadFile, principal: Principal,
-    *, temporary: bool = False,
+    *, retention_days: int | None = None,
 ) -> dict:
     """Validate, stream, record, and enqueue an uploaded document for ingestion.
 
-    When ``temporary`` is set and ``storage.temp_retention_hours > 0`` the document
-    is stamped with an ``expires_at`` and later auto-purged by the worker sweep.
+    ``retention_days`` (1-30) stamps the document with an ``expires_at`` so the worker
+    sweep auto-purges it after that many days; ``None`` means permanent. An out-of-range
+    value is rejected (422) before any bytes are streamed.
     """
     await permissions.authorize_collection(db, principal, col_id, "write")
+    # Validate + resolve the purge time up front, so a bad retention_days 422s before an
+    # oversize/slow upload streams any bytes into storage.
+    expires_at = _expiry(retention_days)
 
     filename = file.filename or "upload"
     ext = os.path.splitext(filename)[1].lower()
@@ -248,19 +266,20 @@ async def ingest(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
         filename=filename, ext=ext, size=size, file_path=key,
         storage_backend=storage_cfg.default,
-        expires_at=_expiry(storage_cfg, temporary),
+        expires_at=expires_at,
     )
 
 
 async def ingest_local_path(
     db: AsyncSession, col_id: str, file_path: str, principal: Principal,
-    *, temporary: bool = False,
+    *, retention_days: int | None = None,
 ) -> dict:
     """Record + enqueue a container-local file for ingestion (MCP ingest tool).
 
     Unlike :func:`ingest`, the bytes are already on disk at ``file_path`` (a path
-    the MCP client can see inside the container), so nothing is streamed. ``temporary``
-    behaves as in :func:`ingest` (stamps ``expires_at`` when retention is enabled).
+    the MCP client can see inside the container), so nothing is streamed.
+    ``retention_days`` behaves as in :func:`ingest` (1-30 stamps ``expires_at``; ``None``
+    is permanent).
 
     **Master-only.** Referencing an arbitrary container-local path can copy any file
     the server can reach (another tenant's document store, server files) into the
@@ -270,11 +289,13 @@ async def ingest_local_path(
 
     Raises:
         HTTPException: 403 if the principal is not the master key, 415 for an
-            unsupported extension, or 404 if ``file_path`` does not exist.
+            unsupported extension, 422 for an out-of-range ``retention_days``, or 404 if
+            ``file_path`` does not exist.
     """
     if not principal.is_master:
         raise HTTPException(403, "Ingesting a container-local file path requires the master key")
 
+    expires_at = _expiry(retention_days)  # validate 1-30 before touching storage
     path = Path(file_path)
     ext = path.suffix.lower()
     config = get_app_config()
@@ -293,8 +314,116 @@ async def ingest_local_path(
         db, col_id=col_id, doc_id=doc_id, job_id=job_id,
         filename=path.name, ext=ext, size=path.stat().st_size, file_path=key,
         storage_backend=storage_cfg.default,
-        expires_at=_expiry(storage_cfg, temporary),
+        expires_at=expires_at,
     )
+
+
+async def create_upload(
+    db: AsyncSession, col_id: str, filename: str, principal: Principal,
+    *, retention_days: int | None = None,
+) -> dict:
+    """Reserve a document and return a **presigned PUT URL** for a direct-to-storage upload.
+
+    Step one of the two-step MCP upload (there is no shared filesystem over the stateless MCP
+    transport, so bytes never ride the tool call): the caller ``PUT``s the file to ``upload_url``,
+    then calls :func:`confirm_upload` to verify the object landed and enqueue ingestion. The
+    document row is inserted now with status ``awaiting_upload`` (hidden from listings) so its id
+    is durable across the two calls; ``retention_days`` (1-30) stamps ``expires_at`` up front.
+
+    Requires ``write`` on ``col_id``. Only backends that can presign (S3/MinIO) support this — on
+    local-disk storage it raises 400 and the caller uploads via the REST endpoint instead.
+    """
+    await permissions.authorize_collection(db, principal, col_id, "write")
+    expires_at = _expiry(retention_days)  # validate 1-30 before reserving anything
+    ext = os.path.splitext(filename or "upload")[1].lower()
+    config = get_app_config()
+    _reject_unsupported(ext, config.parsers if config else None)
+
+    doc_id = f"doc_{uuid4().hex[:12]}"
+    storage_cfg = _storage_config()
+    key = document_key(col_id, doc_id, ext)
+    upload_url = get_storage(storage_cfg).presigned_put(key)
+    if upload_url is None:
+        raise HTTPException(
+            400,
+            "Presigned upload requires an S3/MinIO storage backend; on local-disk storage "
+            "upload the file through the REST endpoint instead.",
+        )
+    now = _now()
+    await db.execute(
+        insert(doc_t).values(
+            id=doc_id, collection_id=col_id, filename=filename or "upload", file_type=ext,
+            file_size=None, chunk_count=None, storage_backend=storage_cfg.default,
+            status=_AWAITING_UPLOAD, expires_at=expires_at, created_at=now, updated_at=now,
+        )
+    )
+    await db.commit()
+    return {
+        "document_id": doc_id, "collection_id": col_id, "filename": filename or "upload",
+        "upload_url": upload_url, "method": "PUT", "url_expires_in": PRESIGN_EXPIRY,
+        "status": _AWAITING_UPLOAD,
+    }
+
+
+async def confirm_upload(db: AsyncSession, doc_id: str, principal: Principal) -> dict:
+    """Finalize a presigned upload: verify the bytes landed, then enqueue ingestion.
+
+    Step two of the two-step MCP upload. Requires ``write`` on the document. The document must be
+    in ``awaiting_upload`` (else 409) and its object must exist in storage (else 409 — the caller
+    hasn't ``PUT`` the file yet). Records the real object size, flips the row active, and enqueues
+    a fresh ingest job via the shared pipeline. Idempotency is via the ``awaiting_upload`` guard —
+    a second call after activation gets a 409.
+    """
+    await permissions.authorize_document(db, principal, doc_id, "write")
+    row = (
+        await db.execute(
+            select(
+                doc_t.c.collection_id, doc_t.c.filename, doc_t.c.file_type, doc_t.c.status,
+                doc_t.c.storage_backend,
+            ).where(doc_t.c.id == doc_id)
+        )
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, f"Document {doc_id!r} not found")
+    if row.status != _AWAITING_UPLOAD:
+        raise HTTPException(409, "Document is not awaiting an upload (already confirmed?)")
+
+    key = document_key(row.collection_id, doc_id, row.file_type)
+    storage = get_storage(_storage_config(), row.storage_backend or "local")
+    size = storage.object_head(key)
+    if size is None:
+        raise HTTPException(409, "No uploaded bytes found — PUT the file to the upload_url first")
+
+    # The presigned PUT lands bytes straight in storage, bypassing the REST stream size guard, so
+    # re-enforce the same cap here: purge the oversized object rather than ingest it.
+    config = get_app_config()
+    limit = resolve_max_bytes(config.max_file_size_bytes if config else None)
+    if size > limit:
+        storage.delete(key)
+        raise FileTooLargeError(limit)
+
+    # Status-guarded flip is the idempotency point: a concurrent second confirm matches 0 rows
+    # (the first already flipped it active) and must NOT go on to enqueue a duplicate ingest job.
+    # A blocked loser waits on the winner's row lock, then re-evaluates the WHERE → 0 rows. The
+    # flip + job insert commit together in _create_pending_job_and_enqueue (atomic, so a crash
+    # can't leave the doc active with no job).
+    result: Any = await db.execute(
+        update(doc_t)
+        .where(doc_t.c.id == doc_id, doc_t.c.status == _AWAITING_UPLOAD)
+        .values(file_size=size, status=None, updated_at=_now())
+    )
+    if result.rowcount == 0:
+        raise HTTPException(409, "Document is not awaiting an upload (already confirmed?)")
+    job_id = f"job_{uuid4().hex[:12]}"
+    await _create_pending_job_and_enqueue(
+        db, col_id=row.collection_id, doc_id=doc_id, job_id=job_id,
+        filename=row.filename, ext=row.file_type, file_path=key,
+    )
+    return {
+        "job_id": job_id, "document_id": doc_id, "collection_id": row.collection_id,
+        "filename": row.filename, "file_type": row.file_type, "file_size": size,
+        "status": "pending",
+    }
 
 
 async def list_documents(db: AsyncSession, col_id: str, query: DocumentListQuery) -> dict:
@@ -364,8 +493,10 @@ async def get_document_status(
             )
         )
     ).fetchone()
-    if doc_row and doc_row.status == "deleting":
-        return {"status": "deleting", "document_id": doc_id}
+    # A soft-status row (deleting tombstone, or awaiting_upload before confirm) has no job yet —
+    # report the lifecycle state directly rather than 404ing on the missing job.
+    if doc_row and doc_row.status in ("deleting", _AWAITING_UPLOAD):
+        return {"status": doc_row.status, "document_id": doc_id}
     row = (
         await db.execute(
             select(job_t)
@@ -384,10 +515,16 @@ async def delete_document(db: AsyncSession, col_id: str, doc_id: str) -> None:
     Marks the document row as ``status='deleting'`` instead of removing it so
     the worker has a durable tombstone to retry against if the first cleanup
     attempt fails. The worker hard-deletes the row after all stores are clean.
+    An ``awaiting_upload`` reservation is also deletable here, so a caller can cancel a
+    presigned upload it never completed.
     """
     result: Any = await db.execute(
         update(doc_t)
-        .where(doc_t.c.id == doc_id, doc_t.c.collection_id == col_id, doc_t.c.status.is_(None))
+        .where(
+            doc_t.c.id == doc_id,
+            doc_t.c.collection_id == col_id,
+            or_(doc_t.c.status.is_(None), doc_t.c.status == _AWAITING_UPLOAD),
+        )
         .values(status="deleting", updated_at=_now())
     )
     if result.rowcount == 0:
@@ -429,8 +566,26 @@ async def resolve_document_download(
         HTTPException: 404 if the document or its file is gone, 403 if the
             principal cannot access the owning collection.
     """
-    # Authorize before fetching so an unpermitted caller can't tell "forbidden"
-    # (403) from "nonexistent" (404) — both are 403.
+    storage, key, filename = await _resolve_storage_and_key(db, doc_id, principal)
+    url = storage.presigned_get(key, filename)
+    if url is not None:
+        return RedirectResponse(url, status_code=302)
+
+    path = storage.local_path(key)
+    if path is None or not path.is_file():
+        raise HTTPException(404, "Original file is no longer available")
+    return FileResponse(path, filename=filename, content_disposition_type="inline")
+
+
+async def _resolve_storage_and_key(
+    db: AsyncSession, doc_id: str, principal: Principal
+) -> tuple[Storage, str, str]:
+    """Authorize read on ``doc_id`` then resolve its ``(storage, key, filename)``.
+
+    Shared by the REST download (:func:`resolve_document_download`, → ``Response``) and the MCP
+    download (:func:`resolve_download_url`, → presigned-URL dict). Authorizes *before* fetching so
+    an unpermitted caller can't tell "forbidden" (403) from "nonexistent" (404) — both are 403.
+    """
     await permissions.authorize_document(db, principal, doc_id, "read")
     row = (
         await db.execute(
@@ -442,19 +597,36 @@ async def resolve_document_download(
     ).fetchone()
     if not row:
         raise HTTPException(404, f"Document {doc_id!r} not found")
-
     # NULL storage_backend = ingested before the column existed → bytes on local disk.
     storage = get_storage(_storage_config(), row.storage_backend or "local")
-    key = document_key(row.collection_id, doc_id, row.file_type)
+    return storage, document_key(row.collection_id, doc_id, row.file_type), row.filename
 
-    url = storage.presigned_get(key, row.filename)
+
+async def resolve_download_url(
+    db: AsyncSession, doc_id: str, principal: Principal
+) -> dict:
+    """Return a presigned **GET** URL for a document's bytes (the MCP download tool).
+
+    Requires ``read`` on the document. For an S3/MinIO backend returns ``{document_id, filename,
+    url, url_expires_in}``; a local-disk backend can't presign, so it returns a ``notice`` pointing
+    at the REST byte endpoint instead (``url`` is ``None``).
+    """
+    storage, key, filename = await _resolve_storage_and_key(db, doc_id, principal)
+    url = storage.presigned_get(key, filename)
     if url is not None:
-        return RedirectResponse(url, status_code=302)
-
-    path = storage.local_path(key)
-    if path is None or not path.is_file():
+        return {
+            "document_id": doc_id, "filename": filename,
+            "url": url, "url_expires_in": PRESIGN_EXPIRY,
+        }
+    if storage.object_head(key) is None:
         raise HTTPException(404, "Original file is no longer available")
-    return FileResponse(path, filename=row.filename, content_disposition_type="inline")
+    return {
+        "document_id": doc_id, "filename": filename, "url": None,
+        "notice": (
+            "This document is on local-disk storage, which can't presign. Fetch its bytes from "
+            f"the REST endpoint GET /documents/{doc_id}/raw."
+        ),
+    }
 
 
 async def resolve_document_collection(db: AsyncSession, doc_id: str) -> str:

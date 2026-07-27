@@ -28,6 +28,112 @@ paths:
           content:
             application/json:
               schema: {}
+  /auth/login:
+    post:
+      tags:
+      - auth
+      summary: Login
+      description: Verify username + password and return a session token (coarse 401
+        on failure).
+      operationId: login_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auth/change-password:
+    post:
+      tags:
+      - auth
+      summary: Change Password
+      description: Change the current user's password, returning a fresh token (prior
+        sessions die).
+      operationId: change_password_auth_change_password_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /auth/me:
+    get:
+      tags:
+      - auth
+      summary: Me
+      description: The current console user (identity + is_admin + must_change_password
+        + capabilities).
+      operationId: me_auth_me_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /workspaces:
     post:
       tags:
@@ -466,155 +572,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /workspaces/{ws_id}/collections/{col_id}/keys:
-    post:
-      tags:
-      - collections
-      summary: Create Api Key
-      operationId: create_api_key_workspaces__ws_id__collections__col_id__keys_post
-      parameters:
-      - name: ws_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Ws Id
-      - name: col_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Col Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
-      - name: X-API-Key
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: X-Api-Key
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/APIKeyCreate'
-      responses:
-        '201':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-    get:
-      tags:
-      - collections
-      summary: List Api Keys
-      operationId: list_api_keys_workspaces__ws_id__collections__col_id__keys_get
-      parameters:
-      - name: ws_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Ws Id
-      - name: col_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Col Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
-      - name: X-API-Key
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: X-Api-Key
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema: {}
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-  /workspaces/{ws_id}/collections/{col_id}/keys/{key_id}:
-    delete:
-      tags:
-      - collections
-      summary: Revoke Api Key
-      operationId: revoke_api_key_workspaces__ws_id__collections__col_id__keys__key_id__delete
-      parameters:
-      - name: ws_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Ws Id
-      - name: col_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Col Id
-      - name: key_id
-        in: path
-        required: true
-        schema:
-          type: string
-          title: Key Id
-      - name: authorization
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Authorization
-      - name: X-API-Key
-        in: header
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: X-Api-Key
-      responses:
-        '204':
-          description: Successful Response
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
   /workspaces/{ws_id}/collections/{col_id}/documents:
     post:
       tags:
@@ -625,9 +582,10 @@ paths:
 
         Accepted formats: PDF, TXT, and Markdown; DOCX and PPTX also require the docling
 
-        parser backend (``parsers.pdf_backend: docling``). Set ``temporary`` to auto-purge
+        parser backend (``parsers.pdf_backend: docling``). Set ``retention_days``
+        (1-30) to
 
-        the document after ``storage.temp_retention_hours`` (no-op when 0).'
+        auto-purge the document after that many days; omit it for a permanent document.'
       operationId: upload_document_workspaces__ws_id__collections__col_id__documents_post
       parameters:
       - name: ws_id
@@ -970,8 +928,12 @@ paths:
       tags:
       - documents
       summary: Upload Document Flat
-      description: Upload a document by collection ID without the nested workspace
+      description: 'Upload a document by collection ID without the nested workspace
         path.
+
+
+        Set ``retention_days`` (1-30) to auto-purge after that many days; omit for
+        permanent.'
       operationId: upload_document_flat_documents_post
       parameters:
       - name: authorization
@@ -1828,14 +1790,17 @@ paths:
       - search
       summary: Search
       description: "Run a hybrid (semantic + BM25) search across one or more collections.\n\
-        \nArgs:\n    request: Search parameters including query, collection IDs, and\
-        \ filters.\n    db: Injected async database session for collection metadata.\n\
-        \    _principal: Authenticated master principal (enforces auth, value unused).\n\
-        \    embedder: Embedding adapter injected via Depends.\n    vector_store:\
-        \ Vector store adapter injected via Depends (also does FTS).\n    reranker:\
-        \ Optional cross-encoder reranker (None when disabled/not loaded).\n    search_config:\
-        \ Live search config (supplies the A2 adjacency-expansion window).\n\nReturns:\n\
-        \    SearchResponse with ranked results and per-collection stats."
+        \nThe request's ``collection_ids`` are narrowed to those the caller may read\n\
+        (master sees all; a user sees the collections their grants cover). Searching\n\
+        only unauthorized collections yields ``403``.\n\nArgs:\n    request: Search\
+        \ parameters including query, collection IDs, and filters.\n    db: Injected\
+        \ async database session for collection metadata.\n    principal: Authenticated\
+        \ caller (master or user key).\n    embedder: Embedding adapter injected via\
+        \ Depends.\n    vector_store: Vector store adapter injected via Depends (also\
+        \ does FTS).\n    reranker: Optional cross-encoder reranker (None when disabled/not\
+        \ loaded).\n    search_config: Live search config (supplies the A2 adjacency-expansion\
+        \ window).\n\nReturns:\n    SearchResponse with ranked results and per-collection\
+        \ stats."
       operationId: search_search_post
       parameters:
       - name: authorization
@@ -1878,7 +1843,11 @@ paths:
       tags:
       - indexing
       summary: Index Status
-      description: Return BM25 index coverage grouped by workspace and collection.
+      description: 'Return BM25 index coverage grouped by workspace and collection,
+        scoped to the caller''s
+
+        grants: a non-admin sees only collections their grants can read; master/admin
+        see all.'
       operationId: index_status_indexing_status_get
       parameters:
       - name: authorization
@@ -2019,20 +1988,24 @@ paths:
       tags:
       - jobs
       summary: List Jobs
-      description: 'List ingestion jobs across all collections: paginated, filtered,
-        newest-first.
+      description: 'List ingestion jobs: paginated, filtered, newest-first, scoped
+        to the caller''s grants.
 
 
-        Returns ``{items, total, limit, offset}``. All filters are optional and AND-combined;
+        A non-admin sees only jobs in collections their grants can read; master/admin
+        see every
 
-        ``filename`` and ``collection`` are case-insensitive substrings, ``status``
-        and ``file_type``
+        collection. Returns ``{items, total, limit, offset}``. All filters are optional
+        and
 
-        are exact, and the ``created_*`` bounds are inclusive ISO-8601 (a date-only
-        ``created_before``
+        AND-combined; ``filename`` and ``collection`` are case-insensitive substrings,
+        ``status`` and
 
-        covers the whole day). See :class:`JobListQuery` for the full set of query
-        parameters.'
+        ``file_type`` are exact, and the ``created_*`` bounds are inclusive ISO-8601
+        (a date-only
+
+        ``created_before`` covers the whole day). See :class:`JobListQuery` for the
+        full parameter set.'
       operationId: list_jobs_ingestion_jobs_get
       parameters:
       - name: limit
@@ -2150,7 +2123,10 @@ paths:
         and explain when ingestion is paused waiting on a provider rate limit.
 
 
-        Returns ``{"counts": {status: n, ...}, "paused_seconds": n}`` (``paused_seconds``
+        The counts are grant-scoped (a non-admin totals only their readable collections);
+        the pause is
+
+        global. Returns ``{"counts": {status: n, ...}, "paused_seconds": n}`` (``paused_seconds``
         0 = running).'
       operationId: job_stats_ingestion_jobs_stats_get
       parameters:
@@ -2497,17 +2473,534 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /users:
+    post:
+      tags:
+      - users
+      summary: Create User
+      description: 'Create a user with a one-time login password (``temp_password``,
+        returned once).
+
+
+        Mint their API key separately via POST /users/{id}/key.'
+      operationId: create_user_users_post
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - users
+      summary: List Users
+      description: List all users with their API-key summary (never the secret).
+      operationId: list_users_users_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/{user_id}:
+    get:
+      tags:
+      - users
+      summary: Get User
+      description: Return one user with its API-key summary.
+      operationId: get_user_users__user_id__get
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - users
+      summary: Update User
+      description: 'Update identity/role, the per-user MCP rate limit, or (de)activate
+        a user.
+
+
+        Deactivating stops their API key from authenticating.'
+      operationId: update_user_users__user_id__patch
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdate'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - users
+      summary: Delete User
+      description: Delete a user; cascades to their key and grants.
+      operationId: delete_user_users__user_id__delete
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/{user_id}/reset-password:
+    post:
+      tags:
+      - users
+      summary: Reset User Password
+      description: 'Reset the user''s password to a new one-time value (``temp_password``,
+        returned once).
+
+
+        Forces a change on their next login and invalidates any active session.'
+      operationId: reset_user_password_users__user_id__reset_password_post
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/{user_id}/key:
+    post:
+      tags:
+      - users
+      summary: Create User Key
+      description: Mint (or rotate) the user's single API key; the raw key is returned
+        once.
+      operationId: create_user_key_users__user_id__key_post
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserKeyCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - users
+      summary: Revoke User Key
+      description: Revoke the user's API key.
+      operationId: revoke_user_key_users__user_id__key_delete
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/{user_id}/permissions:
+    get:
+      tags:
+      - users
+      summary: List User Permissions
+      description: List the resources this user is granted access to.
+      operationId: list_user_permissions_users__user_id__permissions_get
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - users
+      summary: Add User Permission
+      description: Grant the user read/write on a workspace, collection, or document.
+      operationId: add_user_permission_users__user_id__permissions_post
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /users/{user_id}/permissions/{grant_id}:
+    delete:
+      tags:
+      - users
+      summary: Remove User Permission
+      description: Revoke one of the user's grants.
+      operationId: remove_user_permission_users__user_id__permissions__grant_id__delete
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
+      - name: grant_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Grant Id
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /mcp-tools:
+    get:
+      tags:
+      - mcp
+      summary: Mcp Tools
+      description: 'The MCP tool catalogue, grouped by domain, introspected live from
+        the registered tools.
+
+
+        Powers the Settings → MCP page + its generated SKILL.md so both track the
+        real tool surface
+
+        without a hand-kept list. Non-sensitive (the public integration surface);
+        any valid key may read.'
+      operationId: mcp_tools_mcp_tools_get
+      parameters:
+      - name: authorization
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Authorization
+      - name: X-API-Key
+        in: header
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: X-Api-Key
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                title: Response Mcp Tools Mcp Tools Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
-    APIKeyCreate:
-      properties:
-        label:
-          type: string
-          title: Label
-          default: ''
-      type: object
-      title: APIKeyCreate
-      description: Body for POST /workspaces/{ws_id}/collections/{col_id}/keys.
     AppConfig:
       properties:
         embedding:
@@ -2592,10 +3085,11 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: File
-        temporary:
-          type: boolean
-          title: Temporary
-          default: false
+        retention_days:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Retention Days
       type: object
       required:
       - collection_id
@@ -2607,14 +3101,35 @@ components:
           type: string
           contentMediaType: application/octet-stream
           title: File
-        temporary:
-          type: boolean
-          title: Temporary
-          default: false
+        retention_days:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Retention Days
       type: object
       required:
       - file
       title: Body_upload_document_workspaces__ws_id__collections__col_id__documents_post
+    ChangePasswordRequest:
+      properties:
+        current_password:
+          type: string
+          title: Current Password
+        new_password:
+          type: string
+          minLength: 12
+          title: New Password
+      type: object
+      required:
+      - current_password
+      - new_password
+      title: ChangePasswordRequest
+      description: 'Body for ``POST /auth/change-password``.
+
+
+        ``new_password`` must meet the minimum length; ``current_password`` is the
+
+        temp password (first login) or the existing one (voluntary change).'
     ChunkingConfig:
       properties:
         sliding_window:
@@ -2768,6 +3283,37 @@ components:
           default: 0
       type: object
       title: EmbeddingConfig
+    GrantCreate:
+      properties:
+        resource_type:
+          type: string
+          enum:
+          - workspace
+          - collection
+          - document
+          - capability
+          title: Resource Type
+        resource_id:
+          type: string
+          title: Resource Id
+        level:
+          type: string
+          enum:
+          - read
+          - write
+          title: Level
+      type: object
+      required:
+      - resource_type
+      - resource_id
+      - level
+      title: GrantCreate
+      description: 'Body for POST /users/{user_id}/permissions.
+
+
+        ``capability`` grants a non-resource privilege (e.g. ``resource_id="create_workspace"``);
+
+        the other types scope access to a workspace/collection/document.'
     GraphEdge:
       properties:
         source:
@@ -2895,6 +3441,23 @@ components:
       title: LocalBackendConfig
       description: Files on the local/shared disk under ``settings.upload_dir`` (the
         default).
+    LoginRequest:
+      properties:
+        username:
+          type: string
+          maxLength: 64
+          minLength: 3
+          pattern: ^[a-zA-Z0-9._+@-]+$
+          title: Username
+        password:
+          type: string
+          title: Password
+      type: object
+      required:
+      - username
+      - password
+      title: LoginRequest
+      description: Body for ``POST /auth/login``.
     MCPConfig:
       properties:
         enabled:
@@ -3347,6 +3910,92 @@ components:
       type: object
       title: TagUpdate
       description: Body for PATCH /workspaces/{ws_id}/tags/{tag_id}.
+    UserCreate:
+      properties:
+        username:
+          type: string
+          maxLength: 64
+          minLength: 3
+          pattern: ^[a-zA-Z0-9._+@-]+$
+          title: Username
+        email:
+          anyOf:
+          - type: string
+            format: email
+          - type: 'null'
+          title: Email
+        name:
+          type: string
+          title: Name
+          default: ''
+        is_active:
+          type: boolean
+          title: Is Active
+          default: true
+        is_admin:
+          type: boolean
+          title: Is Admin
+          default: false
+        rate_limit_rpm:
+          type: integer
+          minimum: 0.0
+          title: Rate Limit Rpm
+          default: 0
+      type: object
+      required:
+      - username
+      title: UserCreate
+      description: Body for POST /users.
+    UserKeyCreate:
+      properties:
+        label:
+          type: string
+          title: Label
+          default: ''
+      type: object
+      title: UserKeyCreate
+      description: Body for POST /users/{user_id}/key (mint or rotate the user's single
+        key).
+    UserUpdate:
+      properties:
+        username:
+          anyOf:
+          - type: string
+            maxLength: 64
+            minLength: 3
+            pattern: ^[a-zA-Z0-9._+@-]+$
+          - type: 'null'
+          title: Username
+        email:
+          anyOf:
+          - type: string
+            format: email
+          - type: 'null'
+          title: Email
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        is_active:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Active
+        is_admin:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Is Admin
+        rate_limit_rpm:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Rate Limit Rpm
+      type: object
+      title: UserUpdate
+      description: Body for PATCH /users/{user_id} — only non-null fields are applied.
     ValidationError:
       properties:
         loc:
