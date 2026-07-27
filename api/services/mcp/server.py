@@ -158,6 +158,28 @@ def _register_document_lifecycle_tools(server: FastMCP) -> None:
             )
 
     @server.tool()
+    async def request_original_upload(document_id: str, filename: str) -> dict[str, Any]:
+        """Attach an original source file to a document — get a presigned PUT URL (step 1 of 2).
+
+        Optional: keep the raw source (e.g. the PDF a Markdown upload was converted from) alongside
+        the parse. It is stored under the same document and is never embedded. ``PUT`` the bytes to
+        the returned ``upload_url``, then call ``confirm_original_upload``. Fetch it later with
+        ``download_document(document_id, original=true)``. Requires ``write`` + an S3/MinIO backend.
+        """
+        async with AsyncSessionLocal() as db:
+            return await tools.request_original_upload(
+                document_id=document_id, filename=filename, db=db, principal=current_principal()
+            )
+
+    @server.tool()
+    async def confirm_original_upload(document_id: str) -> dict[str, Any]:
+        """Finalize an original-source-file attach once the ``PUT`` succeeds (step 2 of 2)."""
+        async with AsyncSessionLocal() as db:
+            return await tools.confirm_original_upload(
+                document_id=document_id, db=db, principal=current_principal()
+            )
+
+    @server.tool()
     async def reprocess_document(document_id: str) -> dict[str, Any]:
         """Re-enqueue a document's ingestion — the manual retry for a failed file (reuses bytes)."""
         async with AsyncSessionLocal() as db:
@@ -180,15 +202,16 @@ def _register_document_lifecycle_tools(server: FastMCP) -> None:
             )
 
     @server.tool()
-    async def download_document(document_id: str) -> dict[str, Any]:
-        """Get a short-lived presigned URL to download a document's original bytes.
+    async def download_document(document_id: str, original: bool = False) -> dict[str, Any]:
+        """Get a short-lived presigned URL to download a document's bytes.
 
         Returns ``{document_id, filename, url, url_expires_in}``. On local-disk storage (which
-        can't presign) ``url`` is ``null`` and a ``notice`` points at the REST byte endpoint.
+        can't presign) ``url`` is ``null`` and a ``notice`` points at the REST byte endpoint. Set
+        ``original=true`` to download the attached original source file instead of the parse.
         """
         async with AsyncSessionLocal() as db:
             return await tools.download_document(
-                document_id=document_id, db=db, principal=current_principal()
+                document_id=document_id, original=original, db=db, principal=current_principal()
             )
 
     @server.tool()

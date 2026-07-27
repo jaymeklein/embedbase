@@ -4,6 +4,8 @@ import { api } from '../../api/client'
 import { useMcpTools } from '../../api/hooks'
 import type { McpToolGroup } from '../../api/types'
 import { Button, Card, CopyButton, Field, Input, QueryError, Skeleton } from '../ui'
+import { buildZip, type ZipEntry } from '../../lib/zip'
+import { saveBlob } from '../../lib/download'
 
 /** All tag tools need the manage_tags capability; assign/unassign also need write on the target. */
 const TAGS_NOTE = 'Tag tools need the manage_tags permission; assigning to a collection/document also needs write on it.'
@@ -25,16 +27,18 @@ function clientConfig(origin: string): string {
   )
 }
 
-/** The SKILL.md handed to an agent so it knows how to drive this MCP server. The tool list is the
+/** The skill bundle handed to an agent so it knows how to drive this MCP server: a lean SKILL.md plus
+ *  on-demand reference files, so a read-only session never loads the upload rules. The tool list is the
  *  live catalogue from the server, so it tracks the real surface with no hand-kept copy. */
-function skillMd(origin: string, groups: McpToolGroup[]): string {
+function skillBundle(origin: string, groups: McpToolGroup[]): ZipEntry[] {
   const tools = groups
     .map(
       (g) =>
         `### ${g.group}\n${g.tools.map((t) => `- ${t.name}${t.signature} — ${t.summary}`).join('\n')}`,
     )
     .join('\n\n')
-  return `---
+
+  const skill = `---
 name: embedbase
 description: Drive EmbedBase entirely from chat through its MCP server — search, upload/download, re-ingest, and check ingestion status of documents, and manage workspaces, collections, and tags. Use when the user asks to query their knowledge base, add/remove/re-ingest documents, or organize workspaces, collections, and tags.
 ---
@@ -44,6 +48,13 @@ description: Drive EmbedBase entirely from chat through its MCP server — searc
 EmbedBase is a local-first document embedding and retrieval system. This skill connects to its MCP
 server to run it end to end from chat — search, upload/download, ingestion status, and
 workspace/collection/tag management — without opening the console.
+
+Read a reference file below only when the task needs it, so a read-only session never pulls in the
+upload rules:
+- references/searching.md — search options (top_k, hybrid, filters, expanding a chunk).
+- references/uploading.md — accepted formats, converting a PDF to full text, the upload steps, and
+  keeping the original source file.
+- references/tools.md — the full tool catalogue.
 
 ## Connection
 
@@ -58,13 +69,52 @@ respects its read/write grants — you only see and change what it is allowed to
 key returns 401; the server is rate-limited per key (429 when the budget is exceeded). Admin
 concerns (app config, user/key management) stay in the console and are not exposed as tools.
 
-## Tools
+## Querying (the common case)
 
-${tools}
+Most sessions only read — no upload involved. To answer from the knowledge base:
 
-${TAGS_NOTE}
+1. list_workspaces() to resolve workspace + collection ids — never invent them.
+2. search_documents(query, [collection_id]) — the primary retrieval tool; it returns the most
+   relevant chunks, not whole documents. For top_k / hybrid / filters and when to expand a chunk,
+   read references/searching.md.
+3. Answer, citing results by filename.
 
-## Documents & formats
+## Adding a document (only when the user asks to)
+
+Skip this for read-only requests. When the user wants to ingest a file, read references/uploading.md —
+it covers the accepted formats (.pdf, .md/.markdown, .txt), converting a PDF to full text first, the
+two-step upload, and optionally keeping the original source file.
+
+## REST API reference
+
+A standalone OpenAPI reference of just the integration endpoints (search +
+workspace/collection/document access) — not the app's internal endpoints:
+- Swagger UI: ${origin}/api/reference
+- Raw spec:   ${origin}/api/reference.json
+
+Read the spec to learn the exact request/response shapes behind the tools.
+`
+
+  const searching = `# Searching
+
+search_documents is the primary retrieval tool — reach for it first for any "what does the knowledge
+base say about X" question. It runs hybrid semantic + keyword (BM25) ranking and returns only the most
+relevant chunks, bounded by top_k, so you pull just what answers the question instead of whole documents.
+
+- Start here: search_documents(query, [collection_id], top_k). Raise top_k (or re-run) when the response
+  sets more_available and the answer still looks incomplete; narrow with filters ({ filename, tags }), or
+  set hybrid=false for semantic-only.
+- get_document_chunks is a follow-up, not a reader — pass the chunk_ids a search returned to expand their
+  surrounding context. Do not use it to pull a whole document into context to "read" it: on a large
+  document that drags in every chunk, relevant or not — exactly what search exists to avoid. (Paging a
+  full document via limit/offset is only for a deliberately small, known document.)
+`
+
+  const uploading = `# Adding a document — formats & uploading
+
+Read this only when the user wants to ingest a file; ignore it for read-only requests.
+
+## Accepted formats
 
 Only three upload formats are accepted — reject anything else before uploading:
 
@@ -75,7 +125,7 @@ Only three upload formats are accepted — reject anything else before uploading
 When you produce the content yourself, prefer Markdown — structure survives as text, so it embeds and
 retrieves best.
 
-### Converting a PDF before upload
+## Converting a PDF before upload
 
 A raw PDF buries structure and non-text data that plain extraction drops. When a PDF holds tables or
 images, do not upload lossily-extracted text — convert the whole document to full text and upload it
@@ -90,26 +140,44 @@ as .md (or .txt) so nothing searchable is lost:
 The uploaded file should read as a faithful, fully-textual rendering of the source — so search can
 reach the tables and image content a raw PDF would otherwise hide.
 
-## REST API reference
+## Uploading (presigned, two steps)
 
-A standalone OpenAPI reference of just the integration endpoints (search +
-workspace/collection/document access) — not the app's internal endpoints:
-- Swagger UI: ${origin}/api/reference
-- Raw spec:   ${origin}/api/reference.json
+1. request_upload(collection_id, filename) → PUT the bytes to the returned upload_url →
+   confirm_upload(document_id).
+2. Poll get_document_status(document_id) until "done".
 
-Read the spec to learn the exact request/response shapes behind the tools.
+## Keeping the original
 
-## Typical workflow
+The converted .md is what gets embedded and searched — the source PDF is not needed for search. When
+the user still wants the original kept (to re-read or hand off later), attach it to the *same*
+document after confirming the upload, so the two stay correlated:
 
-1. list_workspaces() to discover workspace + collection ids — never invent them.
-2. search_documents(query, [collection_id]) to retrieve relevant chunks; pass a result's chunk_id
-   to get_document_chunks for the surrounding context.
-3. Upload a file (accepted: .pdf, .md/.markdown, .txt — see "Documents & formats" to convert a PDF
-   with tables or images to full text first) in two steps: request_upload(collection_id, filename) →
-   PUT the bytes to the returned upload_url → confirm_upload(document_id); then poll
-   get_document_status until "done".
-4. Cite results by filename; resolve every id from list_workspaces first.
+1. request_original_upload(document_id, filename) → returns a presigned upload_url.
+2. PUT the original bytes to that upload_url.
+3. confirm_original_upload(document_id).
+
+The original is stored alongside the parse, is never embedded (so it adds no duplicate search hits),
+and is downloadable any time via download_document(document_id, original=true). Only attach an
+original when the user asks to keep it — most uploads don't need one.
 `
+
+  const toolsDoc = `# Tool catalogue
+
+Every tool acts as your key's user and respects its read/write grants — you only see and change what it
+is allowed to. Your MCP client also receives these tools directly from the server; this file is a
+human-readable index.
+
+${tools}
+
+${TAGS_NOTE}
+`
+
+  return [
+    { name: 'SKILL.md', content: skill },
+    { name: 'references/searching.md', content: searching },
+    { name: 'references/uploading.md', content: uploading },
+    { name: 'references/tools.md', content: toolsDoc },
+  ]
 }
 
 /** A labelled monospace value row with a copy button. */
@@ -160,16 +228,11 @@ export function McpPanel() {
   const toolsQuery = useMcpTools()
   const groups = toolsQuery.data?.groups ?? []
   const config = clientConfig(address)
-  const skill = groups.length ? skillMd(address, groups) : ''
+  const bundle = groups.length ? skillBundle(address, groups) : []
+  const skill = bundle.find((f) => f.name === 'SKILL.md')?.content ?? ''
 
   const downloadSkill = () => {
-    if (!skill) return
-    const url = URL.createObjectURL(new Blob([skill], { type: 'text/markdown' }))
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'SKILL.md'
-    a.click()
-    URL.revokeObjectURL(url)
+    if (bundle.length) saveBlob(buildZip(bundle), 'embedbase.zip')
   }
 
   return (
@@ -229,26 +292,41 @@ export function McpPanel() {
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-ink">Agent skill (SKILL.md)</h2>
+          <h2 className="text-sm font-semibold text-ink">Agent skill</h2>
           {skill && (
             <div className="flex gap-2">
-              <CopyButton text={skill} label="Copy" />
               <Button variant="secondary" size="sm" onClick={downloadSkill}>
                 <Download className="h-4 w-4" />
-                Download
+                Download .zip
               </Button>
             </div>
           )}
         </div>
+        <p className="text-[13px] text-ink-muted">
+          A small skill folder (<code className="font-mono">SKILL.md</code> +{' '}
+          <code className="font-mono">references/</code>). Unzip it into your agent's skills directory
+          (e.g. <code className="font-mono">.claude/skills/embedbase/</code>) — the agent loads{' '}
+          <code className="font-mono">SKILL.md</code> up front and opens a reference file only when the
+          task needs it, so a read-only session never pulls in the upload rules.
+        </p>
         {toolsQuery.isLoading ? (
           <Skeleton className="h-96 w-full rounded-card" />
         ) : skill ? (
-          <Card className="p-0">
-            <CodeBlock text={skill} className="max-h-96" />
-          </Card>
+          <>
+            <Card className="p-0">
+              <CodeBlock text={skill} className="max-h-96" />
+            </Card>
+            <p className="text-xs text-ink-faint">
+              Bundled:{' '}
+              {bundle
+                .filter((f) => f.name !== 'SKILL.md')
+                .map((f) => f.name)
+                .join(' · ')}
+            </p>
+          </>
         ) : (
           <p className="text-xs text-ink-muted">
-            SKILL.md is unavailable — the tool catalogue could not be loaded.
+            The skill is unavailable — the tool catalogue could not be loaded.
           </p>
         )}
       </section>

@@ -34,10 +34,17 @@ Flow: **upload → parse → chunk → embed → store**. The DI seam is `worker
 - **BM25 is not a stage** — it's the stored `chunks.text_tsv` maintained by the upsert ([`vector-db.md`](vector-db.md)).
 - **Upload entry points + retention**: REST multipart (`documents.ingest`, streamed + size-guarded), the
   presigned two-step for MCP (`documents.create_upload` → `awaiting_upload` row + presigned PUT →
-  `documents.confirm_upload`, [`mcp.md`](mcp.md)), and the master-only container path (`ingest_local_path`). All
+  `documents.confirm_upload`, [`mcp.md`](mcp.md)), and the master-only container path (`ingest_local_path`). The
+  presigned **confirm** steps additionally **content-type-validate** the bytes (`Storage.read_head` +
+  `upload.validate_content` — 415 + purge if the object isn't the declared type); the REST path is unchanged
+  (extension + size only; a wrong-content parse just fails downstream in the worker). All
   take a per-file **`retention_days` (1-30; omit = permanent)** → `_expiry` stamps `documents.expires_at` (422
   outside the band), which the purge sweep reaps. This **supersedes** the old global `storage.temp_retention_hours`
   + boolean `temporary` (the config field is kept for back-compat but no longer read by uploads).
+- **Attached originals are not an ingestion input.** An optional *original source file* (`documents.original_*`,
+  attached via `create_original_upload`/`confirm_original_upload` — see [`mcp.md`](mcp.md) +
+  [`database.md`](database.md)) is stored alongside a document for download only. It is **never**
+  parsed/chunked/embedded — it adds no chunks and never enters this pipeline; only the parse does.
 
 ## Jobs, status, progress
 - **`job_records` table.** Status: `pending → processing → done | failed | rate_limited`. `_claim_job` atomically

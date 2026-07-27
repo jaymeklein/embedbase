@@ -127,12 +127,16 @@ async def upload_document_flat(
 @router.get("/documents/{doc_id}/raw")
 async def get_document_raw(
     doc_id: str,
+    original: bool = Query(
+        False, description="Serve the attached original source file instead of the parse."
+    ),
     principal: Principal = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Serve a document's original bytes: inline FileResponse (local) or 302 to a
-    presigned URL (S3), resolved from the document's storage backend."""
-    return await doc_svc.resolve_document_download(db, doc_id, principal)
+    """Serve a document's bytes: inline FileResponse (local) or 302 to a presigned URL
+    (S3), resolved from the document's storage backend. ``?original=1`` serves the attached
+    original source file instead of the parse (404 if none is attached)."""
+    return await doc_svc.resolve_document_download(db, doc_id, principal, original=original)
 
 
 @router.delete("/documents/{doc_id}", status_code=204)

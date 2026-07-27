@@ -244,6 +244,31 @@ async def confirm_upload(
     return await doc_svc.confirm_upload(db, document_id, principal)
 
 
+async def request_original_upload(
+    *, document_id: str, filename: str, db: AsyncSession, principal: Principal
+) -> dict[str, Any]:
+    """Reserve a presigned PUT URL to attach an *original source file* to a document.
+
+    **Optional** — keep the raw source (e.g. the PDF a Markdown upload was converted from)
+    alongside the parse. The original is stored under the same document and is **never embedded**;
+    fetch it later via ``download_document(document_id, original=true)``. Step one of two: ``PUT``
+    the bytes to the returned ``upload_url``, then call ``confirm_original_upload``. Requires a
+    ``write`` grant on the document; needs an S3/MinIO backend.
+    """
+    return await doc_svc.create_original_upload(db, document_id, filename, principal)
+
+
+async def confirm_original_upload(
+    *, document_id: str, db: AsyncSession, principal: Principal
+) -> dict[str, Any]:
+    """Finalize an original-source-file attach: verify the bytes landed, then record them.
+
+    Step two of the two-step original attach — call after the ``PUT`` to the ``upload_url`` from
+    ``request_original_upload`` succeeds. Requires a ``write`` grant on the document.
+    """
+    return await doc_svc.confirm_original_upload(db, document_id, principal)
+
+
 async def reprocess_document(
     *, document_id: str, db: AsyncSession, principal: Principal
 ) -> dict[str, Any]:
@@ -270,14 +295,16 @@ async def get_document_status(
 
 
 async def download_document(
-    *, document_id: str, db: AsyncSession, principal: Principal
+    *, document_id: str, original: bool = False, db: AsyncSession, principal: Principal
 ) -> dict[str, Any]:
-    """Return a short-lived presigned URL to fetch a document's original bytes.
+    """Return a short-lived presigned URL to fetch a document's bytes.
 
     Requires a ``read`` grant on the document. On local-disk storage (which can't presign) the
-    response carries a ``notice`` pointing at the REST byte endpoint instead of a ``url``.
+    response carries a ``notice`` pointing at the REST byte endpoint instead of a ``url``. Set
+    ``original=true`` to fetch the attached *original source file* instead of the parse (errors if
+    none is attached).
     """
-    return await doc_svc.resolve_download_url(db, document_id, principal)
+    return await doc_svc.resolve_download_url(db, document_id, principal, original=original)
 
 
 async def get_document_chunks(
