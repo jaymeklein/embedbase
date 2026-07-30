@@ -6,6 +6,8 @@ api/routers/documents.py remains routing-only.
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -47,6 +49,12 @@ logger = structlog.get_logger()
 # PUT to the presigned URL. Excluded from listings (which filter ``status IS NULL``) until
 # ``confirm_upload`` flips it active; distinct from the ``deleting`` tombstone.
 _AWAITING_UPLOAD = "awaiting_upload"
+
+# get_checksum: the digest algorithm — one source of truth, used both to build the hasher
+# (``hashlib.new``) and as the label returned to the caller, so they can never disagree — and the
+# streaming read size, so a large object is hashed a block at a time rather than loaded whole.
+_CHECKSUM_ALGORITHM = "sha256"
+_CHECKSUM_READ_CHUNK = 1 << 20  # 1 MiB
 
 
 def _storage_config() -> StorageConfig:
@@ -818,6 +826,68 @@ async def resolve_download_url(
             "This document is on local-disk storage, which can't presign. Fetch its bytes from "
             f"the REST endpoint {raw_path}."
         ),
+    }
+
+
+def _hash_object(storage: Storage, key: str) -> tuple[str, int] | None:
+    """Stream ``key``'s bytes through the checksum hash; return ``(hex digest, byte count)``.
+
+    Returns ``None`` when the object does not exist (the caller turns that into a 404). Fetches the
+    object and reads it a block at a time, so a large file is never loaded into memory whole; the
+    digest and the byte count come from the *same* single pass, so the reported size is exactly the
+    bytes that were hashed. Blocking (a remote backend downloads a temp copy first), so call it via
+    :func:`asyncio.to_thread`; the temp copy is always released, even if the read raises.
+    """
+    if storage.object_head(key) is None:
+        return None
+    path = storage.fetch_to_temp(key)
+    try:
+        digest = hashlib.new(_CHECKSUM_ALGORITHM)
+        size = 0
+        with path.open("rb") as fh:
+            while chunk := fh.read(_CHECKSUM_READ_CHUNK):
+                digest.update(chunk)
+                size += len(chunk)
+        return digest.hexdigest(), size
+    finally:
+        storage.cleanup_temp(path)
+
+
+async def compute_checksum(
+    db: AsyncSession, doc_id: str, principal: Principal, *, original: bool = False
+) -> dict:
+    """Compute a fresh checksum over a document's stored bytes (the MCP ``get_checksum`` tool).
+
+    Streams the object straight from storage through the hash on **every call** — nothing is
+    cached — so the returned digest always reflects the bytes exactly as they are stored right now.
+    A caller compares it against the hash of their local copy (e.g. ``sha256sum``) to prove the
+    file was stored intact and hasn't drifted. ``ingested_at`` (the document's ingestion timestamp)
+    lets them also tell whether the stored copy predates a newer local file.
+
+    Requires ``read`` on the document (authorized before any bytes are touched). ``original=True``
+    hashes the attached *original source file* instead of the parse (404 if none is attached).
+
+    Raises:
+        HTTPException: 403 if the caller can't read the document, 404 if the document is missing,
+            no original is attached, or its bytes are unavailable (upload never completed / purged).
+    """
+    storage, key, filename = await _resolve_storage_and_key(db, doc_id, principal, original=original)
+    result = await asyncio.to_thread(_hash_object, storage, key)
+    if result is None:
+        raise HTTPException(404, "The document's stored bytes are not available")
+    checksum, size = result
+    # _resolve_storage_and_key already confirmed the row exists (else it 404s), so scalar_one holds.
+    ingested_at = (
+        await db.execute(select(doc_t.c.created_at).where(doc_t.c.id == doc_id))
+    ).scalar_one()
+    return {
+        "document_id": doc_id,
+        "filename": filename,
+        "original": original,
+        "algorithm": _CHECKSUM_ALGORITHM,
+        "checksum": checksum,
+        "file_size": size,
+        "ingested_at": ingested_at,
     }
 
 

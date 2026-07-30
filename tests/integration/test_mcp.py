@@ -14,6 +14,7 @@ ASGI layer through the middleware that guards the mounted MCP app.
 """
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -706,6 +707,119 @@ async def test_download_document_outside_scope_403(seeded, monkeypatch):
         await _seed_user_with_grants(db, [("collection", "colB", "read")])  # docA is in colA
         with pytest.raises(HTTPException) as exc:
             await tools.download_document(document_id="docA", db=db, principal=USER)
+    assert exc.value.status_code == 403
+
+
+# ── get_checksum: hash a document's stored bytes on every call ────────────────
+
+
+def _write_stored_object(tmp_path, key: str, data: bytes) -> None:
+    """Materialise ``data`` at ``key`` under a LocalStorage upload dir — the object a client PUT
+    would leave behind, so the real local backend's object_head/fetch_to_temp see it."""
+    dest = tmp_path / key
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+
+
+async def test_get_checksum_hashes_stored_bytes(seeded, tmp_path, monkeypatch):
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    data = b"the exact bytes the user uploaded\n"
+    _write_stored_object(tmp_path, document_key("colA", "docA", ".txt"), data)
+    async with factory() as db:
+        out = await tools.get_checksum(document_id="docA", db=db, principal=MASTER)
+    assert out["algorithm"] == "sha256"
+    assert out["checksum"] == hashlib.sha256(data).hexdigest()
+    assert out["file_size"] == len(data)
+    assert out["document_id"] == "docA"
+    assert out["filename"] == "docA.txt"
+    assert out["original"] is False
+    assert out["ingested_at"]  # the document's ingestion timestamp is surfaced
+
+
+async def test_get_checksum_recomputes_from_current_bytes(seeded, tmp_path, monkeypatch):
+    """The digest is computed fresh each call, so rewriting the stored object changes it — proof
+    the tool hashes the live bytes rather than returning a value cached at ingest time."""
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    key = document_key("colA", "docA", ".txt")
+    async with factory() as db:
+        _write_stored_object(tmp_path, key, b"first version")
+        first = await tools.get_checksum(document_id="docA", db=db, principal=MASTER)
+        _write_stored_object(tmp_path, key, b"second, different version")
+        second = await tools.get_checksum(document_id="docA", db=db, principal=MASTER)
+    assert first["checksum"] == hashlib.sha256(b"first version").hexdigest()
+    assert second["checksum"] == hashlib.sha256(b"second, different version").hexdigest()
+    assert first["checksum"] != second["checksum"]
+
+
+async def test_get_checksum_empty_object_hashes_not_404(seeded, tmp_path, monkeypatch):
+    """A 0-byte stored object is a real (empty) file, not a missing one: it hashes to the
+    empty-input digest with size 0. Pins the deliberate ``object_head(...) is None`` check (a 0 size
+    is falsy, so a ``not object_head`` refactor would wrongly 404 legitimately-empty files)."""
+    from api.services.documents import document_key
+
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    _write_stored_object(tmp_path, document_key("colA", "docA", ".txt"), b"")
+    async with factory() as db:
+        out = await tools.get_checksum(document_id="docA", db=db, principal=MASTER)
+    assert out["file_size"] == 0
+    assert out["checksum"] == hashlib.sha256(b"").hexdigest()
+
+
+async def test_get_checksum_original_hashes_the_original(seeded, tmp_path, monkeypatch):
+    from api.services.documents import document_key, original_key
+
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    parse_data = b"converted markdown parse"
+    orig_data = b"%PDF-1.4\nthe original source pdf"
+    _write_stored_object(tmp_path, document_key("colA", "docA", ".txt"), parse_data)
+    _write_stored_object(tmp_path, original_key("colA", "docA", ".pdf"), orig_data)
+    async with factory() as db:
+        # Stamp docA as having an attached original (a set original_file_size = present).
+        await db.execute(
+            documents_t.update()
+            .where(documents_t.c.id == "docA")
+            .values(
+                original_filename="source.pdf",
+                original_file_type=".pdf",
+                original_file_size=len(orig_data),
+            )
+        )
+        await db.commit()
+        out = await tools.get_checksum(
+            document_id="docA", original=True, db=db, principal=MASTER
+        )
+    assert out["original"] is True
+    assert out["filename"] == "source.pdf"
+    assert out["checksum"] == hashlib.sha256(orig_data).hexdigest()
+    # The original's digest is distinct from the parse's — the flag selects the right object.
+    assert out["checksum"] != hashlib.sha256(parse_data).hexdigest()
+
+
+async def test_get_checksum_missing_bytes_is_404(seeded, tmp_path, monkeypatch):
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    # docA is a real row but nothing was ever written to storage for it.
+    async with factory() as db:
+        with pytest.raises(HTTPException) as exc:
+            await tools.get_checksum(document_id="docA", db=db, principal=MASTER)
+    assert exc.value.status_code == 404
+
+
+async def test_get_checksum_outside_scope_403(seeded, tmp_path, monkeypatch):
+    factory, _ = seeded
+    monkeypatch.setattr("api.services.storage.settings.upload_dir", str(tmp_path))
+    async with factory() as db:
+        await _seed_user_with_grants(db, [("collection", "colB", "read")])  # docA is in colA
+        with pytest.raises(HTTPException) as exc:
+            await tools.get_checksum(document_id="docA", db=db, principal=USER)
     assert exc.value.status_code == 403
 
 
