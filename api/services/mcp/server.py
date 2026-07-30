@@ -215,6 +215,22 @@ def _register_document_lifecycle_tools(server: FastMCP) -> None:
             )
 
     @server.tool()
+    async def get_checksum(document_id: str, original: bool = False) -> dict[str, Any]:
+        """Compute a fresh checksum of a document's stored bytes — prove it's intact and unchanged.
+
+        Hashes the stored file from scratch on every call (nothing cached), so the digest always
+        reflects the bytes exactly as stored right now. Compare it to the hash of your local copy
+        (e.g. ``sha256sum <file>``) to confirm the upload was stored intact and hasn't drifted.
+        Returns ``{document_id, filename, original, algorithm, checksum, file_size, ingested_at}`` —
+        ``ingested_at`` also tells you whether the stored copy predates a newer local file. Set
+        ``original=true`` to checksum the attached original source file instead of the parse.
+        """
+        async with AsyncSessionLocal() as db:
+            return await tools.get_checksum(
+                document_id=document_id, original=original, db=db, principal=current_principal()
+            )
+
+    @server.tool()
     async def get_document_chunks(
         document_id: str, chunk_ids: list[str] | None = None,
         limit: int = 50, offset: int = 0,

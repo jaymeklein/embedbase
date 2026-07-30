@@ -40,7 +40,7 @@ function skillBundle(origin: string, groups: McpToolGroup[]): ZipEntry[] {
 
   const skill = `---
 name: embedbase
-description: Drive EmbedBase entirely from chat through its MCP server — search, upload/download, re-ingest, and check ingestion status of documents, and manage workspaces, collections, and tags. Use when the user asks to query their knowledge base, add/remove/re-ingest documents, or organize workspaces, collections, and tags.
+description: Drive EmbedBase entirely from chat through its MCP server — search, upload/download, verify file integrity, re-ingest, and check ingestion status of documents, and manage workspaces, collections, and tags. Use when the user asks to query their knowledge base, add/remove/re-ingest documents, verify a stored file is intact or up to date, or organize workspaces, collections, and tags.
 ---
 
 # EmbedBase MCP
@@ -84,6 +84,15 @@ Most sessions only read — no upload involved. To answer from the knowledge bas
 Skip this for read-only requests. When the user wants to ingest a file, read references/uploading.md —
 it covers the accepted formats (.pdf, .md/.markdown, .txt), converting a PDF to full text first, the
 two-step upload, and optionally keeping the original source file.
+
+## Verifying a stored file
+
+When a user worries their upload was altered, or wants to know whether the stored copy is still
+current, call get_checksum(document_id) — it recomputes a SHA-256 over the stored bytes on every call
+(nothing cached) and returns the digest plus ingested_at. Compare the digest to the user's local
+sha256sum <file>: equal means the stored file is byte-identical to what they sent, and ingested_at
+tells them whether the stored copy predates a newer local file. Add original=true to verify an
+attached original source file instead of the parse.
 
 ## REST API reference
 

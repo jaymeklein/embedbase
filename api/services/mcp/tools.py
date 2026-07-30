@@ -307,6 +307,18 @@ async def download_document(
     return await doc_svc.resolve_download_url(db, document_id, principal, original=original)
 
 
+async def get_checksum(
+    *, document_id: str, original: bool = False, db: AsyncSession, principal: Principal
+) -> dict[str, Any]:
+    """Compute a fresh checksum over a document's stored bytes. Requires a ``read`` grant on it.
+
+    Delegates to the documents service, which streams the object through the hash on every call
+    (nothing cached) and returns the digest, byte size, and ingestion date. ``original=True``
+    hashes the attached *original source file* instead of the parse (404 if none is attached).
+    """
+    return await doc_svc.compute_checksum(db, document_id, principal, original=original)
+
+
 async def get_document_chunks(
     *,
     document_id: str,
