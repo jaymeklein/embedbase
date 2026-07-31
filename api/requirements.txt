@@ -26,10 +26,10 @@ structlog>=24.1.0
 prometheus-client>=0.20.0
 celery[redis]>=5.4.0
 redis>=5.0.0
-# Upper bound: mcp 2.0 restructured the SDK (moved mcp.server.fastmcp, changed the
-# transport config), which breaks our FastMCP usage. Stay on 1.x; the API is verified
-# against 1.28.1 (see api/services/mcp/server.py). Bump deliberately and re-test.
-mcp>=1.28.1,<2
+# Pinned: mcp 2.0 dropped the mcp.server.fastmcp module (breaks the server import
+# and all test collection); the MCP server is verified against 1.28.1 — see the
+# note atop api/services/mcp/server.py. Bump deliberately and re-test before raising.
+mcp==1.28.1
 chardet>=5.2.0
 mistune>=3.0.0
 tiktoken>=0.7.0

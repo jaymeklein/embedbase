@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileText, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileDown, FileText, Trash2 } from 'lucide-react'
 import {
   useAssignDocumentTag,
   useCollection,
-  useConfig,
   useCreateTag,
   useDeleteDocument,
   useDocumentStatus,
@@ -42,6 +41,12 @@ import { useAuth } from '../auth/AuthContext'
 
 /** Largest file accepted before an upload is attempted (client-side guard). */
 const MAX_FILE_SIZE_MB = 50
+/** Per-file temporary-retention bounds (mirror the server's api/constants.py). */
+const MIN_RETENTION_DAYS = 1
+const MAX_RETENTION_DAYS = 30
+const DEFAULT_RETENTION_DAYS = 7
+const clampRetention = (n: number) =>
+  Math.max(MIN_RETENTION_DAYS, Math.min(MAX_RETENTION_DAYS, Math.round(n) || MIN_RETENTION_DAYS))
 /** Documents fetched per page (matches the server default; ≤ its 200 cap). */
 const PAGE_SIZE = 50
 
@@ -89,13 +94,9 @@ export default function Documents() {
   const deleteMut = useDeleteDocument(wsId, colId)
   const [uploading, setUploading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<DocumentSummary | null>(null)
-  // Temporary-upload toggle. Only offered when retention is enabled (>0 hours);
-  // with retention off the server ignores the flag, so a control would be a no-op.
-  // Fetch config here (not lazily) so the toggle shows on a direct page load, not only
-  // after the Settings tab has populated the cache.
-  const { data: config } = useConfig()
-  const retentionHours = config?.storage?.temp_retention_hours ?? 0
-  const [temporary, setTemporary] = useState(false)
+  // Per-file retention: null = permanent, or 1-30 days after which the worker sweep
+  // auto-deletes the document (checkbox toggles between permanent and a default week).
+  const [retentionDays, setRetentionDays] = useState<number | null>(null)
 
   // Any filter/tag change resets to the first page — the old offset may exceed the new count.
   const setFilters = (next: DocumentFilterValues) => {
@@ -125,7 +126,7 @@ export default function Documents() {
     let ok = 0
     for (const f of valid) {
       try {
-        await uploadMut.mutateAsync({ file: f, temporary })
+        await uploadMut.mutateAsync({ file: f, retentionDays })
         ok += 1
       } catch (e) {
         toast.error(`${f.name}: ${(e as Error).message}`)
@@ -188,17 +189,29 @@ export default function Documents() {
         <UploadZone onFiles={handleFiles} busy={uploading} maxSizeMb={MAX_FILE_SIZE_MB} />
       )}
 
-      {canWrite && retentionHours > 0 && (
-        <label className="flex items-center gap-2 text-[13px] text-ink-muted">
+      {canWrite && (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-ink-muted">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={retentionDays != null}
+              onChange={(e) => setRetentionDays(e.target.checked ? DEFAULT_RETENTION_DAYS : null)}
+              className="h-4 w-4 accent-accent"
+            />
+            Temporary — automatically delete after
+          </label>
           <input
-            type="checkbox"
-            checked={temporary}
-            onChange={(e) => setTemporary(e.target.checked)}
-            className="h-4 w-4 accent-accent"
+            type="number"
+            min={MIN_RETENTION_DAYS}
+            max={MAX_RETENTION_DAYS}
+            value={retentionDays ?? DEFAULT_RETENTION_DAYS}
+            disabled={retentionDays == null}
+            onChange={(e) => setRetentionDays(clampRetention(Number(e.target.value)))}
+            aria-label="Retention in days"
+            className="w-16 rounded-control border border-border bg-surface px-2 py-1 text-ink disabled:opacity-40"
           />
-          Temporary — automatically deleted after{' '}
-          {retentionHours === 1 ? '1 hour' : `${retentionHours} hours`}
-        </label>
+          <span>day{retentionDays === 1 ? '' : 's'}</span>
+        </div>
       )}
 
       <DocumentFilters value={filters} onChange={setFilters} />
@@ -365,7 +378,11 @@ function DocumentRow({
   progress?: IngestionProgress
   onDelete: (doc: DocumentSummary) => void
 }) {
-  const { isAdmin } = useAuth()
+  const { isAdmin, canManageTags } = useAuth()
+  // (Un)assigning a document tag needs the manage_tags privilege AND write on the resource —
+  // mirror the backend (authorize_tag_management + authorize_document write) so we don't show a
+  // control that would 403. Existing tags still render read-only below without write.
+  const canManageDocTags = (isAdmin || canManageTags) && canWrite
   const [showError, setShowError] = useState(false)
   const failed = doc.status === 'failed'
 
@@ -421,6 +438,7 @@ function DocumentRow({
               {doc.chunk_count != null &&
                 ` · ${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}{' '}
               · updated {timeAgo(doc.updated_at)}
+              {doc.has_original && ` · original: ${doc.original_filename ?? doc.filename}`}
             </p>
           </div>
         </div>
@@ -485,6 +503,23 @@ function DocumentRow({
           >
             <Download className="h-7 w-7" />
           </Button>
+          {doc.has_original && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Download original source file (${doc.original_filename ?? doc.filename})`}
+              onClick={() =>
+                void api
+                  .downloadDocument(doc.document_id, doc.original_filename ?? doc.filename, {
+                    original: true,
+                  })
+                  .catch((e) => onErr(e as Error))
+              }
+              className="h-10 w-10 px-0"
+            >
+              <FileDown className="h-7 w-7" />
+            </Button>
+          )}
           {canWrite && (
             <Button
               variant="ghost"
@@ -498,7 +533,7 @@ function DocumentRow({
           )}
         </div>
       </div>
-      {((doc.tags ?? []).length > 0 || isAdmin) && (
+      {((doc.tags ?? []).length > 0 || canManageDocTags) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           {(doc.tags ?? []).map((t) => (
             <TagChip
@@ -506,7 +541,7 @@ function DocumentRow({
               name={t.name}
               color={t.color}
               onRemove={
-                isAdmin
+                canManageDocTags
                   ? () =>
                       unassignMut.mutate(
                         { docId: doc.document_id, tagId: t.id },
@@ -516,7 +551,7 @@ function DocumentRow({
               }
             />
           ))}
-          {isAdmin && (
+          {canManageDocTags && (
             <TagPicker
               wsId={wsId}
               assigned={doc.tags ?? []}

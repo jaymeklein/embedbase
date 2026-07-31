@@ -66,12 +66,22 @@ A permission gives one user a `level` (`read` | `write`) on one resource (`works
 left dangling by a deleted resource is harmless (uuids are never reissued).
 
 ### Capabilities — grantable privileges not tied to a resource
-Some privileges have no parent resource to hold a write grant — creating a top-level **workspace** is the
-one so far. These are **capability grants**: a `permissions` row with `resource_type="capability"` and a
-known `resource_id` (`create_workspace`; see `_CAPABILITIES` / `_CAPABILITY_LABELS`). They're **ignored by
-data-scope resolution** (a capability never scopes a user's read/write), checked with `has_capability` /
-`authorize_workspace_creation`, and granted through the same `POST /users/{id}/permissions` + Permissions
-editor. A no-permission user is unrestricted for *data* but still needs the capability to create workspaces.
+Some privileges have no parent resource to hold a write grant. These are **capability grants**: a
+`permissions` row with `resource_type="capability"` and a known `resource_id` (see `_CAPABILITIES` /
+`_CAPABILITY_LABELS`). They're **ignored by data-scope resolution** (a capability never scopes a user's
+read/write) and granted through the same `POST /users/{id}/permissions` + Permissions editor. A no-permission
+user is unrestricted for *data* but does **not** get a capability implicitly — each is a deliberate privilege.
+The two so far:
+- **`create_workspace`** — create a top-level workspace (`authorize_workspace_creation`). The scoped creator is
+  then auto-granted write on what they made (`grant_creator_access`).
+- **`manage_tags`** — manage a workspace's tags. `authorize_tag_management(db, principal, ws_id)` = the
+  capability (or master/admin) **and** `read` on the target workspace, so a holder can only touch tags in
+  workspaces they can see. Two-tier: the capability gates the workspace-level tag vocabulary
+  (create/update/delete/merge/list); the finer routes add a **data-scope** check — (un)assigning a
+  collection/document tag also needs `write` on that resource, and `tag_items` is pruned to the caller's
+  readable collections/documents (`filter_tag_items`) — so a scoped tag-manager can't reach or enumerate
+  resources their grants hide. Drives the `tags` router + the MCP tag tools; surfaced to the console as
+  `can_manage_tags` on `/auth/me`, which gates the tag UI (mirrors `can_create_workspaces`).
 
 ## Enforcing access — `api/services/permissions.py` is the only authority
 Routers and MCP tools call it and let it raise `403`; **never** re-implement the check inline. A restricted
@@ -123,8 +133,10 @@ Three FastAPI deps in `auth.py`, all built on `resolve_bearer` (JWT-or-key): `re
 master-equivalent), `require_auth` (any valid credential; records `last_used_at`; rejects a must-change
 session), and `require_operator` (a user session incl. must-change — only the self-service `/auth` routes).
 Patterns:
-- **Management writes** → `require_master` (router-level for `tags`, `config`, `graph`, **users**; per-route
-  on the `jobs` bulk **retry-failed**). User/key/grant + tag management stays admin-only. **Workspace &
+- **Management writes** → `require_master` (router-level for `config`, `graph`, **users**; per-route on the
+  `jobs` bulk **retry-failed**). User/key/grant management stays admin-only. **Tags are the exception:** the
+  `tags` router is `require_auth` + `authorize_tag_management` (the `manage_tags` capability), not master-only —
+  see the capability note above. **Workspace &
   collection writes are scope-permissioned, not admin-only:** create a **collection** with `require_auth` +
   workspace **write**, and **edit/delete** one with `require_auth` + **write** on the collection or an
   ancestor (`authorize_collection(…, "write")`); create a **workspace** with `require_auth` + the
@@ -161,11 +173,17 @@ login screen (`ui/src/api/client.ts::raiseForStatus` → the auth provider's `lo
 
 ## MCP
 The MCP transport authenticates the caller's key (master or active user) in `api/services/mcp/middleware.py`
-and binds the resolved `Principal` for the request (`api/services/mcp/context.py`); each tool enforces that
-principal's grants (`api/services/mcp/tools.py`) and returns a tool error (403) when denied. **Exception:**
-`ingest_document` references an arbitrary container-local path (`documents.ingest_local_path`), so it is
-**master-only** — a scoped write grant must not become an arbitrary server-file read / cross-tenant copy.
-Over-limit → 429 (per-key token bucket). See [`mcp.md`](mcp.md).
+and binds the resolved `Principal` for the request (`api/services/mcp/context.py`); **every** tool enforces
+that principal's grants via the same `permissions.authorize_*` authority (`api/services/mcp/tools.py`) and
+returns a tool error (403) when denied — the MCP surface is a full self-service plane (upload/download,
+workspace/collection/tag CRUD, ingestion status, rate-limit introspection), each tool scoped exactly like its
+REST counterpart. Tag tools honour the `manage_tags` capability; scoped users upload via the presigned
+`request_upload`/`confirm_upload` pair (collection `write`). **Exception:** `ingest_document` references an
+arbitrary container-local path (`documents.ingest_local_path`), so it is **master-only** — a scoped write
+grant must not become an arbitrary server-file read / cross-tenant copy. Over-limit → 429 (per-key token
+bucket): each key's ceiling is the global `mcp.rate_limit_rpm` unless an admin sets a **per-user override** on
+the user (`users.rate_limit_rpm`, `0` = inherit) in the console — the middleware pushes the authenticated
+principal's value into the limiter post-auth. See [`mcp.md`](mcp.md).
 
 ## Hard rules / gotchas
 - **Never return or log `key_hash`, `password_hash`, a raw key, or a raw password.** Hashing is fixed: bcrypt,

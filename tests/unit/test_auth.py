@@ -35,6 +35,8 @@ def test_principal_carries_user_identity():
     assert not user.is_master
     assert user.user_id == "usr_a"
     assert user.api_key_id == "k1"
+    assert user.rate_limit_rpm == 0  # default: inherit the global MCP limit
+    assert Principal(is_master=False, user_id="usr_b", rate_limit_rpm=15).rate_limit_rpm == 15
 
 
 def test_extract_key_prefers_x_api_key_then_bearer():
@@ -62,12 +64,12 @@ from api.services.auth import authenticate_api_key, record_key_use  # noqa: E402
 MASTER = "test-master-key-for-testing-only"  # matches conftest env
 
 
-async def _seed_user_key(session, *, user_id="usr_seed", is_active=True):
+async def _seed_user_key(session, *, user_id="usr_seed", is_active=True, rate_limit_rpm=0):
     """Create a user + their api_key and return the raw key string."""
     await session.execute(
         insert(users_t).values(
             id=user_id, email=f"{user_id}@example.com", name="",
-            is_active=is_active, created_at="t", updated_at="t",
+            is_active=is_active, rate_limit_rpm=rate_limit_rpm, created_at="t", updated_at="t",
         )
     )
     raw = "eb_" + secrets.token_urlsafe(32)
@@ -106,6 +108,18 @@ async def test_validate_user_key_success(db_session):
     assert principal.is_master is False
     assert principal.user_id == "usr_a"
     assert principal.api_key_id == "key_seed"
+
+
+async def test_validate_user_key_carries_rate_limit(db_session):
+    raw = await _seed_user_key(db_session, user_id="usr_rl", rate_limit_rpm=30)
+    principal = await authenticate_api_key(raw, db_session)
+    assert principal.rate_limit_rpm == 30
+
+
+async def test_validate_user_key_defaults_rate_limit_to_zero(db_session):
+    raw = await _seed_user_key(db_session, user_id="usr_rl0")
+    principal = await authenticate_api_key(raw, db_session)
+    assert principal.rate_limit_rpm == 0  # unset → inherit the global default
 
 
 async def test_validate_user_key_updates_last_used_at(db_session):

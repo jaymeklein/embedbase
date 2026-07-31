@@ -2,12 +2,25 @@
 
 This guide shows how to register EmbedBase's MCP server with
 [Claude Code](https://claude.com/claude-code) using `claude mcp add`, so an
-agent can search, ingest, and manage your collections directly from a coding
-session.
+agent can run EmbedBase **entirely from chat** — search, upload/download, manage
+workspaces, collections, tags and documents, and check ingestion status — without
+opening the console.
 
-EmbedBase exposes five tools over a **streamable HTTP** transport:
-`list_workspaces`, `search_documents`, `ingest_document`, `list_documents`, and
-`delete_document`.
+EmbedBase exposes a full self-service tool surface over a **streamable HTTP**
+transport, grouped by domain:
+
+- **Search / read** — `list_workspaces`, `search_documents`, `list_documents`, `get_document_chunks`
+- **Documents** — `request_upload` + `confirm_upload` (presigned upload), `request_original_upload` +
+  `confirm_original_upload` (attach an optional original source file), `download_document`,
+  `get_document_status`, `reprocess_document`, `delete_document`, `ingest_document` (container path, master-only)
+- **Structure** — `create_workspace` / `update_workspace` / `delete_workspace`,
+  `create_collection` / `update_collection` / `delete_collection`
+- **Tags** — `list_tags` / `create_tag` / `update_tag` / `delete_tag` / `merge_tags`,
+  `assign_tag` / `unassign_tag` (needs the `manage_tags` permission)
+- **Ops** — `list_ingestion_jobs`, `get_ingestion_stats`, `get_rate_limit`
+
+Every tool acts as **your user** and respects your read/write grants — you only see and change what your
+key is allowed to. (Admin settings — app config, user & key management — stay in the console.)
 
 > **Transport note:** EmbedBase previously spoke **SSE**. It now uses
 > **streamable HTTP** (`type: http`), which is request-scoped — there is no
@@ -101,13 +114,35 @@ A typical flow inside a session:
 1. **`list_workspaces()`** — discover workspace/collection IDs. Never invent
    them; always resolve real IDs here first.
 2. **`search_documents(query, collection_ids, top_k=5, hybrid=true, filters?)`**
-   — hybrid semantic + BM25 search across one or more collections.
-3. **`list_documents(collection_id)`** — inspect a collection's documents and
-   their ingestion status.
-4. **`ingest_document(collection_id, file_path)`** — ingest a
-   **container-local** path (a file the API container can see).
-5. **`delete_document(document_id)`** — soft-delete and enqueue vector + BM25
-   cleanup.
+   — the primary retrieval tool: hybrid semantic + BM25 search across one or more collections, returning
+   only the most relevant chunks (bounded by `top_k`). Start here for any content question; raise `top_k`
+   or re-run when the response sets `more_available`.
+3. **`list_documents(collection_id)`** / **`get_document_chunks(document_id, chunk_ids?, limit?,
+   offset?)`** — inspect a collection's documents (with ingestion status), or how a document was
+   chunked: pass the `chunk_id`s from a search result to pull just those chunks (≤100), or omit
+   them to page through the whole document (`limit` 1–100 + `offset`, with `total`/`has_more`).
+   `get_document_chunks` is a follow-up to search, not a document reader — paging every chunk of a large
+   document pulls in irrelevant text; let search rank what matters.
+4. **Upload a file (presigned, two steps):**
+   - **`request_upload(collection_id, filename, retention_days?)`** → returns an `upload_url` +
+     `document_id`. Set `retention_days` (1–30) to auto-delete the file after that many days; omit for permanent.
+   - `PUT` the file bytes to `upload_url` (e.g. `curl -X PUT --upload-file ./f.pdf "<upload_url>"`).
+   - **`confirm_upload(document_id)`** → verifies the upload and starts ingestion.
+   - **Optionally keep the original:** to store the source file alongside the parse (e.g. the raw PDF a
+     Markdown upload was converted from), `request_original_upload(document_id, filename)` → `PUT` the bytes →
+     `confirm_original_upload(document_id)`. It's never embedded; fetch it later with
+     `download_document(document_id, original=true)`.
+
+   (`ingest_document(collection_id, file_path)` is the master-only shortcut for a file already on the API
+   container's disk.)
+5. **`get_document_status(document_id)`** — check ingestion progress; **`reprocess_document(document_id)`**
+   to retry a failed one; **`download_document(document_id, original?)`** for a short-lived download URL
+   (set `original=true` for the attached original source file).
+6. **`delete_document(document_id)`** — soft-delete and enqueue vector + BM25 cleanup.
+7. **Manage structure & tags** — `create_workspace` / `create_collection` (+ update/delete), and the tag
+   tools (`create_tag`, `assign_tag`, …) when your key holds the `manage_tags` permission.
+8. **`get_ingestion_stats()`** / **`get_rate_limit()`** — queue depth + whether ingestion is paused on a
+   provider quota, and your remaining MCP call budget with the time until it refills.
 
 ## Auth & rate limits
 
@@ -159,5 +194,5 @@ claude mcp add --transport http embedbase http://localhost:8000/api/mcp/ \
 - [MCP section in the README](../README.md#mcp-claude-desktop--cursor--zed) —
   Claude Desktop / Cursor / Zed setup.
 - The **Settings → MCP** page in the UI generates a client-config snippet and a
-  downloadable `SKILL.md`, and links to the standalone REST reference
-  (`/api/reference`).
+  downloadable **skill bundle** (`SKILL.md` + `references/`, as a zip), and links to the
+  standalone REST reference (`/api/reference`).

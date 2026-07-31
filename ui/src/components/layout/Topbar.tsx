@@ -15,7 +15,7 @@ export function Topbar({ children }: { children?: ReactNode }) {
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-6">
       <div className="flex items-center gap-2 text-[13px] text-ink-muted">{children}</div>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-ink-faint" title={currentUser?.email}>
+        <span className="text-xs text-ink-faint" title={currentUser?.email ?? undefined}>
           {currentUser ? currentUser.username : 'Master key'}
           {isAdmin ? ' · admin' : ''}
         </span>

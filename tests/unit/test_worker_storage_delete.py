@@ -28,12 +28,13 @@ def _factory(tmp_path):
     return sessionmaker(engine, class_=Session, expire_on_commit=False)
 
 
-def _seed_doc(factory, *, doc_id, col_id, ext, backend):
+def _seed_doc(factory, *, doc_id, col_id, ext, backend, original_ext=None):
     with factory() as s:
         s.execute(
             insert(documents).values(
                 id=doc_id, collection_id=col_id, filename=f"f{ext}", file_type=ext,
-                storage_backend=backend, created_at="t", updated_at="t",
+                storage_backend=backend, original_file_type=original_ext,
+                created_at="t", updated_at="t",
             )
         )
         s.commit()
@@ -110,3 +111,56 @@ def test_delete_stored_object_missing_row_resolves_no_backend(tmp_path, monkeypa
     wt._delete_stored_object("ghost", "col_x")  # row absent → returns before storage
 
     assert resolved["called"] is False  # nothing to key off → no backend built
+
+
+def test_delete_stored_object_also_deletes_attached_original(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)
+    _seed_doc(factory, doc_id="doc_o", col_id="col_o", ext=".md", backend="s3x", original_ext=".pdf")
+    spy = _SpyStorage()
+
+    monkeypatch.setattr(wt, "SessionLocal", factory)
+    monkeypatch.setattr(wt, "get_config", lambda: AppConfig())
+    monkeypatch.setattr("api.services.storage.get_storage", lambda cfg, name=None: spy)
+
+    wt._delete_stored_object("doc_o", "col_o")
+
+    # Both the parse and the attached original are removed (original keyed with the .orig marker).
+    assert spy.deleted == ["col_o/doc_o.md", "col_o/doc_o.orig.pdf"]
+
+
+def test_delete_stored_object_without_original_deletes_only_parse(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)
+    _seed_doc(factory, doc_id="doc_p", col_id="col_p", ext=".md", backend="s3x")  # no original
+    spy = _SpyStorage()
+
+    monkeypatch.setattr(wt, "SessionLocal", factory)
+    monkeypatch.setattr(wt, "get_config", lambda: AppConfig())
+    monkeypatch.setattr("api.services.storage.get_storage", lambda cfg, name=None: spy)
+
+    wt._delete_stored_object("doc_p", "col_p")
+
+    assert spy.deleted == ["col_p/doc_p.md"]  # only the parse, no original key
+
+
+def test_delete_stored_object_deletes_original_even_if_parse_delete_fails(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)
+    _seed_doc(factory, doc_id="doc_q", col_id="col_q", ext=".md", backend="s3x", original_ext=".pdf")
+
+    class _PartialFail:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        def delete(self, key: str) -> None:
+            if key.endswith(".md"):
+                raise RuntimeError("parse delete failed")
+            self.deleted.append(key)
+
+    spy = _PartialFail()
+    monkeypatch.setattr(wt, "SessionLocal", factory)
+    monkeypatch.setattr(wt, "get_config", lambda: AppConfig())
+    monkeypatch.setattr("api.services.storage.get_storage", lambda cfg, name=None: spy)
+
+    wt._delete_stored_object("doc_q", "col_q")
+
+    # The parse delete raised, but the original delete still ran (independent best-effort).
+    assert spy.deleted == ["col_q/doc_q.orig.pdf"]

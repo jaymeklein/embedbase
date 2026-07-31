@@ -42,10 +42,11 @@ type Dialog =
 function changedFields(user: User, values: UserFormValues): UserUpdate {
   const body: UserUpdate = {}
   if (values.username !== user.username) body.username = values.username
-  if (values.email !== user.email) body.email = values.email
+  if (values.email !== (user.email ?? '')) body.email = values.email
   if (values.name !== (user.name ?? '')) body.name = values.name
   if (values.is_active !== user.is_active) body.is_active = values.is_active
   if (values.is_admin !== user.is_admin) body.is_admin = values.is_admin
+  if (values.rate_limit_rpm !== user.rate_limit_rpm) body.rate_limit_rpm = values.rate_limit_rpm
   return body
 }
 
@@ -308,8 +309,10 @@ function UserRow({
           {user.name && <span className="truncate text-xs text-ink-muted">{user.name}</span>}
         </div>
         <p className="mt-0.5 truncate text-xs text-ink-faint">
-          {user.email} · {user.api_key ? `key ${user.api_key.key_prefix}…` : 'no API key'} · created{' '}
+          {user.email ? `${user.email} · ` : ''}
+          {user.api_key ? `key ${user.api_key.key_prefix}…` : 'no API key'} · created{' '}
           {formatDate(user.created_at)}
+          {user.rate_limit_rpm > 0 && ` · ${user.rate_limit_rpm} rpm`}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">

@@ -26,6 +26,8 @@ interface AuthValue {
   isAdmin: boolean
   /** True when the user (or master key) may create workspaces. */
   canCreateWorkspaces: boolean
+  /** True when the user (or master key) may manage tags (the `manage_tags` capability). */
+  canManageTags: boolean
   /** True when the signed-in user must set a new password before using the app. */
   mustChangePassword: boolean
   /** True while the initial `/auth/me` for a stored session is in flight (gates the
@@ -61,6 +63,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [canCreateWorkspaces, setCanCreateWorkspaces] = useState(
     () => getToken() !== null && getSessionToken() === null,
   )
+  // Master-key sessions may manage tags; a login session's capability comes from /auth/me.
+  const [canManageTags, setCanManageTags] = useState(
+    () => getToken() !== null && getSessionToken() === null,
+  )
   const [mustChangePassword, setMustChangePassword] = useState(false)
   // A stored login session must be verified via /auth/me before we render the app,
   // or a reload would flash the wrong role / must-change state.
@@ -71,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsAuthed(false)
     setIsAdmin(false)
     setCanCreateWorkspaces(false)
+    setCanManageTags(false)
     setMustChangePassword(false)
     setCurrentUser(null)
     queryClient.clear()
@@ -80,6 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentUser(user)
     setIsAdmin(user.is_admin)
     setCanCreateWorkspaces(user.can_create_workspaces ?? false)
+    setCanManageTags(user.can_manage_tags ?? false)
     setMustChangePassword(user.must_change_password)
     setIsAuthed(true)
   }, [])
@@ -109,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCurrentUser(null)
     setIsAdmin(true)
     setCanCreateWorkspaces(true)
+    setCanManageTags(true)
     setMustChangePassword(false)
     setIsAuthed(true)
   }, [])
@@ -160,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthed,
       isAdmin,
       canCreateWorkspaces,
+      canManageTags,
       mustChangePassword,
       hydrating,
       currentUser,
@@ -172,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthed,
       isAdmin,
       canCreateWorkspaces,
+      canManageTags,
       mustChangePassword,
       hydrating,
       currentUser,

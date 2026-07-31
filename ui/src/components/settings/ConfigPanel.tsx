@@ -42,28 +42,15 @@ export function ConfigPanel() {
 }
 
 /**
- * Storage section: the active backend (read-only — selection lives in
- * config.yaml/.env) plus the one live-editable knob, how long *temporary*
- * uploads are kept before the worker purges them (0 = kept forever).
+ * Storage section: a read-only view of the active object-storage backend (selection lives in
+ * config.yaml/.env). There is no global retention knob — retention is set **per upload**
+ * (`retention_days` 1-30, or permanent). The old `storage.temp_retention_hours` is deprecated and
+ * no longer read by any upload path, so the panel no longer offers it.
  */
 function StorageForm({ config }: { config: AppConfig }) {
-  const toast = useToast()
-  const update = useUpdateConfig()
   const storage = config.storage
   const activeName = storage.default
   const activeType = storage.backends?.[activeName]?.type
-
-  const [hours, setHours] = useState(String(storage.temp_retention_hours))
-
-  const save = () => {
-    update.mutate(
-      { ...config, storage: { ...storage, temp_retention_hours: Math.max(0, Number(hours) || 0) } },
-      {
-        onSuccess: () => toast.success('Storage config saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
-      },
-    )
-  }
 
   return (
     <Card className="flex flex-col gap-5 p-5">
@@ -71,8 +58,9 @@ function StorageForm({ config }: { config: AppConfig }) {
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
           Where uploaded files are stored. The active backend is chosen in{' '}
-          <code>config.yaml</code> / <code>.env</code>; here you set how long{' '}
-          <strong>temporary</strong> uploads live before the worker deletes them.
+          <code>config.yaml</code> / <code>.env</code>. Retention is set{' '}
+          <strong>per upload</strong> (1–30 days, or kept permanently) on the Documents page —
+          there's no global retention setting.
         </p>
       </div>
 
@@ -85,26 +73,7 @@ function StorageForm({ config }: { config: AppConfig }) {
             disabled
           />
         </Field>
-        <Field
-          label="Temporary file retention (hours)"
-          htmlFor="storage-retention"
-          hint="0 = keep files forever; >0 auto-deletes temporary uploads after this many hours"
-        >
-          <Input
-            id="storage-retention"
-            type="number"
-            min="0"
-            value={hours}
-            onChange={(e) => setHours(e.target.value)}
-          />
-        </Field>
       </Section>
-
-      <div className="flex justify-end">
-        <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save storage config'}
-        </Button>
-      </div>
     </Card>
   )
 }

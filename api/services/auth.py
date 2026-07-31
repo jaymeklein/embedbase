@@ -60,6 +60,10 @@ class Principal:
     #: Set on a console-session principal whose user must change their password:
     #: such a principal may only reach the change-password endpoint.
     must_change: bool = False
+    #: Per-user MCP rate-limit override, resolved at API-key authentication
+    #: (``0`` = inherit the global ``mcp.rate_limit_rpm``). Only carried on a
+    #: user-key principal; the master key and console sessions leave it ``0``.
+    rate_limit_rpm: int = 0
 
 
 def _extract_key(authorization: str | None, x_api_key: str | None) -> str | None:
@@ -103,14 +107,23 @@ async def authenticate_api_key(raw_key: str | None, db: AsyncSession) -> Princip
     raw_bytes = raw_key.encode()
     for row in rows:
         if bcrypt.checkpw(raw_bytes, row.key_hash.encode()):
-            is_active = (
+            # Same lookup that gates on is_active also carries the user's rate-limit
+            # override — one query, no extra round-trip on the hot auth path.
+            user = (
                 await db.execute(
-                    select(users_t.c.is_active).where(users_t.c.id == row.user_id)
+                    select(users_t.c.is_active, users_t.c.rate_limit_rpm).where(
+                        users_t.c.id == row.user_id
+                    )
                 )
-            ).scalar_one_or_none()
-            if not is_active:
+            ).fetchone()
+            if user is None or not user.is_active:
                 raise HTTPException(403, "User is inactive")
-            return Principal(is_master=False, user_id=row.user_id, api_key_id=row.id)
+            return Principal(
+                is_master=False,
+                user_id=row.user_id,
+                api_key_id=row.id,
+                rate_limit_rpm=user.rate_limit_rpm or 0,
+            )
 
     raise HTTPException(401, "Invalid API key")
 

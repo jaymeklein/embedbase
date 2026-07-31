@@ -218,6 +218,32 @@ def test_ingest_document_rate_limit_pauses_and_does_not_strand(tmp_path, monkeyp
     assert row.status == "rate_limited"  # left resume-able for the beat sweep
 
 
+def test_ingest_document_non_retryable_fails_without_retry(tmp_path, monkeypatch):
+    """A NonRetryableIngestError (e.g. the stored object is over the size cap) must fail terminally —
+    mark 'failed' and raise plainly, NOT self.retry, which would re-fail the same object through the
+    whole 3-retry ladder. Regression guard so the size breach never lands on the retry path."""
+    factory = _db(tmp_path)
+    _seed_job(factory, "job_big", "doc_big", "col_big", status="processing")
+    monkeypatch.setattr(tasks, "SessionLocal", factory)
+
+    def _raise_oversize(*_a):
+        raise tasks.NonRetryableIngestError(
+            "Stored object is 2097152 bytes, over the 1048576-byte size limit"
+        )
+
+    monkeypatch.setattr(tasks, "_run_ingestion", _raise_oversize)
+
+    # Eager run: a self.retry would surface as a Retry out of .get(); the terminal path re-raises
+    # the original NonRetryableIngestError instead.
+    with pytest.raises(tasks.NonRetryableIngestError):
+        tasks.ingest_document.apply(args=["job_big", "k", "col_big", "doc_big", ".pdf"]).get()
+    with factory() as s:
+        row = s.execute(
+            select(job_records.c.status).where(job_records.c.job_id == "job_big")
+        ).fetchone()
+    assert row.status == "failed"  # terminal; the beat sweep never re-enqueues a failed job
+
+
 # --------------------------------------------------------------------------- #
 # raise_for_status — uniform typed 429 across every httpx embedding adapter    #
 # --------------------------------------------------------------------------- #
