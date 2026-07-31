@@ -52,3 +52,17 @@ def test_disabled_setting_accepts_a_host_the_loopback_default_would_reject():
     guarded = TransportSecurityMiddleware(loopback_only)
     rejected = asyncio.run(guarded.validate_request(_request(lan_host), is_post=True))
     assert rejected is not None and rejected.status_code == 421
+
+
+def test_streamable_http_app_wires_disabled_protection_into_the_session_manager():
+    # The wiring, not just the setting: build_mcp_server() only *stores* the setting on
+    # FastMCP.settings — it's streamable_http_app() that constructs the
+    # StreamableHTTPSessionManager whose TransportSecurityMiddleware enforces the Host allowlist on
+    # every real request. Assert the disabled setting reaches that live session manager, so an SDK
+    # change that stopped forwarding it (or a wiring regression) fails here instead of silently
+    # 421'ing LAN clients in production — the exact gap a settings-only assertion leaves open.
+    server = mcp_server.build_mcp_server()
+    server.streamable_http_app()  # side effect: constructs server.session_manager
+    settings = server.session_manager.security_settings
+    assert settings is not None
+    assert settings.enable_dns_rebinding_protection is False
