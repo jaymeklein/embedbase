@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.types import ASGIApp
 
 from api.db import AsyncSessionLocal
@@ -544,6 +545,21 @@ async def build_tool_catalog(*, max_results: int = 20) -> list[dict[str, Any]]:
     return catalog
 
 
+def _transport_security() -> TransportSecuritySettings:
+    """Disable the streamable-HTTP transport's DNS-rebinding Host/Origin allowlist.
+
+    The MCP SDK auto-enables a **loopback-only** Host allowlist whenever the server host is
+    localhost (its default), which refuses every non-loopback Host with ``421 Invalid Host
+    header`` — leaving the server unreachable from other machines on the network. EmbedBase
+    authenticates **every** MCP request with an API key (the master or an active user's key
+    — see :mod:`api.services.mcp.middleware`), so authorization never depends on network
+    position: a DNS-rebinding request carries no key and is already refused with 401. We
+    therefore turn the allowlist off and let the API key be the sole boundary, so the
+    endpoint is reachable from any machine on the network by any address or name.
+    """
+    return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+
 def build_mcp_server(*, max_results: int = 20) -> FastMCP:
     """Construct the ``FastMCP`` server with all EmbedBase tools registered.
 
@@ -560,7 +576,12 @@ def build_mcp_server(*, max_results: int = 20) -> FastMCP:
     Returns:
         A ready-to-serve :class:`FastMCP` instance.
     """
-    server = FastMCP("embedbase", stateless_http=True, json_response=True)
+    server = FastMCP(
+        "embedbase",
+        stateless_http=True,
+        json_response=True,
+        transport_security=_transport_security(),
+    )
     # NB: per-request auth relies on ``stateless_http=True`` — each request spawns its
     # own handler task, so the middleware's ContextVar principal (context.py) is bound
     # per request. Under stateful sessions the handler task is per-session, which would

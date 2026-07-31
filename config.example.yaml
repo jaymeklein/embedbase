@@ -83,6 +83,9 @@ max_file_size_mb: 50
 #       type: s3
 #       endpoint_url: http://minio:9000            # in-cluster address (api/worker → minio)
 #       public_endpoint_url: http://localhost:9000 # address the browser reaches (signs presigned URLs)
+#         localhost only resolves on the server host itself; for the console opened from other
+#         machines set the host LAN IP (e.g. http://192.168.x.x:9000) and add that origin to
+#         CORS_ORIGINS in .env so the cross-origin presigned download passes CORS.
 #       bucket: embedbase
 #       region: us-east-1
 #       use_path_style: true
