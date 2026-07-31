@@ -13,9 +13,10 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from api.adapters.embeddings.errors import RateLimitError
+from api.models.config import AppConfig
 from api.tables import documents, job_records, metadata
 from tests.unit.fakes import FakeEmbedder, FakeRedis, FakeStore
-from worker.tasks import _heartbeat_key, _run_ingestion
+from worker.tasks import NonRetryableIngestError, _heartbeat_key, _run_ingestion
 
 
 def _db_factory(tmp_path):
@@ -90,6 +91,29 @@ def test_processing_job_without_heartbeat_is_reclaimed(tmp_path):
     )
     assert result > 0
     assert len(store.upserts) > 0
+
+
+def test_oversized_stored_object_is_non_retryable(tmp_path):
+    """The worker's pre-download size guard rejects an object over the cap with a
+    NonRetryableIngestError — before fetching or parsing — so it fails terminally instead of being
+    retried (the object won't shrink on a re-run)."""
+    factory = _db_factory(tmp_path)
+    _seed(factory, "job_big", "processing")  # no heartbeat → reclaimed into the try block
+
+    class _OversizeStorage:
+        def object_head(self, key: str) -> int:
+            return 2 * 1024 * 1024  # 2 MiB, over the 1 MiB cap injected below
+
+    with pytest.raises(NonRetryableIngestError):
+        _run_ingestion(
+            "job_big", str(tmp_path / "big.txt"), "col_1", "doc_1", ".txt",
+            session_factory=factory,
+            embedder=FakeEmbedder(),
+            vector_store=FakeStore(),
+            redis_client=FakeRedis(),
+            storage=_OversizeStorage(),
+            config=AppConfig(max_file_size_mb=1),
+        )
 
 
 def test_rate_limit_report_failure_does_not_mask_original(tmp_path):

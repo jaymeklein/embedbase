@@ -9,6 +9,7 @@ export interface UserFormValues {
   name: string
   is_active: boolean
   is_admin: boolean
+  rate_limit_rpm: number
 }
 
 const DEFAULTS: UserFormValues = {
@@ -17,6 +18,7 @@ const DEFAULTS: UserFormValues = {
   name: '',
   is_active: true,
   is_admin: false,
+  rate_limit_rpm: 0,
 }
 
 /** Shape checks for immediate feedback; the API re-validates authoritatively. */
@@ -27,10 +29,11 @@ function valuesFrom(user: User | undefined): UserFormValues {
   if (!user) return DEFAULTS
   return {
     username: user.username,
-    email: user.email,
+    email: user.email ?? '',
     name: user.name ?? '',
     is_active: user.is_active,
     is_admin: user.is_admin,
+    rate_limit_rpm: user.rate_limit_rpm ?? 0,
   }
 }
 
@@ -62,7 +65,8 @@ export function UserFormModal({
   const editing = Boolean(user)
   const email = values.email.trim()
   const username = values.username.trim()
-  const emailValid = isValidEmail(email)
+  // Email is optional — blank is valid; a non-blank value must be a real address.
+  const emailValid = email === '' || isValidEmail(email)
   const usernameValid = isValidUsername(username)
   const valid = emailValid && usernameValid
   const set = <K extends keyof UserFormValues>(key: K, value: UserFormValues[K]) =>
@@ -107,6 +111,7 @@ export function UserFormModal({
         <Field
           label="Email"
           htmlFor="user-email"
+          hint="Optional — leave blank if the user has no email."
           error={email && !emailValid ? 'Enter a valid email address.' : undefined}
         >
           <Input
@@ -126,6 +131,22 @@ export function UserFormModal({
             value={values.name}
             onChange={(e) => set('name', e.target.value)}
             placeholder="Optional"
+          />
+        </Field>
+        <Field
+          label="MCP rate limit (requests/min)"
+          htmlFor="user-rate-limit"
+          hint="Caps this user's key on /api/mcp. 0 = use the global default."
+        >
+          <Input
+            id="user-rate-limit"
+            type="number"
+            min={0}
+            step={1}
+            value={values.rate_limit_rpm}
+            onChange={(e) =>
+              set('rate_limit_rpm', Math.max(0, Math.floor(Number(e.target.value) || 0)))
+            }
           />
         </Field>
         <label className="flex items-center gap-2 text-sm text-ink">

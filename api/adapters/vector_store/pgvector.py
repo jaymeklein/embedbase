@@ -166,6 +166,19 @@ def _metadata_filter_sql(
     return " AND " + " AND ".join(conditions), params
 
 
+def chunk_index_order_key(result: SearchResult) -> tuple[int, int]:
+    """Sort key ordering chunks by their integer ``chunk_index``; missing/non-int indices sort last.
+
+    Ordering is done in Python, not SQL, on purpose: an in-query ``(metadata->>'chunk_index')::int``
+    cast would 500 the read on a stray non-numeric index. Int indices sort first (ascending); any
+    missing/non-int index sorts last rather than raising. Shared by the document chunk *page*
+    (:meth:`PgvectorAdapter.document_chunks`) and the by-id inspection fetch (the MCP
+    ``get_document_chunks`` tool) so both order chunks identically.
+    """
+    idx = result.metadata.get("chunk_index")
+    return (0, idx) if isinstance(idx, int) else (1, 0)
+
+
 class PgvectorAdapter:
     """Vector store backed by PostgreSQL with the pgvector extension."""
 
@@ -518,6 +531,42 @@ class PgvectorAdapter:
         if not chunk_ids:
             return []
         return self._runner.run(self._chunks_by_ids(collection_id, chunk_ids))
+
+    async def _document_chunks(
+        self, collection_id: str, document_id: str, *, limit: int, offset: int
+    ) -> tuple[list[SearchResult], int]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, text, metadata FROM chunks "
+                "WHERE collection_id = $1 AND document_id = $2",
+                collection_id, document_id,
+            )
+        results = [
+            SearchResult(
+                chunk_id=row["id"], text=row["text"] or "", score=0.0,
+                metadata=self._as_dict(row["metadata"]),
+            )
+            for row in rows
+        ]
+        # Sort defensively by chunk_index (see chunk_index_order_key), then slice AFTER sorting so
+        # the page is stable and index-ordered; ``total`` is the document's full chunk count.
+        results.sort(key=chunk_index_order_key)
+        return results[offset : offset + limit], len(results)
+
+    def document_chunks(
+        self, collection_id: str, document_id: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[list[SearchResult], int]:
+        """A page of a document's stored chunks (chunk-index order) plus its total chunk count.
+
+        Backs the MCP ``get_document_chunks`` inspection tool's paging mode so a caller can see how
+        a document was chunked/indexed without serialising every chunk (and its full text) into one
+        response. ``score`` is a placeholder ``0.0`` — these are listed, not ranked. The returned
+        ``total`` lets the caller tell when it has paged to the end.
+        """
+        return self._runner.run(
+            self._document_chunks(collection_id, document_id, limit=limit, offset=offset)
+        )
 
     async def _document_chunk_ids_at_model(
         self, collection_id: str, document_id: str, model: str

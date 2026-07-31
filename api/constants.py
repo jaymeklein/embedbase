@@ -39,3 +39,10 @@ GEMINI_API_BASE_URL: str = "https://generativelanguage.googleapis.com"
 # first). The SearchConfig field default and the multi_collection_search / search_documents
 # parameter fallbacks all read this one value so a retune stays a single edit.
 DEFAULT_EXPAND_CHAR_BUDGET: int = 8000
+
+# Per-file temporary-upload retention, in days. An upload may be stamped with a ``retention_days``
+# in ``[MIN, MAX]``; the worker purge sweep deletes it once ``expires_at`` passes. Omitting it means
+# the document is permanent. The API upload paths (REST + MCP) validate against these bounds so a
+# retune stays a single edit. (The frontend enforces the same range in its own upload control.)
+MIN_RETENTION_DAYS: int = 1
+MAX_RETENTION_DAYS: int = 30

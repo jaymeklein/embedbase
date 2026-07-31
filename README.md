@@ -315,9 +315,18 @@ the 61st in a minute returns `429`. Change it in **Settings → Config → MCP
 server** — the new limit applies to the next MCP request, no restart. (Setting
 `mcp.rate_limit_rpm` in `config.yaml` works too, but is only read at startup.)
 
-**Tools:** `list_workspaces`, `search_documents` (`query`, `collection_ids[]`,
-`top_k`, `hybrid`, `filters`), `ingest_document` (container-local path),
-`list_documents`, `delete_document`.
+**Authenticate with your `MASTER_API_KEY` _or_ a per-user key** — a user key acts as that user and
+respects their read/write grants, so a whole team can drive EmbedBase from chat without console access.
+
+**Tools** (a full self-service surface — every action a user has in the console except admin config):
+- *Search / read* — `list_workspaces`, `search_documents` (`query`, `collection_ids[]`, `top_k`, `hybrid`,
+  `filters`), `list_documents`, `get_document_chunks`
+- *Documents* — `request_upload` + `confirm_upload` (presigned upload, with optional `retention_days` 1–30),
+  `download_document`, `get_document_status`, `reprocess_document`, `delete_document`, `ingest_document`
+  (container-local path, master-only)
+- *Structure* — create/update/delete for workspaces and collections
+- *Tags* — list/create/update/delete/merge + assign/unassign (needs the `manage_tags` permission)
+- *Ops* — `list_ingestion_jobs`, `get_ingestion_stats`, `get_rate_limit`
 
 ### Claude Code
 

@@ -13,7 +13,7 @@ session epoch — a JWT is rejected once it no longer matches, so a reset or cha
 invalidates prior sessions. The master key remains a bootstrap credential.
 """
 
-from sqlalchemy import Boolean, Column, Index, String, Table, UniqueConstraint, false, true
+from sqlalchemy import Boolean, Column, Index, Integer, String, Table, UniqueConstraint, false, true
 
 from api.tables.metadata import metadata
 
@@ -21,7 +21,10 @@ users = Table(
     "users",
     metadata,
     Column("id", String, primary_key=True),
-    Column("email", String, nullable=False),
+    # Optional (migration 0011): an account is keyed by ``username``, so it may have no
+    # email. The unique constraint below still forbids duplicate addresses but permits
+    # many NULLs (SQL treats NULLs as distinct).
+    Column("email", String, nullable=True),
     Column("name", String, nullable=False, server_default=""),
     Column("is_active", Boolean, nullable=False, server_default=true()),
     Column("created_at", String, nullable=False),
@@ -34,6 +37,10 @@ users = Table(
     Column("must_change_password", Boolean, nullable=False, server_default=true()),
     Column("password_changed_at", String, nullable=True),
     Column("is_admin", Boolean, nullable=False, server_default=false()),
+    # Per-user MCP rate-limit override (migration 0010). 0 = inherit the global
+    # mcp.rate_limit_rpm; a positive value caps this user's key. Read into the
+    # Principal at auth and pushed into the MCP token bucket per key.
+    Column("rate_limit_rpm", Integer, nullable=False, server_default="0"),
     UniqueConstraint("email", name="users_email_unique"),
     Index("users_username_key", "username", unique=True),
 )

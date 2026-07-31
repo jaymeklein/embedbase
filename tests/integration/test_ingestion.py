@@ -37,6 +37,9 @@ class FakeStorage:
     def fetch_to_temp(self, key):
         return self._path
 
+    def object_head(self, key):  # size guard reads this before fetching (mirrors LocalStorage)
+        return self._path.stat().st_size if self._path.is_file() else None
+
     def cleanup_temp(self, path):
         self.cleaned.append(path)
 

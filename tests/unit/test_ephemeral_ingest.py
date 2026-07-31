@@ -2,8 +2,9 @@
 
 Two halves, both infra-free:
 
-* Service (async, ``db_session``): ``ingest(temporary=True)`` stamps ``expires_at``
-  only when ``storage.temp_retention_hours > 0``; a normal upload never does.
+* Service (async, ``db_session``): ``ingest(retention_days=N)`` stamps ``expires_at``
+  at ``now + N days``; an omitted (``None``) retention is permanent; a value outside
+  ``[1, 30]`` is rejected (422).
 * Worker (sync, throwaway SQLite): ``purge_expired_documents`` enqueues a delete for
   each *due* expired document and leaves future / permanent rows alone.
 """
@@ -11,7 +12,8 @@ Two halves, both infra-free:
 import io
 from datetime import UTC, datetime, timedelta
 
-from fastapi import UploadFile
+import pytest
+from fastapi import HTTPException, UploadFile
 from sqlalchemy import create_engine, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -46,43 +48,53 @@ async def _seed_ws_col(db_session) -> None:
     await db_session.commit()
 
 
-async def _ingest(db_session, monkeypatch, *, hours: int, temporary: bool):
-    """Ingest one upload under a given retention config; return its stored expires_at."""
+async def _ingest(db_session, monkeypatch, *, retention_days):
+    """Ingest one upload with a per-file retention; return its stored expires_at."""
     await _seed_ws_col(db_session)
     monkeypatch.setattr(doc_svc, "get_storage", lambda cfg, name=None: _SpyStorage())
-    monkeypatch.setattr(
-        doc_svc, "get_app_config", lambda: AppConfig(storage=StorageConfig(temp_retention_hours=hours))
-    )
+    monkeypatch.setattr(doc_svc, "get_app_config", lambda: AppConfig())
     monkeypatch.setattr(doc_svc.task_producer, "enqueue_ingest", lambda *a: None)
 
     upload = UploadFile(filename="note.txt", file=io.BytesIO(b"hello"))
-    result = await doc_svc.ingest(db_session, "col1", upload, Principal(is_master=True), temporary=temporary)
+    result = await doc_svc.ingest(
+        db_session, "col1", upload, Principal(is_master=True), retention_days=retention_days
+    )
     return (
         await db_session.execute(select(doc_t.c.expires_at).where(doc_t.c.id == result["document_id"]))
     ).scalar()
 
 
-async def test_temporary_upload_stamps_expiry(db_session, monkeypatch):
+async def test_retention_days_stamps_expiry(db_session, monkeypatch):
     before = datetime.now(UTC).replace(tzinfo=None)
-    expires_at = await _ingest(db_session, monkeypatch, hours=24, temporary=True)
+    expires_at = await _ingest(db_session, monkeypatch, retention_days=7)
     after = datetime.now(UTC).replace(tzinfo=None)
     assert expires_at is not None
-    # Stamped at now+24h, where `now` fell between `before` and `after`.
-    assert before + timedelta(hours=24) <= expires_at <= after + timedelta(hours=24)
+    # Stamped at now+7d, where `now` fell between `before` and `after`.
+    assert before + timedelta(days=7) <= expires_at <= after + timedelta(days=7)
 
 
-async def test_normal_upload_has_no_expiry(db_session, monkeypatch):
-    # temporary flag off → permanent, even with retention configured.
-    assert await _ingest(db_session, monkeypatch, hours=24, temporary=False) is None
+async def test_no_retention_is_permanent(db_session, monkeypatch):
+    # Omitted retention (None) → permanent, no expires_at.
+    assert await _ingest(db_session, monkeypatch, retention_days=None) is None
 
 
-async def test_temporary_is_noop_when_retention_disabled(db_session, monkeypatch):
-    # temp_retention_hours=0 is the default-off switch: a temporary upload stays permanent.
-    assert await _ingest(db_session, monkeypatch, hours=0, temporary=True) is None
+async def test_retention_days_out_of_range_rejected(db_session, monkeypatch):
+    # 1-30 is the accepted band; below/above → 422 before any bytes are stored.
+    await _seed_ws_col(db_session)
+    monkeypatch.setattr(doc_svc, "get_storage", lambda cfg, name=None: _SpyStorage())
+    monkeypatch.setattr(doc_svc, "get_app_config", lambda: AppConfig())
+    monkeypatch.setattr(doc_svc.task_producer, "enqueue_ingest", lambda *a: None)
+    for bad in (0, 31):
+        upload = UploadFile(filename="note.txt", file=io.BytesIO(b"hello"))
+        with pytest.raises(HTTPException) as exc:
+            await doc_svc.ingest(
+                db_session, "col1", upload, Principal(is_master=True), retention_days=bad
+            )
+        assert exc.value.status_code == 422
 
 
-async def test_temporary_local_path_stamps_expiry(db_session, monkeypatch, tmp_path):
-    """The MCP ingest path (ingest_local_path) honours `temporary` too → stamps expires_at."""
+async def test_retention_days_local_path_stamps_expiry(db_session, monkeypatch, tmp_path):
+    """The MCP ingest path (ingest_local_path) honours retention_days too → stamps expires_at."""
     await _seed_ws_col(db_session)
 
     class _PathStorage:
@@ -90,16 +102,13 @@ async def test_temporary_local_path_stamps_expiry(db_session, monkeypatch, tmp_p
             return None
 
     monkeypatch.setattr(doc_svc, "get_storage", lambda cfg, name=None: _PathStorage())
-    monkeypatch.setattr(
-        doc_svc, "get_app_config",
-        lambda: AppConfig(storage=StorageConfig(temp_retention_hours=24)),
-    )
+    monkeypatch.setattr(doc_svc, "get_app_config", lambda: AppConfig())
     monkeypatch.setattr(doc_svc.task_producer, "enqueue_ingest", lambda *a: None)
 
     src = tmp_path / "note.txt"
     src.write_text("hello")
     result = await doc_svc.ingest_local_path(
-        db_session, "col1", str(src), Principal(is_master=True), temporary=True
+        db_session, "col1", str(src), Principal(is_master=True), retention_days=14
     )
     expires_at = (
         await db_session.execute(
@@ -107,6 +116,22 @@ async def test_temporary_local_path_stamps_expiry(db_session, monkeypatch, tmp_p
         )
     ).scalar()
     assert expires_at is not None
+
+
+async def test_local_path_rejects_empty_file(db_session, monkeypatch, tmp_path):
+    """ingest_local_path (MCP) refuses a zero-byte file → 422, before any DB/enqueue."""
+    await _seed_ws_col(db_session)
+    monkeypatch.setattr(
+        doc_svc, "get_app_config",
+        lambda: AppConfig(storage=StorageConfig(temp_retention_hours=0)),
+    )
+    src = tmp_path / "empty.txt"
+    src.write_bytes(b"")
+    with pytest.raises(HTTPException) as exc:
+        await doc_svc.ingest_local_path(
+            db_session, "col1", str(src), Principal(is_master=True)
+        )
+    assert exc.value.status_code == 422
 
 
 def test_documents_expires_at_column_is_nullable():
@@ -123,12 +148,12 @@ def _factory(tmp_path):
     return sessionmaker(engine, class_=Session, expire_on_commit=False)
 
 
-def _seed_doc(factory, *, doc_id, col_id, expires_at) -> None:
+def _seed_doc(factory, *, doc_id, col_id, expires_at, status=None, created_at="t") -> None:
     with factory() as s:
         s.execute(
             insert(documents).values(
                 id=doc_id, collection_id=col_id, filename="f.txt", file_type=".txt",
-                expires_at=expires_at, created_at="t", updated_at="t",
+                expires_at=expires_at, status=status, created_at=created_at, updated_at="t",
             )
         )
         s.commit()
@@ -161,3 +186,27 @@ def test_purge_noop_when_nothing_expired(tmp_path, monkeypatch):
 
     assert wt.purge_expired_documents() == 0
     assert enqueued == []
+
+
+def test_purge_reaps_stale_awaiting_upload(tmp_path, monkeypatch):
+    factory = _factory(tmp_path)
+    now = datetime.now(UTC)
+    old = (now - timedelta(hours=48)).isoformat()   # older than the 24h reservation TTL
+    fresh = now.isoformat()
+    # A permanent (expires_at=None) reservation that was abandoned long ago is reaped; a
+    # fresh reservation (still likely to be confirmed) is left alone.
+    _seed_doc(
+        factory, doc_id="stale", col_id="c1", expires_at=None,
+        status="awaiting_upload", created_at=old,
+    )
+    _seed_doc(
+        factory, doc_id="fresh", col_id="c1", expires_at=None,
+        status="awaiting_upload", created_at=fresh,
+    )
+
+    enqueued: list[str] = []
+    monkeypatch.setattr(wt, "SessionLocal", factory)
+    monkeypatch.setattr(wt.delete_document, "delay", lambda doc_id, col_id: enqueued.append(doc_id))
+
+    assert wt.purge_expired_documents() == 1
+    assert enqueued == ["stale"]

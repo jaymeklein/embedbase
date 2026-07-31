@@ -95,6 +95,91 @@ async def test_delete_user_removes_it(master_client):
     assert (await master_client.get(f"/users/{uid}")).status_code == 404
 
 
+# ── optional email ────────────────────────────────────────────────────────────
+
+async def test_create_user_without_email(master_client):
+    """A user can be created with no email — the account is identified by its username."""
+    r = await master_client.post("/users", json={"username": "noemail"})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] is None
+
+
+async def test_create_user_blank_email_stored_as_null(master_client):
+    """A whitespace-only email is coerced to NULL (never stored as '')."""
+    r = await master_client.post("/users", json={"username": "blankemail", "email": "   "})
+    assert r.status_code == 201, r.text
+    assert r.json()["email"] is None
+
+
+async def test_multiple_users_without_email_allowed(master_client):
+    """Many no-email accounts coexist — UNIQUE(email) permits multiple NULLs."""
+    a = await master_client.post("/users", json={"username": "noemail_a"})
+    b = await master_client.post("/users", json={"username": "noemail_b"})
+    assert (a.status_code, b.status_code) == (201, 201), (a.text, b.text)
+    assert a.json()["email"] is None and b.json()["email"] is None
+
+
+async def test_update_user_clears_email(master_client):
+    """Blanking the email on edit clears it to NULL."""
+    uid = (await _make_user(master_client, "has@example.com"))["id"]
+    r = await master_client.patch(f"/users/{uid}", json={"email": ""})
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] is None
+
+
+async def test_update_user_sets_email_on_a_no_email_account(master_client):
+    """A no-email user can be given an address later."""
+    uid = (await master_client.post("/users", json={"username": "later"})).json()["id"]
+    r = await master_client.patch(f"/users/{uid}", json={"email": "later@example.com"})
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] == "later@example.com"
+
+
+async def test_update_user_email_uniqueness_still_enforced(master_client):
+    """Clearing/optionality doesn't relax uniqueness for a *provided* address."""
+    await _make_user(master_client, "one@example.com")
+    uid = (await _make_user(master_client, "two@example.com"))["id"]
+    r = await master_client.patch(f"/users/{uid}", json={"email": "one@example.com"})
+    assert r.status_code == 409
+
+
+# ── per-user MCP rate limit ──────────────────────────────────────────────────
+
+async def test_create_user_defaults_rate_limit_to_zero(master_client):
+    data = await _make_user(master_client, "rl0@example.com")
+    assert data["rate_limit_rpm"] == 0  # 0 = inherit the global default
+
+
+async def test_create_user_accepts_rate_limit(master_client):
+    data = await _make_user(master_client, "rl@example.com", rate_limit_rpm=30)
+    assert data["rate_limit_rpm"] == 30
+
+
+async def test_create_user_rejects_negative_rate_limit(master_client):
+    r = await master_client.post(
+        "/users",
+        json={"username": "rlneg", "email": "rlneg@example.com", "rate_limit_rpm": -1},
+    )
+    assert r.status_code == 422
+
+
+async def test_update_user_sets_then_clears_rate_limit(master_client):
+    uid = (await _make_user(master_client, "rlupd@example.com"))["id"]
+    r = await master_client.patch(f"/users/{uid}", json={"rate_limit_rpm": 12})
+    assert r.status_code == 200
+    assert r.json()["rate_limit_rpm"] == 12
+    # 0 is a real value (not None), so the "apply non-null fields" filter clears the override.
+    cleared = await master_client.patch(f"/users/{uid}", json={"rate_limit_rpm": 0})
+    assert cleared.json()["rate_limit_rpm"] == 0
+
+
+async def test_get_and_list_user_expose_rate_limit(master_client):
+    uid = (await _make_user(master_client, "rlget@example.com", rate_limit_rpm=7))["id"]
+    assert (await master_client.get(f"/users/{uid}")).json()["rate_limit_rpm"] == 7
+    listed = {u["id"]: u for u in (await master_client.get("/users")).json()}
+    assert listed[uid]["rate_limit_rpm"] == 7
+
+
 # ── API key (one per user) ────────────────────────────────────────────────────
 
 async def test_mint_user_key_returns_raw_once(master_client):

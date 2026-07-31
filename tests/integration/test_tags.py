@@ -199,13 +199,107 @@ async def test_merge_into_self_422(master_client):
     assert r.status_code == 422
 
 
-# ── auth ──────────────────────────────────────────────────────────────────────
+# ── auth (unauthenticated) ─────────────────────────────────────────────────────
 
-async def test_create_tag_without_master_401(client):
+async def test_create_tag_without_auth_401(client):
     r = await client.post("/workspaces/ws_any/tags", json={"name": "x"})
     assert r.status_code == 401
 
 
-async def test_list_tags_without_master_401(client):
+async def test_list_tags_without_auth_401(client):
     r = await client.get("/workspaces/ws_any/tags")
     assert r.status_code == 401
+
+
+# ── auth (manage_tags capability) ──────────────────────────────────────────────
+
+_MASTER_HEADERS = {"Authorization": f"Bearer {MASTER}"}
+
+
+async def test_tag_write_requires_manage_tags_capability(client, make_user_key):
+    ws = (
+        await client.post("/workspaces", json={"name": "WS"}, headers=_MASTER_HEADERS)
+    ).json()["id"]
+    # No grants → unrestricted for data, but a capability is never implicit.
+    _uid, key = await make_user_key()
+    user = {"Authorization": f"Bearer {key}"}
+    r = await client.post(f"/workspaces/{ws}/tags", json={"name": "x"}, headers=user)
+    assert r.status_code == 403
+
+
+async def test_tag_write_allowed_with_manage_tags_capability(client, make_user_key):
+    ws = (
+        await client.post("/workspaces", json={"name": "WS"}, headers=_MASTER_HEADERS)
+    ).json()["id"]
+    _uid, key = await make_user_key([("capability", "manage_tags", "write")])
+    user = {"Authorization": f"Bearer {key}"}
+    created = await client.post(f"/workspaces/{ws}/tags", json={"name": "python"}, headers=user)
+    assert created.status_code == 201
+    # A capability holder can also delete (write) — spot-check the round-trip.
+    tag_id = created.json()["id"]
+    deleted = await client.delete(f"/workspaces/{ws}/tags/{tag_id}", headers=user)
+    assert deleted.status_code == 204
+
+
+async def test_tag_read_requires_manage_tags_capability(client, make_user_key):
+    ws = (
+        await client.post("/workspaces", json={"name": "WS"}, headers=_MASTER_HEADERS)
+    ).json()["id"]
+    await client.post(f"/workspaces/{ws}/tags", json={"name": "t"}, headers=_MASTER_HEADERS)
+    # The tag-admin surface (list + items) enumerates workspace-wide tags/resources, so it
+    # needs the capability too — a plain workspace reader is denied.
+    _uid, key = await make_user_key()
+    denied = {"Authorization": f"Bearer {key}"}
+    assert (await client.get(f"/workspaces/{ws}/tags", headers=denied)).status_code == 403
+
+    _uid2, cap_key = await make_user_key([("capability", "manage_tags", "write")])
+    granted = {"Authorization": f"Bearer {cap_key}"}
+    ok = await client.get(f"/workspaces/{ws}/tags", headers=granted)
+    assert ok.status_code == 200
+    assert len(ok.json()) == 1
+
+
+async def _ws_two_cols_tag(client):
+    """Master-seed a workspace with two collections + a tag; return (ws, colA, colB, tag)."""
+    ws = (
+        await client.post("/workspaces", json={"name": "WS"}, headers=_MASTER_HEADERS)
+    ).json()["id"]
+    cols = {}
+    for name in ("A", "B"):
+        cols[name] = (
+            await client.post(
+                f"/workspaces/{ws}/collections", json={"name": name}, headers=_MASTER_HEADERS
+            )
+        ).json()["id"]
+    tag = (
+        await client.post(f"/workspaces/{ws}/tags", json={"name": "t"}, headers=_MASTER_HEADERS)
+    ).json()["id"]
+    return ws, cols["A"], cols["B"], tag
+
+
+async def test_tag_assignment_respects_collection_write_scope(client, make_user_key):
+    # A capability holder scoped to colA (colB hidden) may (un)tag colA but not sibling colB.
+    ws, col_a, col_b, tag = await _ws_two_cols_tag(client)
+    _uid, key = await make_user_key(
+        [("collection", col_a, "write"), ("capability", "manage_tags", "write")]
+    )
+    user = {"Authorization": f"Bearer {key}"}
+    own = await client.put(f"/workspaces/{ws}/collections/{col_a}/tags/{tag}", headers=user)
+    assert own.status_code == 204
+    sibling = await client.put(f"/workspaces/{ws}/collections/{col_b}/tags/{tag}", headers=user)
+    assert sibling.status_code == 403  # colB is outside their data scope
+
+
+async def test_tag_items_pruned_to_readable_collections(client, make_user_key):
+    # tag_items must not leak sibling collections a scoped tag-manager can't browse.
+    ws, col_a, col_b, tag = await _ws_two_cols_tag(client)
+    for col in (col_a, col_b):
+        await client.put(f"/workspaces/{ws}/collections/{col}/tags/{tag}", headers=_MASTER_HEADERS)
+    _uid, key = await make_user_key(
+        [("collection", col_a, "read"), ("capability", "manage_tags", "write")]
+    )
+    user = {"Authorization": f"Bearer {key}"}
+    items = (await client.get(f"/workspaces/{ws}/tags/{tag}/items", headers=user)).json()
+    col_ids = {c["id"] for c in items["collections"]}
+    assert col_a in col_ids
+    assert col_b not in col_ids  # sibling pruned
