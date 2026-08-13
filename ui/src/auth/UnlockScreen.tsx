@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { KeyRound, Loader2, ShieldCheck, ShieldAlert } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { api, ApiError } from '../api/client'
+import { apiErrorMessage } from '../i18n/apiError'
 import type { Health } from '../api/types'
 import { useAuth } from './AuthContext'
 import { Button } from '../components/ui/Button'
@@ -26,13 +29,9 @@ export function useApiReach(): { reach: ApiReach; health: Health | null } {
 }
 
 /** Maps an unlock failure to a key-safe message (never echoes the key). */
-function unlockError(err: unknown): string {
-  if (err instanceof ApiError) {
-    return err.status === 401
-      ? 'That key was rejected. Check it and try again.'
-      : err.message
-  }
-  return 'Could not reach the API. Is the stack running?'
+function unlockError(err: unknown, t: TFunction): string {
+  if (err instanceof ApiError && err.status === 401) return t('auth.unlock.rejected')
+  return apiErrorMessage(err, t)
 }
 
 /**
@@ -41,6 +40,7 @@ function unlockError(err: unknown): string {
  * toggle. Submitting verifies the key against `/workspaces`.
  */
 export function UnlockScreen({ onBack }: { onBack?: () => void }) {
+  const { t } = useTranslation()
   const { unlock } = useAuth()
   const { reach, health } = useApiReach()
   const [key, setKey] = useState('')
@@ -60,7 +60,7 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
     try {
       await unlock(key.trim())
     } catch (err) {
-      setError(unlockError(err))
+      setError(unlockError(err, t))
       setBusy(false)
     }
   }
@@ -73,9 +73,7 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
             <KeyRound className="h-6 w-6" />
           </div>
           <h1 className="text-lg font-semibold tracking-tight text-ink">EmbedBase</h1>
-          <p className="mt-1 text-[13px] text-ink-muted">
-            Enter your master key to unlock the console.
-          </p>
+          <p className="mt-1 text-[13px] text-ink-muted">{t('auth.unlock.subtitle')}</p>
         </div>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
@@ -84,8 +82,8 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
             type="password"
             autoComplete="off"
             spellCheck={false}
-            placeholder="Master key"
-            aria-label="Master key"
+            placeholder={t('auth.unlock.masterKey')}
+            aria-label={t('auth.unlock.masterKey')}
             aria-invalid={error != null}
             value={key}
             onChange={(e) => setKey(e.target.value)}
@@ -97,7 +95,7 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
             </p>
           )}
           <Button type="submit" loading={busy} disabled={!key.trim()} className="w-full">
-            {busy ? 'Verifying…' : 'Unlock'}
+            {busy ? t('auth.unlock.submitting') : t('auth.unlock.submit')}
           </Button>
         </form>
 
@@ -107,7 +105,7 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
             onClick={onBack}
             className="mt-4 w-full text-center text-xs text-ink-faint hover:text-ink-muted"
           >
-            Back to sign in
+            {t('auth.unlock.back')}
           </button>
         )}
 
@@ -119,11 +117,12 @@ export function UnlockScreen({ onBack }: { onBack?: () => void }) {
 
 /** Subtle API-reachability footer beneath the unlock/login form. */
 export function ApiReachLine({ reach, health }: { reach: ApiReach; health: Health | null }) {
+  const { t } = useTranslation()
   if (reach === 'checking') {
     return (
       <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-ink-faint">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        Checking API…
+        {t('auth.api.checking')}
       </p>
     )
   }
@@ -131,14 +130,14 @@ export function ApiReachLine({ reach, health }: { reach: ApiReach; health: Healt
     return (
       <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-err">
         <ShieldAlert className="h-3.5 w-3.5" />
-        API unreachable
+        {t('auth.api.unreachable')}
       </p>
     )
   }
   return (
     <p className="mt-6 flex items-center justify-center gap-1.5 text-xs text-ink-faint">
       <ShieldCheck className="h-3.5 w-3.5 text-ok" />
-      API ready · {health?.embedding_model ?? 'model'}
+      {t('auth.api.ready', { model: health?.embedding_model ?? t('auth.api.modelFallback') })}
     </p>
   )
 }

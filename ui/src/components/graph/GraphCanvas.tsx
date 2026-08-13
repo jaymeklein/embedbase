@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Graph } from '@antv/g6'
 import { Magnet, Maximize2, ZoomIn, ZoomOut } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { GraphResponse } from '../../api/types'
 import { toG6 } from '../../lib/toG6'
 import { Button } from '../ui'
@@ -100,6 +101,7 @@ export function GraphCanvas({
   selected?: string | null
   fitNonce?: number
 }) {
+  const { t } = useTranslation()
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<Graph | null>(null)
   // Keep the latest onSelect without forcing a graph rebuild on identity change.
@@ -200,13 +202,13 @@ export function GraphCanvas({
       <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2">
         <RepelControl value={repel} onChange={setRepel} onCommit={applyRepel} />
         <div className="flex flex-col gap-1.5">
-          <ControlButton label="Zoom in" onClick={() => void graphRef.current?.zoomBy(1.2, anim)}>
+          <ControlButton label={t('graph.zoomIn')} onClick={() => void graphRef.current?.zoomBy(1.2, anim)}>
             <ZoomIn className="h-6 w-6" />
           </ControlButton>
-          <ControlButton label="Zoom out" onClick={() => void graphRef.current?.zoomBy(0.8, anim)}>
+          <ControlButton label={t('graph.zoomOut')} onClick={() => void graphRef.current?.zoomBy(0.8, anim)}>
             <ZoomOut className="h-6 w-6" />
           </ControlButton>
-          <ControlButton label="Fit to view" onClick={() => void graphRef.current?.fitView()}>
+          <ControlButton label={t('graph.fitToView')} onClick={() => void graphRef.current?.fitView()}>
             <Maximize2 className="h-6 w-6" />
           </ControlButton>
         </div>
@@ -226,10 +228,11 @@ function RepelControl({
   onChange: (v: number) => void
   onCommit: (v: number) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div
       className="flex items-center gap-2 rounded-control border border-border bg-surface/90 px-2.5 py-1.5 shadow-overlay backdrop-blur"
-      title="Repel force — how strongly nodes push each other apart"
+      title={t('graph.repel.title')}
     >
       <Magnet className="h-5 w-5 shrink-0 text-ink-muted" />
       <input
@@ -237,7 +240,7 @@ function RepelControl({
         min={MIN_REPEL}
         max={MAX_REPEL}
         value={value}
-        aria-label="Repel force"
+        aria-label={t('graph.repel.aria')}
         onChange={(e) => onChange(Number(e.target.value))}
         onPointerUp={() => onCommit(value)}
         onKeyUp={() => onCommit(value)}

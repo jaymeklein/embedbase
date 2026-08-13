@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import type { TagRef } from '../../api/types'
 import { cn } from '../../lib/cn'
 
@@ -27,19 +28,20 @@ export function TagFilterBar({
   selected: string[]
   onToggle: (name: string) => void
 }) {
+  const { t } = useTranslation()
   if (tags.length === 0) return null
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-ink-faint">Filter by tag:</span>
-      {tags.map((t) => {
-        const on = selected.includes(t.name)
-        const c = t.color || '#5B6B7A'
+      <span className="text-xs text-ink-faint">{t('tags.filterByTag')}</span>
+      {tags.map((tag) => {
+        const on = selected.includes(tag.name)
+        const c = tag.color || '#5B6B7A'
         return (
           <button
-            key={t.id}
+            key={tag.id}
             type="button"
-            onClick={() => onToggle(t.name)}
+            onClick={() => onToggle(tag.name)}
             aria-pressed={on}
             className={cn(
               'rounded-full px-2 py-0.5 text-xs font-medium transition-colors',
@@ -47,7 +49,7 @@ export function TagFilterBar({
             )}
             style={on ? { backgroundColor: c } : undefined}
           >
-            {t.name}
+            {tag.name}
           </button>
         )
       })}

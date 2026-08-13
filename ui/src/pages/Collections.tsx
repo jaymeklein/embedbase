@@ -1,6 +1,7 @@
 import { useMemo, useState, type MouseEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ChevronRight, FileText, Layers, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   useAssignCollectionTag,
   useCollections,
@@ -30,6 +31,7 @@ import {
   CollectionFormModal,
   type CollectionFormValues,
 } from '../components/collections/CollectionFormModal'
+import { apiErrorMessage } from '../i18n/apiError'
 import { formatDate } from '../lib/format'
 import { useAuth } from '../auth/AuthContext'
 
@@ -52,6 +54,7 @@ function changedFields(col: Collection, values: CollectionFormValues): Collectio
 
 /** Collections within a workspace: list, create, edit, and delete. */
 export default function Collections() {
+  const { t } = useTranslation()
   const { wsId = '' } = useParams()
   const navigate = useNavigate()
   const workspace = useWorkspace(wsId)
@@ -85,10 +88,10 @@ export default function Collections() {
     if (dialog.kind === 'create') {
       createMut.mutate(values, {
         onSuccess: () => {
-          toast.success(`Collection “${values.name}” created.`)
+          toast.success(t('collections.toast.created', { name: values.name }))
           close()
         },
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       })
     } else if (dialog.kind === 'edit') {
       const body = changedFields(dialog.col, values)
@@ -100,10 +103,10 @@ export default function Collections() {
         { colId: dialog.col.id, body },
         {
           onSuccess: () => {
-            toast.success('Collection updated.')
+            toast.success(t('collections.toast.updated'))
             close()
           },
-          onError: (e) => toast.error(e.message),
+          onError: (e) => toast.error(apiErrorMessage(e, t)),
         },
       )
     }
@@ -114,10 +117,10 @@ export default function Collections() {
     const { col } = dialog
     deleteMut.mutate(col.id, {
       onSuccess: () => {
-        toast.success(`Collection “${col.name}” deleted.`)
+        toast.success(t('collections.toast.deleted', { name: col.name }))
         close()
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
@@ -125,7 +128,7 @@ export default function Collections() {
     <div className="animate-fade-in space-y-6">
       <nav className="flex items-center gap-1.5 text-xs text-ink-muted">
         <Link to="/workspaces" className="hover:text-ink">
-          Workspaces
+          {t('nav.workspaces')}
         </Link>
         <ChevronRight className="h-4 w-4 text-ink-faint" />
         <span className="text-ink">{workspace.data?.name ?? '…'}</span>
@@ -133,22 +136,20 @@ export default function Collections() {
 
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">Collections</h1>
-          <p className="mt-1 text-[13px] text-ink-muted">
-            Searchable document sets within this workspace.
-          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('collections.title')}</h1>
+          <p className="mt-1 text-[13px] text-ink-muted">{t('collections.subtitle')}</p>
         </div>
         <div className="flex gap-2">
           {canTag && (
             <Button variant="secondary" onClick={() => navigate(`/workspaces/${wsId}/tags`)}>
               <TagsIcon className="h-5 w-5" />
-              Tags
+              {t('common.tags')}
             </Button>
           )}
           {canWrite && (
             <Button onClick={() => setDialog({ kind: 'create' })}>
               <Plus className="h-5 w-5" />
-              New collection
+              {t('collections.new')}
             </Button>
           )}
         </div>
@@ -161,7 +162,7 @@ export default function Collections() {
         data={shown}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         canCreate={canWrite}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
@@ -179,10 +180,10 @@ export default function Collections() {
 
       <ConfirmDialog
         open={dialog.kind === 'delete'}
-        title="Delete collection"
+        title={t('collections.delete.title')}
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.col.name}”? Its documents and indexed vectors are permanently removed. This cannot be undone.`
+            ? t('collections.delete.message', { name: dialog.col.name })
             : ''
         }
         loading={deleteMut.isPending}
@@ -217,6 +218,7 @@ function CollectionList({
   onEdit: (col: Collection) => void
   onDelete: (col: Collection) => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -227,19 +229,15 @@ function CollectionList({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load collections" message={message} onRetry={onRetry} />
+    return <QueryError title={t('collections.error')} message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
     return (
       <EmptyState
         icon={<Layers className="h-7 w-7" />}
-        title="No collections yet"
-        description={
-          canCreate
-            ? 'Create a collection to start ingesting and searching documents.'
-            : 'No collections here yet.'
-        }
-        action={canCreate ? <Button onClick={onCreate}>New collection</Button> : undefined}
+        title={t('collections.empty.title')}
+        description={canCreate ? t('collections.empty.canCreate') : t('collections.empty.readonly')}
+        action={canCreate ? <Button onClick={onCreate}>{t('collections.new')}</Button> : undefined}
       />
     )
   }
@@ -270,6 +268,7 @@ function CollectionCard({
   onEdit: (col: Collection) => void
   onDelete: (col: Collection) => void
 }) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const { isAdmin, canManageTags } = useAuth()
   // (Un)assigning a collection tag needs the manage_tags privilege AND write on the collection —
@@ -281,7 +280,7 @@ function CollectionCard({
   const unassignMut = useUnassignCollectionTag(wsId)
   const createMut = useCreateTag(wsId)
   const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
-  const onErr = (e: Error) => toast.error(e.message)
+  const onErr = (e: Error) => toast.error(apiErrorMessage(e, t))
 
   const handleCreate = (name: string) =>
     createMut.mutate(
@@ -320,20 +319,20 @@ function CollectionCard({
             )}
           </div>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
-            {col.description || 'No description'}
+            {col.description || t('common.noDescription')}
           </p>
         </div>
       </div>
       {((col.tags ?? []).length > 0 || canManageColTags) && (
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-          {(col.tags ?? []).map((t) => (
+          {(col.tags ?? []).map((tag) => (
             <TagChip
-              key={t.id}
-              name={t.name}
-              color={t.color}
+              key={tag.id}
+              name={tag.name}
+              color={tag.color}
               onRemove={
                 canManageColTags
-                  ? () => unassignMut.mutate({ colId: col.id, tagId: t.id }, { onError: onErr })
+                  ? () => unassignMut.mutate({ colId: col.id, tagId: tag.id }, { onError: onErr })
                   : undefined
               }
             />
@@ -353,13 +352,15 @@ function CollectionCard({
         </div>
       )}
       <div className="flex items-center justify-between">
-        <span className="text-xs text-ink-faint">Created {formatDate(col.created_at)}</span>
+        <span className="text-xs text-ink-faint">
+          {t('common.created', { date: formatDate(col.created_at) })}
+        </span>
         {col.can_write && (
           <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Edit ${col.name}`}
+              aria-label={t('common.editAria', { name: col.name })}
               onClick={stop(() => onEdit(col))}
               className="h-10 w-10 px-0"
             >
@@ -368,7 +369,7 @@ function CollectionCard({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Delete ${col.name}`}
+              aria-label={t('common.deleteAria', { name: col.name })}
               onClick={stop(() => onDelete(col))}
               className="h-10 w-10 px-0 hover:text-err"
             >

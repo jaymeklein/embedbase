@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Search, SlidersHorizontal, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   FILE_TYPES,
   filterInputCls as inputCls,
@@ -33,6 +34,7 @@ export function DocumentFilters({
   value: DocumentFilterValues
   onChange: (next: DocumentFilterValues) => void
 }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const set = <K extends keyof DocumentFilterValues>(key: K, v: DocumentFilterValues[K]) =>
     onChange({ ...value, [key]: v })
@@ -46,48 +48,48 @@ export function DocumentFilters({
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <input
             className={`${inputCls} w-full pl-8`}
-            placeholder="Search filenames…"
+            placeholder={t('documents.filters.searchPlaceholder')}
             value={value.filename ?? ''}
             onChange={(e) => set('filename', text(e.target.value))}
           />
         </div>
         <select
           className={inputCls}
-          aria-label="Status"
+          aria-label={t('documents.filters.statusAria')}
           value={value.status ?? ''}
           onChange={(e) => set('status', text(e.target.value))}
         >
-          <option value="">Any status</option>
+          <option value="">{t('documents.filters.anyStatus')}</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {t(`status.${s}`)}
             </option>
           ))}
         </select>
         <select
           className={inputCls}
-          aria-label="File type"
+          aria-label={t('documents.filters.typeAria')}
           value={value.file_type ?? ''}
           onChange={(e) => set('file_type', text(e.target.value))}
         >
-          <option value="">Any type</option>
-          {FILE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          <option value="">{t('documents.filters.anyType')}</option>
+          {FILE_TYPES.map((ft) => (
+            <option key={ft} value={ft}>
+              {ft}
             </option>
           ))}
         </select>
         <select
           className={inputCls}
-          aria-label="Indexed"
+          aria-label={t('documents.filters.indexedAria')}
           value={value.indexed === undefined ? '' : String(value.indexed)}
           onChange={(e) =>
             set('indexed', e.target.value === '' ? undefined : e.target.value === 'true')
           }
         >
-          <option value="">Indexed: any</option>
-          <option value="true">Indexed</option>
-          <option value="false">Not indexed</option>
+          <option value="">{t('documents.filters.indexedAny')}</option>
+          <option value="true">{t('documents.filters.indexed')}</option>
+          <option value="false">{t('documents.filters.notIndexed')}</option>
         </select>
         <button
           type="button"
@@ -97,7 +99,7 @@ export function DocumentFilters({
           }`}
         >
           <SlidersHorizontal className="h-4 w-4" />
-          More
+          {t('common.more')}
         </button>
         {active && (
           <button
@@ -106,7 +108,7 @@ export function DocumentFilters({
             className="inline-flex h-9 items-center gap-1 rounded-control px-2 text-[13px] text-ink-muted hover:text-ink"
           >
             <X className="h-4 w-4" />
-            Clear
+            {t('common.clear')}
           </button>
         )}
       </div>
@@ -115,23 +117,23 @@ export function DocumentFilters({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-border/60 bg-canvas/50 p-2.5">
           <input
             className={inputCls}
-            placeholder="Storage backend"
+            placeholder={t('documents.filters.storageBackend')}
             value={value.storage_backend ?? ''}
             onChange={(e) => set('storage_backend', text(e.target.value))}
           />
           <input
             className={inputCls}
-            placeholder="Embedding model"
+            placeholder={t('documents.filters.embeddingModel')}
             value={value.embedding_model ?? ''}
             onChange={(e) => set('embedding_model', text(e.target.value))}
           />
           <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-            Size (bytes)
+            {t('documents.filters.size')}
             <input
               type="number"
               min={0}
               className={`${inputCls} w-24`}
-              placeholder="min"
+              placeholder={t('common.min')}
               value={value.min_size ?? ''}
               onChange={(e) => set('min_size', num(e.target.value))}
             />
@@ -140,13 +142,13 @@ export function DocumentFilters({
               type="number"
               min={0}
               className={`${inputCls} w-24`}
-              placeholder="max"
+              placeholder={t('common.max')}
               value={value.max_size ?? ''}
               onChange={(e) => set('max_size', num(e.target.value))}
             />
           </label>
           <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-            Created
+            {t('documents.filters.created')}
             <input
               type="date"
               className={`${inputCls} w-40`}

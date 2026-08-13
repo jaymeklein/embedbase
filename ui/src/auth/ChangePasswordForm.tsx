@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ApiError } from '../api/client'
+import { apiErrorMessage } from '../i18n/apiError'
 import { Button, Field, Input } from '../components/ui'
 import { useAuth } from './AuthContext'
 
@@ -11,12 +13,13 @@ const MIN_LENGTH = 12
  * and the voluntary change modal.
  */
 export function ChangePasswordForm({
-  submitLabel = 'Update password',
+  submitLabel,
   onSuccess,
 }: {
   submitLabel?: string
   onSuccess?: () => void
 }) {
+  const { t } = useTranslation()
   const { changePassword } = useAuth()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
@@ -37,14 +40,14 @@ export function ChangePasswordForm({
       await changePassword(current, next)
       onSuccess?.()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not change the password.')
+      setError(err instanceof ApiError ? apiErrorMessage(err, t) : t('auth.password.failed'))
       setBusy(false)
     }
   }
 
   return (
     <form onSubmit={onSubmit} className="flex flex-col gap-4">
-      <Field label="Current password" htmlFor="cp-current">
+      <Field label={t('auth.password.current')} htmlFor="cp-current">
         <Input
           id="cp-current"
           type="password"
@@ -55,10 +58,10 @@ export function ChangePasswordForm({
         />
       </Field>
       <Field
-        label="New password"
+        label={t('auth.password.new')}
         htmlFor="cp-new"
-        hint={`At least ${MIN_LENGTH} characters.`}
-        error={tooShort ? `Use at least ${MIN_LENGTH} characters.` : undefined}
+        hint={t('auth.password.hint', { min: MIN_LENGTH })}
+        error={tooShort ? t('auth.password.tooShort', { min: MIN_LENGTH }) : undefined}
       >
         <Input
           id="cp-new"
@@ -69,9 +72,9 @@ export function ChangePasswordForm({
         />
       </Field>
       <Field
-        label="Confirm new password"
+        label={t('auth.password.confirm')}
         htmlFor="cp-confirm"
-        error={mismatch ? 'Passwords do not match.' : undefined}
+        error={mismatch ? t('auth.password.mismatch') : undefined}
       >
         <Input
           id="cp-confirm"
@@ -87,7 +90,7 @@ export function ChangePasswordForm({
         </p>
       )}
       <Button type="submit" loading={busy} disabled={!canSubmit} className="w-full">
-        {busy ? 'Saving…' : submitLabel}
+        {busy ? t('common.saving') : (submitLabel ?? t('auth.password.update'))}
       </Button>
     </form>
   )

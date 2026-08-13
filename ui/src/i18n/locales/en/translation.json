@@ -1,0 +1,782 @@
+{
+  "common": {
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "create": "Create",
+    "saveChanges": "Save changes",
+    "name": "Name",
+    "description": "Description",
+    "optional": "Optional",
+    "color": "Color",
+    "icon": "Icon",
+    "tags": "Tags",
+    "noDescription": "No description",
+    "created": "Created {{date}}",
+    "editAria": "Edit {{name}}",
+    "deleteAria": "Delete {{name}}",
+    "more": "More",
+    "clear": "Clear",
+    "retry": "Retry",
+    "retrying": "Retrying…",
+    "min": "min",
+    "max": "max",
+    "openAria": "Open {{name}}",
+    "downloadAria": "Download {{name}}",
+    "close": "Close",
+    "removeAria": "Remove {{name}}",
+    "confirm": "Confirm",
+    "copy": "Copy",
+    "copied": "Copied",
+    "dismiss": "Dismiss"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "workspaces": "Workspaces",
+    "graph": "Graph",
+    "search": "Search",
+    "indexing": "Indexing",
+    "ingestionQueue": "Ingestion Queue",
+    "users": "Users",
+    "settings": "Settings",
+    "admin": "Admin"
+  },
+  "topbar": {
+    "masterKey": "Master key",
+    "adminSuffix": " · admin",
+    "changePassword": "Change password",
+    "changePasswordTitle": "Change your password",
+    "signOut": "Sign out",
+    "signOutTitle": "Sign out and clear your session",
+    "language": "Change language"
+  },
+  "status": {
+    "uploading": "Uploading",
+    "pending": "Pending",
+    "processing": "Processing",
+    "done": "Done",
+    "failed": "Failed",
+    "deleting": "Deleting",
+    "rate_limited": "Rate limited"
+  },
+  "workspaces": {
+    "title": "Workspaces",
+    "subtitle": "Top-level containers for your collections.",
+    "new": "New workspace",
+    "editTitle": "Edit workspace",
+    "namePlaceholder": "e.g. Research",
+    "descHint": "Optional — what lives in this workspace.",
+    "empty": {
+      "title": "No workspaces yet",
+      "canCreate": "Create your first workspace to start organising collections.",
+      "readonly": "No workspaces are shared with you yet."
+    },
+    "error": "Could not load workspaces",
+    "toast": {
+      "created": "Workspace “{{name}}” created.",
+      "updated": "Workspace updated.",
+      "deleted": "Workspace “{{name}}” deleted."
+    },
+    "delete": {
+      "title": "Delete workspace",
+      "message": "Delete “{{name}}”? Its collections, API keys, and documents are permanently removed. This cannot be undone."
+    }
+  },
+  "collections": {
+    "title": "Collections",
+    "subtitle": "Searchable document sets within this workspace.",
+    "new": "New collection",
+    "editTitle": "Edit collection",
+    "namePlaceholder": "e.g. Q3 Reports",
+    "descHint": "Optional — what this collection holds.",
+    "empty": {
+      "title": "No collections yet",
+      "canCreate": "Create a collection to start ingesting and searching documents.",
+      "readonly": "No collections here yet."
+    },
+    "error": "Could not load collections",
+    "toast": {
+      "created": "Collection “{{name}}” created.",
+      "updated": "Collection updated.",
+      "deleted": "Collection “{{name}}” deleted."
+    },
+    "delete": {
+      "title": "Delete collection",
+      "message": "Delete “{{name}}”? Its documents and indexed vectors are permanently removed. This cannot be undone."
+    }
+  },
+  "documents": {
+    "title": "Documents",
+    "subtitle": {
+      "canWrite": "Upload files to ingest them into this collection.",
+      "readonly": "Browse and search documents in this collection."
+    },
+    "error": "Could not load documents",
+    "empty": {
+      "none": {
+        "title": "No documents yet",
+        "description": "Drop files into the area above to start ingesting them."
+      },
+      "filtered": {
+        "title": "No matching documents",
+        "description": "No documents match the current filters. Adjust or clear them to see more."
+      }
+    },
+    "retention": {
+      "label": "Temporary — automatically delete after",
+      "aria": "Retention in days",
+      "day_one": "day",
+      "day_other": "days"
+    },
+    "delete": {
+      "title": "Delete document",
+      "message": "Delete “{{name}}”? Its chunks and indexed vectors are removed. This cannot be undone."
+    },
+    "toast": {
+      "queued_one": "{{count}} file queued for ingestion.",
+      "queued_other": "{{count}} files queued for ingestion.",
+      "uploadError": "{{name}}: {{error}}",
+      "tooLarge": "{{name}} is larger than {{max}} MB and was skipped.",
+      "deleted": "Deleted “{{name}}”.",
+      "reprocessing": "Reprocessing “{{name}}”.",
+      "indexing": "Indexing “{{name}}”."
+    },
+    "progress": {
+      "ingesting": "Ingesting"
+    },
+    "row": {
+      "chunk_one": "{{count}} chunk",
+      "chunk_other": "{{count}} chunks",
+      "updated": "updated {{ago}}",
+      "original": "original: {{name}}",
+      "why": "Why?",
+      "hide": "Hide",
+      "downloadOriginalAria": "Download original source file ({{name}})"
+    },
+    "index": {
+      "indexed": "Indexed",
+      "indexedTitle": "Indexed for BM25 / keyword search",
+      "notIndexedTitle": "Not in the keyword index — click to index",
+      "index": "Index",
+      "indexing": "Indexing…"
+    },
+    "failure": {
+      "loading": "Loading error…",
+      "loadError": "Could not load the error detail.",
+      "none": "No error detail recorded."
+    },
+    "filters": {
+      "searchPlaceholder": "Search filenames…",
+      "statusAria": "Status",
+      "anyStatus": "Any status",
+      "typeAria": "File type",
+      "anyType": "Any type",
+      "indexedAria": "Indexed",
+      "indexedAny": "Indexed: any",
+      "indexed": "Indexed",
+      "notIndexed": "Not indexed",
+      "storageBackend": "Storage backend",
+      "embeddingModel": "Embedding model",
+      "size": "Size (bytes)",
+      "created": "Created"
+    },
+    "upload": {
+      "uploading": "Uploading…",
+      "drag": "Drag files here, or ",
+      "browse": "browse",
+      "hint": "PDF, text, Markdown · DOCX/PPTX with docling · up to {{max}} MB each"
+    }
+  },
+  "auth": {
+    "field": {
+      "username": "Username",
+      "password": "Password"
+    },
+    "login": {
+      "subtitle": "Sign in to your account.",
+      "submit": "Sign in",
+      "submitting": "Signing in…",
+      "useMaster": "Use master key instead",
+      "invalid": "Invalid username or password."
+    },
+    "unlock": {
+      "subtitle": "Enter your master key to unlock the console.",
+      "masterKey": "Master key",
+      "submit": "Unlock",
+      "submitting": "Verifying…",
+      "back": "Back to sign in",
+      "rejected": "That key was rejected. Check it and try again."
+    },
+    "api": {
+      "checking": "Checking API…",
+      "unreachable": "API unreachable",
+      "ready": "API ready · {{model}}",
+      "modelFallback": "model"
+    },
+    "password": {
+      "current": "Current password",
+      "new": "New password",
+      "confirm": "Confirm new password",
+      "hint": "At least {{min}} characters.",
+      "tooShort": "Use at least {{min}} characters.",
+      "mismatch": "Passwords do not match.",
+      "update": "Update password",
+      "setContinue": "Set password & continue",
+      "changeTitle": "Change password",
+      "updated": "Password updated.",
+      "failed": "Could not change the password.",
+      "setTitle": "Set a new password",
+      "signedInAs": "Signed in as {{name}}. ",
+      "chooseNew": "Choose a new password to finish signing in."
+    }
+  },
+  "errors": {
+    "network": "Could not reach the API. Is the stack running?",
+    "sessionExpired": "Session expired. Please sign in again.",
+    "accountDeactivated": "Your account has been deactivated.",
+    "adminRequired": "Administrator access required.",
+    "configNotLoaded": "Config not loaded yet.",
+    "passwordChangeRequired": "Password change required."
+  },
+  "search": {
+    "title": "Search",
+    "subtitle": "Hybrid BM25 + semantic search across your collections.",
+    "queryPlaceholder": "Search your collections…",
+    "submit": "Search",
+    "selectPrompt": "Select at least one collection to search.",
+    "topK": "Top-K",
+    "modeLabel": "Mode",
+    "mode": {
+      "hybrid": "Hybrid",
+      "semantic": "Semantic",
+      "bm25": "BM25",
+      "semantic_only": "Semantic only"
+    },
+    "modeHint": {
+      "hybrid": "BM25 + semantic",
+      "semantic": "Vector similarity",
+      "bm25": "Keyword ranking",
+      "semantic_only": "BM25 index unavailable — fell back to semantic"
+    },
+    "alpha": "Alpha",
+    "alphaHint": "0 = BM25 only, 1 = semantic only",
+    "hideFilters": "Hide filters",
+    "filters": "Filters",
+    "filename": "Filename",
+    "filenamePlaceholder": "e.g. report.pdf",
+    "commaSeparated": "Comma-separated",
+    "tagsPlaceholder": "e.g. finance, q3",
+    "failed": "Search failed",
+    "empty": {
+      "title": "Search your collections",
+      "description": "Pick one or more collections on the left, type a query, and run it."
+    },
+    "noMatches": {
+      "title": "No matches",
+      "description": "No chunks matched this query in the selected collections. Try broadening the query or relaxing filters."
+    },
+    "timing": "embed {{embed}}ms · search {{search}}ms · total {{total}}ms",
+    "underDelivered": {
+      "withTopK": "Fewer results than requested (top_k {{topK}}). A selective filter or a small candidate pool left some slots unfilled.",
+      "noTopK": "Fewer results than requested. A selective filter or a small candidate pool left some slots unfilled."
+    },
+    "breakdown": {
+      "title": "Per-collection breakdown",
+      "stats": "{{retrieved}} → {{returned}} · {{contributed}} in top-k"
+    },
+    "relevanceScore": "Relevance score",
+    "unknownFile": "Unknown file",
+    "pages": "· pp.{{range}}",
+    "page": "· p.{{page}}",
+    "tree": {
+      "noWorkspaces": "No workspaces yet.",
+      "collapse": "Collapse {{name}}",
+      "expand": "Expand {{name}}",
+      "all": "All",
+      "noCollections": "No collections"
+    }
+  },
+  "tags": {
+    "subtitle": "Correlate and filter collections and documents across this workspace.",
+    "new": "New tag",
+    "error": "Could not load tags",
+    "empty": {
+      "title": "No tags yet",
+      "description": "Create a tag to correlate and filter collections and documents."
+    },
+    "count": {
+      "col": "{{count}} col",
+      "doc": "{{count}} doc"
+    },
+    "workspaceBadge": "workspace",
+    "mergeAria": "Merge {{name}}",
+    "itemsError": "Could not load items",
+    "notAssigned": "Not assigned to anything yet.",
+    "none": "None",
+    "editTitle": "Edit tag",
+    "nameHint": "Lowercased and trimmed on save.",
+    "namePlaceholder": "e.g. finance",
+    "mergeTitle": "Merge tag",
+    "merge": "Merge",
+    "mergeInto": "Merge into",
+    "mergeIntro": {
+      "before": "Move every assignment of ",
+      "after": " onto another tag, then delete it."
+    },
+    "noMergeTargets": "No other tags to merge into.",
+    "selectTag": "Select a tag…",
+    "filterByTag": "Filter by tag:",
+    "delete": {
+      "title": "Delete tag",
+      "message": "Delete “{{name}}”? It is removed from every collection and document it tags. This cannot be undone."
+    },
+    "toast": {
+      "created": "Tag “{{name}}” created.",
+      "updated": "Tag updated.",
+      "merged": "Tags merged.",
+      "deleted": "Tag “{{name}}” deleted."
+    },
+    "picker": {
+      "add": "Tag",
+      "placeholder": "Filter or create…",
+      "create": "Create “{{name}}”",
+      "empty": "No tags yet."
+    }
+  },
+  "graph": {
+    "title": "Graph",
+    "subtitle": "Files (the larger nodes) linked through the tags they share. Hotter tag nodes are more-reused. Drag a node to pin and highlight it, click it to release; tune the repel force or reset to re-center.",
+    "workspaceAria": "Workspace",
+    "collectionAria": "Collection",
+    "allCollections": "All collections",
+    "error": "Could not load the graph",
+    "empty": {
+      "title": "Nothing to graph yet",
+      "description": "Tag some documents in this scope and they'll appear here, linked through their shared tags."
+    },
+    "resetView": "Reset view",
+    "reset": "Reset",
+    "heat": {
+      "title": "Tag heat",
+      "files_one": "{{count}} file",
+      "files_other": "{{count}} files"
+    },
+    "open": "Open",
+    "download": "Download",
+    "files": "Files",
+    "node": {
+      "usedBy_one": "Used by {{count}} file.",
+      "usedBy_other": "Used by {{count}} files.",
+      "tags_one": "{{count}} tag.",
+      "tags_other": "{{count}} tags."
+    },
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "fitToView": "Fit to view",
+    "repel": {
+      "title": "Repel force — how strongly nodes push each other apart",
+      "aria": "Repel force"
+    }
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "subtitle": "System health and recent activity at a glance.",
+    "health": {
+      "unreachable": "Could not reach the health endpoint.",
+      "system": "System",
+      "vectorStore": "Vector store",
+      "version": "Version",
+      "uptime": "Uptime"
+    },
+    "viewAll": "View all",
+    "goToWorkspaces": "Go to Workspaces",
+    "recentActivity": "Recent activity",
+    "noActivity": {
+      "title": "No recent activity",
+      "description": "Document ingestion across your collections will show up here."
+    }
+  },
+  "indexing": {
+    "title": "Indexing",
+    "subtitle": "Keyword-index coverage per collection. A document is searchable once its chunks are stored — the keyword index is maintained automatically, so there is nothing to rebuild. Anything short of full coverage is an ingestion that has not finished; retry the failed ones here.",
+    "error": "Could not load index status",
+    "empty": {
+      "title": "Nothing to index yet",
+      "description": "Upload documents to a collection and they'll appear here."
+    },
+    "unindexed_one": "{{count}} unindexed",
+    "unindexed_other": "{{count}} unindexed",
+    "coverage": "{{indexed}}/{{total}} indexed",
+    "pendingSuffix": " · {{count}} ingesting",
+    "failedSuffix": " · {{count}} failed",
+    "failedDocs_one": "{{count}} failed document",
+    "failedDocs_other": "{{count}} failed documents",
+    "retryFailed": "Retry failed",
+    "retryDialog": {
+      "title": "Retry failed ingestions",
+      "message": "Re-ingest the {{docs}} in “{{name}}”? Each is re-queued and embedded again from its stored file — resuming where the last attempt stopped — so this spends embedding-provider quota. Documents still ingesting are left alone."
+    },
+    "toast": {
+      "requeued_one": "Re-queued {{count}} document.",
+      "requeued_other": "Re-queued {{count}} documents."
+    }
+  },
+  "queue": {
+    "retryFailed": "Retry failed",
+    "retryAllFailed": "Retry all failed",
+    "queueEmpty": "Queue empty",
+    "paused": "· paused on the embedding provider's quota — retrying in {{time}}",
+    "live": "Live",
+    "connecting": "Connecting…",
+    "error": "Could not load the queue",
+    "openInCollectionTitle": "Open in collection to edit or delete",
+    "open": "Open",
+    "unknownCollection": "Unknown collection",
+    "chunks": "Chunks",
+    "chunksLatest": "(latest)",
+    "chunkProgress": "{{current}} / {{total}} chunks",
+    "retryIn": "retry in {{time}}",
+    "retrying": "retrying…",
+    "parts": {
+      "ingesting": "{{count}} ingesting",
+      "queued": "{{count}} queued",
+      "waiting": "{{count}} waiting on rate limit"
+    },
+    "filters": {
+      "collectionPlaceholder": "Collection name"
+    },
+    "empty": {
+      "filtered": {
+        "title": "No matching jobs",
+        "description": "No ingestion jobs match the current filters. Adjust or clear them to see more."
+      },
+      "none": {
+        "title": "No ingestions yet",
+        "description": "Upload a document and its chunks will stream here in real time as they're embedded."
+      }
+    },
+    "retryDialog": {
+      "title": "Retry failed documents",
+      "message": "Re-run ingestion for every failed document in the queue? Each is re-queued from where it left off.",
+      "messageFiltered": "Re-run ingestion for every failed document matching the current filters? Each is re-queued from where it left off."
+    },
+    "toast": {
+      "reenqueued_one": "Re-enqueued {{count}} failed document.",
+      "reenqueued_other": "Re-enqueued {{count}} failed documents.",
+      "noneMatched": "No failed documents matched the current filters."
+    },
+    "phase": {
+      "parsing": "parsing",
+      "embedding": "embedding",
+      "storing": "storing",
+      "rate_limited": "rate limited",
+      "done": "done",
+      "failed": "failed"
+    }
+  },
+  "ui": {
+    "queryError": {
+      "title": "Could not load this"
+    },
+    "copyButton": {
+      "failed": "Copy failed — select it and copy manually."
+    },
+    "errorBoundary": {
+      "title": "Something went wrong"
+    },
+    "pager": {
+      "range": "Showing {{from}}–{{to}} of {{total}}",
+      "previous": "Previous",
+      "page": "Page {{page}} of {{pages}}",
+      "next": "Next"
+    }
+  },
+  "users": {
+    "title": "Users",
+    "subtitle": "Each user signs in with a username + password (admins get the full console; others are scoped by their grants) and may hold one API key for MCP/programmatic access.",
+    "new": "New user",
+    "editTitle": "Edit user",
+    "admin": "Admin",
+    "error": "Could not load users",
+    "revoke": "Revoke",
+    "empty": {
+      "title": "No users yet",
+      "description": "Create a user, share their one-time password, and grant access to workspaces or collections."
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "actions": {
+      "permissions": "Permissions",
+      "apiKey": "API key",
+      "edit": "Edit",
+      "delete": "Delete"
+    },
+    "row": {
+      "key": "key {{prefix}}…",
+      "noKey": "no API key",
+      "created": "created {{date}}",
+      "rpm": "{{rpm}} rpm",
+      "activateAria": "Activate user",
+      "deactivateAria": "Deactivate user",
+      "manageAria": "Manage {{username}}"
+    },
+    "toast": {
+      "updated": "User updated.",
+      "deleted": "User “{{username}}” deleted."
+    },
+    "reveal": {
+      "done": "Done",
+      "created": {
+        "title": "User “{{username}}” created",
+        "message": "Share this one-time password with the user — they will be asked to change it on first sign-in. It is shown only once."
+      },
+      "reset": {
+        "title": "Password reset for “{{username}}”",
+        "message": "Share this one-time password with the user — their old password no longer works and they will set a new one on next sign-in. Shown only once."
+      }
+    },
+    "delete": {
+      "title": "Delete user",
+      "message": "Delete “{{username}}”? Their API key and all permission grants are permanently removed. This cannot be undone."
+    },
+    "reset": {
+      "title": "Reset password",
+      "message": "Reset the password for “{{username}}”? Their current password stops working immediately and any active session is signed out."
+    },
+    "form": {
+      "usernameHint": "Used to sign in. Letters, digits, and . _ + @ - (3–64 chars).",
+      "usernameError": "Enter a valid username (3–64 characters).",
+      "usernamePlaceholder": "e.g. jane",
+      "email": "Email",
+      "emailHint": "Optional — leave blank if the user has no email.",
+      "emailError": "Enter a valid email address.",
+      "emailPlaceholder": "e.g. jane@example.com",
+      "nameHint": "Optional — a display name.",
+      "rateLimit": "MCP rate limit (requests/min)",
+      "rateLimitHint": "Caps this user's key on /api/mcp. 0 = use the global default.",
+      "activeLabel": "Active — an inactive user can't sign in and their API key stops working",
+      "adminLabel": "Admin — full console access (manage users, settings, every workspace)"
+    },
+    "key": {
+      "title": "API key — {{name}}",
+      "revealMessage": "Copy this key now — it is shown in full only once and cannot be retrieved again.",
+      "used": "used {{ago}}",
+      "neverUsed": "never used",
+      "revokeAria": "Revoke key",
+      "none": "This user has no API key yet.",
+      "rotate": "Rotate key",
+      "create": "Create key",
+      "rotateHint": "Rotating replaces the current key — the old one stops working immediately.",
+      "toast": {
+        "revoked": "Key revoked."
+      }
+    },
+    "grants": {
+      "modalTitle": "Permissions — {{email}}",
+      "intro": {
+        "lead": "Permissions",
+        "emphasis": "scope this user down",
+        "rest": ". With none, they see and write everything. A workspace limits them to it; add a collection (or document) to narrow them to just that one."
+      },
+      "error": "Could not load grants",
+      "empty": {
+        "title": "No permissions yet",
+        "description": "Grant this user read or write on a workspace, collection, or document above."
+      },
+      "resourceType": "Resource type",
+      "type": {
+        "workspace": "Workspace",
+        "collection": "Collection",
+        "document": "Document",
+        "capability": "Capability"
+      },
+      "levelLabel": "Level",
+      "readOption": "Read — search, list, download",
+      "writeOption": "Write — ingest, delete (and read)",
+      "read": "Read",
+      "write": "Write",
+      "capabilityLabel": {
+        "create_workspace": "Create workspaces",
+        "manage_tags": "Manage tags"
+      },
+      "capabilityHelp": {
+        "create_workspace": "Lets this user create new workspaces — they get write access to any they create.",
+        "manage_tags": "Lets this user create, edit, delete, and assign tags in any workspace they can read."
+      },
+      "selectWorkspace": "Select a workspace…",
+      "select": "Select…",
+      "pickWorkspaceFirst": "Pick a workspace first",
+      "documentId": "Document ID",
+      "documentIdHint": "The document's id (e.g. doc_…), from its collection.",
+      "addPermission": "Add permission",
+      "deleted": "deleted",
+      "copyIdTitle": "Copy id: {{id}}",
+      "copyIdAria": "Copy id {{id}}",
+      "revokeAria": "Revoke permission",
+      "toast": {
+        "granted": "Permission granted.",
+        "revoked": "Permission revoked."
+      }
+    }
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Runtime configuration, console security, and MCP access.",
+    "tabs": {
+      "general": "General",
+      "mcp": "MCP server"
+    },
+    "config": {
+      "title": "Configuration",
+      "loadError": "Could not load configuration"
+    },
+    "runtime": {
+      "title": "Runtime",
+      "unreachable": "API unreachable",
+      "unreachableDetail": "Could not reach the health endpoint.",
+      "service": "Service",
+      "version": "Version",
+      "vectorStore": "Vector store",
+      "embeddingProvider": "Embedding provider",
+      "embeddingModel": "Embedding model",
+      "uptime": "Uptime"
+    },
+    "security": {
+      "title": "Security",
+      "session": "Session",
+      "sessionNote": "Your credential is held in this browser only. Sign out to clear it.",
+      "signOut": "Sign out"
+    },
+    "field": {
+      "provider": "Provider",
+      "model": "Model",
+      "baseUrl": "Base URL",
+      "apiKey": "API key",
+      "apiKeyHint": "Write-only; never shown after saving.",
+      "keySetPlaceholder": "key set — leave blank to keep",
+      "aiStudioKey": "AI Studio key",
+      "baseUrlRequiredOpenrouter": "required — e.g. https://openrouter.ai/api",
+      "baseUrlOllamaDefault": "blank uses the Ollama default",
+      "modelIdPlaceholder": "model id",
+      "ollamaModelsHint": "Installed Ollama models",
+      "ollamaUnreachable": "Could not reach Ollama",
+      "loadingModels": "Loading models…",
+      "noModelsInstalled": "No models installed"
+    },
+    "provider": {
+      "ollamaLocal": "Ollama (local)",
+      "sentenceTransformers": "Sentence-Transformers (in-process)",
+      "openaiCompat": "OpenAI-compatible",
+      "gemini": "Google Gemini",
+      "geminiAiStudio": "Google Gemini (AI Studio)"
+    },
+    "storage": {
+      "blurb": "Where uploaded files are stored. The active backend is chosen in <code>config.yaml</code> / <code>.env</code>. Retention is set <strong>per upload</strong> (1–30 days, or kept permanently) on the Documents page — there's no global retention setting.",
+      "title": "Object storage",
+      "activeBackend": "Active backend"
+    },
+    "parser": {
+      "title": "PDF parsing",
+      "backend": "Backend",
+      "optionPymupdf": "PyMuPDF — fast, one chunk per page",
+      "optionDocling": "docling — section-aware + tables/OCR",
+      "needsGpuSuffix": " (needs a GPU)",
+      "gpuOlderThanAmpere": "Your GPU ({{name}}, capability {{capability}}) is older than Ampere — ",
+      "noGpuDetected": "No GPU detected — ",
+      "doclingCpuWarn": "docling runs on CPU and is <strong>very slow</strong> (minutes per document, and large PDFs can hit the ingestion time limit). PyMuPDF is recommended on this hardware.",
+      "save": "Save PDF backend",
+      "detectingGpu": "Detecting GPU…",
+      "compatibleGpu": "Compatible GPU detected ({{name}}, capability {{capability}}).",
+      "gpuBelowAmpere": "GPU {{name}} (capability {{capability}}) is below Ampere.",
+      "noCompatibleGpu": "No compatible GPU detected.",
+      "recommendedLabel": "Recommended:"
+    },
+    "embedding": {
+      "blurb": "The embedding model turns documents into vectors. <strong>Changing the provider, model, or output dimensions changes the vector size</strong> — existing collections must be re-indexed or search will break. Changing only an API key is safe.",
+      "title": "Embedding model",
+      "modelHintGemini": "e.g. gemini-embedding-001",
+      "modelHint": "the exact model id on this server",
+      "outputDim": "Output dimensions",
+      "outputDimHint": "optional; blank = full 3072",
+      "maxRpm": "Max requests / min",
+      "maxRpmHint": "throttle embeds so bulk ingestion stays under the provider's quota (each text = one request); blank or 0 = unlimited",
+      "maxRpmPlaceholder": "0 (unlimited)",
+      "reindexRequired": "Re-index required after saving",
+      "save": "Save embedding config"
+    },
+    "reranker": {
+      "blurb": "The reranker reorders retrieved chunks by true query relevance before the final cut — the biggest precision win. It's <strong>optional and safe</strong>: if the model or a remote provider is unavailable, search falls back to its normal ranking.",
+      "title": "Reranker",
+      "enable": "Enable reranking",
+      "providerCrossEncoder": "Cross-encoder (local, no key)",
+      "providerRerankApi": "Hosted rerank API (Cohere / Jina / Voyage)",
+      "providerLlm": "LLM-as-reranker",
+      "llmProvider": "LLM provider",
+      "modelHintRerankApi": "e.g. rerank-v3.5 (Cohere), jina-reranker-v2 (Jina)",
+      "modelHintGemini": "e.g. gemini-2.5-flash",
+      "modelHintLlm": "the exact chat model id",
+      "modelHintCrossEncoder": "a HuggingFace cross-encoder id; the baked default is offline-safe",
+      "baseUrlHintRerankApi": "required — the full /rerank endpoint",
+      "topN": "Candidates scored (top_n)",
+      "topNHint": "max candidates the reranker scores per collection",
+      "save": "Save reranker config"
+    },
+    "search": {
+      "blurb": "Adjacency expansion pulls the chunks next to each result and merges them into one span, so a section that runs across pages comes back whole instead of cut at the top-K boundary. It's a plain lookup — no extra model calls — and <strong>safe</strong>: if it can't fetch, search returns the un-expanded results.",
+      "title": "Retrieval",
+      "expand": "Adjacency expansion (neighbours)",
+      "expandHint": "chunks pulled on each side of a hit; 0 = off, max {{max}}",
+      "save": "Save search config"
+    },
+    "mcp": {
+      "blurb": "The MCP endpoint (<code>/api/mcp</code>) throttles each API key to this many requests per minute; the next request in the same minute returns <code>429</code>. Each key gets its own budget, and the new limit <strong>applies to the next MCP request</strong>",
+      "title": "MCP server",
+      "rateLimit": "Rate limit (requests / min per key)",
+      "rateLimitHint": "per API key on /api/mcp; the next request in the same minute returns 429",
+      "save": "Save MCP config"
+    },
+    "toast": {
+      "pdfSaved": "PDF backend saved. Services are reloading.",
+      "embeddingSaved": "Embedding config saved. Services are reloading.",
+      "rerankerSaved": "Reranker config saved. Services are reloading.",
+      "searchSaved": "Search config saved. Services are reloading.",
+      "mcpSaved": "MCP config saved. Services are reloading."
+    }
+  },
+  "mcp": {
+    "tagsNote": "Tag tools need the manage_tags permission; assigning to a collection/document also needs write on it.",
+    "connection": {
+      "title": "Connection",
+      "address": "Server address",
+      "addressHintLocal": "This address only works on this machine; the server couldn't determine a LAN IP for other devices to use.",
+      "addressHint": "Auto-detected from the server. Used to build the endpoint and snippets below.",
+      "endpoint": "Endpoint",
+      "transport": "Transport",
+      "authHeader": "Auth header",
+      "authNote": "Send an <strong>API key</strong> on every request as <authcode></authcode> or <apikeycode></apikeycode> — the master key, or a <strong>per-user key</strong> for scoped access (each tool respects that user's read/write grants). Substitute your own in the snippets below; nothing is embedded here."
+    },
+    "clientSetup": {
+      "title": "Client setup",
+      "instructions": "Add this to your MCP client's server config (replace the placeholder key):",
+      "copyConfig": "Copy config"
+    },
+    "skill": {
+      "title": "Agent skill",
+      "download": "Download .zip",
+      "folderNote": "A small skill folder (<code>SKILL.md</code> + <code>references/</code>). Unzip it into your agent's skills directory (e.g. <code>.claude/skills/embedbase/</code>) — the agent loads <code>SKILL.md</code> up front and opens a reference file only when the task needs it, so a read-only session never pulls in the upload rules.",
+      "bundled": "Bundled:",
+      "unavailable": "The skill is unavailable — the tool catalogue could not be loaded."
+    },
+    "tools": {
+      "title": "Tools",
+      "count_one": "{{count}} tool · each respects your grants",
+      "count_other": "{{count}} tools · each respects your grants",
+      "loadError": "Could not load the tool catalogue"
+    },
+    "rest": {
+      "title": "REST API reference",
+      "blurb": "A standalone OpenAPI reference of just the integration endpoints — search and workspace/collection/document access — for the AI to read as the API standard."
+    }
+  }
+}

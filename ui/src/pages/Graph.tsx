@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Download, ExternalLink, RotateCcw, Workflow, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useCollections, useGraph, useWorkspaces } from '../api/hooks'
 import { api } from '../api/client'
 import type { GraphNode, GraphResponse } from '../api/types'
 import { GraphCanvas } from '../components/graph/GraphCanvas'
 import { Badge, Button, Card, EmptyState, QueryError, Select, Skeleton, useToast } from '../components/ui'
+import { apiErrorMessage } from '../i18n/apiError'
 
 /** Tag-correlation graph: pick a scope, see files linked through their tags. */
 export default function Graph() {
+  const { t } = useTranslation()
   const workspaces = useWorkspaces()
   const [wsId, setWsId] = useState('')
   const [colId, setColId] = useState('') // '' = whole workspace
@@ -34,11 +37,9 @@ export default function Graph() {
     <div className="animate-fade-in space-y-4">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">Graph</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('graph.title')}</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
-            Files (the larger nodes) linked through the tags they share. Hotter tag nodes are
-            more-reused. Drag a node to pin and highlight it, click it to release; tune the repel
-            force or reset to re-center.
+            {t('graph.subtitle')}
           </p>
         </div>
         <div className="flex gap-2">
@@ -46,7 +47,7 @@ export default function Graph() {
             value={wsId}
             onChange={(e) => setWsId(e.target.value)}
             disabled={!workspaces.data || workspaces.data.length === 0}
-            aria-label="Workspace"
+            aria-label={t('graph.workspaceAria')}
             className="w-44"
           >
             {workspaces.data?.map((ws) => (
@@ -58,10 +59,10 @@ export default function Graph() {
           <Select
             value={colId}
             onChange={(e) => setColId(e.target.value)}
-            aria-label="Collection"
+            aria-label={t('graph.collectionAria')}
             className="w-44"
           >
-            <option value="">All collections</option>
+            <option value="">{t('graph.allCollections')}</option>
             {collections.data?.map((col) => (
               <option key={col.id} value={col.id}>
                 {col.name}
@@ -74,7 +75,7 @@ export default function Graph() {
       <GraphBody
         isLoading={graph.isLoading || workspaces.isLoading}
         isError={graph.isError}
-        message={graph.error?.message}
+        message={graph.error ? apiErrorMessage(graph.error, t) : undefined}
         onRetry={() => void graph.refetch()}
         data={graph.data}
         selected={selected}
@@ -111,14 +112,15 @@ function GraphBody({
   fitNonce: number
   onReset: () => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) return <Skeleton className="h-[70vh] rounded-card" />
-  if (isError) return <QueryError title="Could not load the graph" message={message} onRetry={onRetry} />
+  if (isError) return <QueryError title={t('graph.error')} message={message} onRetry={onRetry} />
   if (!data || data.nodes.length === 0) {
     return (
       <EmptyState
         icon={<Workflow className="h-7 w-7" />}
-        title="Nothing to graph yet"
-        description="Tag some documents in this scope and they'll appear here, linked through their shared tags."
+        title={t('graph.empty.title')}
+        description={t('graph.empty.description')}
       />
     )
   }
@@ -131,10 +133,10 @@ function GraphBody({
         size="sm"
         onClick={onReset}
         className="absolute right-3 top-3"
-        aria-label="Reset view"
+        aria-label={t('graph.resetView')}
       >
         <RotateCcw className="h-4 w-4" />
-        Reset
+        {t('graph.reset')}
       </Button>
       {selected && <DetailPanel graph={data} nodeId={selected} onClose={() => onSelect(null)} />}
     </Card>
@@ -143,17 +145,18 @@ function GraphBody({
 
 /** Cold→hot gradient key for tag heat, anchored to the busiest tag. */
 function HeatLegend({ maxHeat }: { maxHeat: number }) {
+  const { t } = useTranslation()
   if (maxHeat <= 0) return null
   return (
     <div className="absolute bottom-3 left-3 rounded-control border border-border bg-surface/90 px-3 py-2 text-xs text-ink-muted backdrop-blur">
-      <div className="mb-1 font-medium text-ink">Tag heat</div>
+      <div className="mb-1 font-medium text-ink">{t('graph.heat.title')}</div>
       <div className="flex items-center gap-2">
         <span>1</span>
         <span
           className="h-2 w-24 rounded-full"
           style={{ background: 'linear-gradient(to right, rgb(37,99,235), rgb(220,38,38))' }}
         />
-        <span>{maxHeat} files</span>
+        <span>{t('graph.heat.files', { count: maxHeat })}</span>
       </div>
     </div>
   )
@@ -169,6 +172,7 @@ function DetailPanel({
   nodeId: string
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const node = useMemo(() => graph.nodes.find((n) => n.id === nodeId), [graph, nodeId])
   const neighbors = useMemo(() => neighborLabels(graph, nodeId), [graph, nodeId])
@@ -180,7 +184,7 @@ function DetailPanel({
           <span className="text-[11px] uppercase tracking-wide text-ink-faint">{node.kind}</span>
           <h3 className="truncate text-sm font-medium text-ink">{node.label}</h3>
         </div>
-        <button onClick={onClose} className="text-ink-faint hover:text-ink" aria-label="Close">
+        <button onClick={onClose} className="text-ink-faint hover:text-ink" aria-label={t('common.close')}>
           <X className="h-5 w-5" />
         </button>
       </div>
@@ -191,28 +195,28 @@ function DetailPanel({
             variant="secondary"
             size="sm"
             className="flex-1"
-            onClick={() => void api.openDocument(node.id).catch((e) => toast.error((e as Error).message))}
+            onClick={() => void api.openDocument(node.id).catch((e) => toast.error(apiErrorMessage(e, t)))}
           >
             <ExternalLink className="h-4 w-4" />
-            Open
+            {t('graph.open')}
           </Button>
           <Button
             variant="secondary"
             size="sm"
             className="flex-1"
             onClick={() =>
-              void api.downloadDocument(node.id, node.label).catch((e) => toast.error((e as Error).message))
+              void api.downloadDocument(node.id, node.label).catch((e) => toast.error(apiErrorMessage(e, t)))
             }
           >
             <Download className="h-4 w-4" />
-            Download
+            {t('graph.download')}
           </Button>
         </div>
       )}
       {neighbors.length > 0 && (
         <div className="mt-3">
           <div className="mb-1.5 text-[11px] uppercase tracking-wide text-ink-faint">
-            {node.kind === 'tag' ? 'Files' : 'Tags'}
+            {node.kind === 'tag' ? t('graph.files') : t('common.tags')}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {neighbors.map((label) => (
@@ -227,11 +231,11 @@ function DetailPanel({
 
 /** The kind-specific stat line for a node. */
 function NodeFacts({ node }: { node: GraphNode }) {
+  const { t } = useTranslation()
   if (node.kind === 'tag') {
     return (
       <p className="mt-2 text-[13px] text-ink-muted">
-        Used by <span className="font-medium text-ink">{node.heat}</span> file
-        {node.heat === 1 ? '' : 's'}.
+        {t('graph.node.usedBy', { count: node.heat })}
       </p>
     )
   }
@@ -239,7 +243,7 @@ function NodeFacts({ node }: { node: GraphNode }) {
   return (
     <p className="mt-2 text-[13px] text-ink-muted">
       {type ? `${type.toUpperCase()} · ` : ''}
-      {node.degree} tag{node.degree === 1 ? '' : 's'}.
+      {t('graph.node.tags', { count: node.degree })}
     </p>
   )
 }

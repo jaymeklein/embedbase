@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react'
 import { UploadCloud } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 import { Spinner } from '../ui'
 
@@ -20,6 +21,7 @@ export function UploadZone({
   busy: boolean
   maxSizeMb: number
 }) {
+  const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
 
@@ -63,20 +65,18 @@ export function UploadZone({
         <UploadCloud className="h-7 w-7 text-ink-faint" />
       )}
       <p className="text-[13px] text-ink">
-        {busy ? 'Uploading…' : 'Drag files here, or '}
+        {busy ? t('documents.upload.uploading') : t('documents.upload.drag')}
         {!busy && (
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
             className="font-medium text-accent hover:underline"
           >
-            browse
+            {t('documents.upload.browse')}
           </button>
         )}
       </p>
-      <p className="text-xs text-ink-faint">
-        PDF, text, Markdown · DOCX/PPTX with docling · up to {maxSizeMb} MB each
-      </p>
+      <p className="text-xs text-ink-faint">{t('documents.upload.hint', { max: maxSizeMb })}</p>
     </div>
   )
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { KeyRound, Pencil, Plus, RotateCcw, ShieldCheck, Trash2, Users as UsersIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   useCreateUser,
   useDeleteUser,
@@ -24,6 +25,7 @@ import { UserFormModal, type UserFormValues } from '../components/users/UserForm
 import { UserKeyModal } from '../components/users/UserKeyModal'
 import { PermissionsModal } from '../components/users/PermissionsModal'
 import { RevealOncePanel } from '../components/users/RevealOncePanel'
+import { apiErrorMessage } from '../i18n/apiError'
 import { cn } from '../lib/cn'
 import { formatDate } from '../lib/format'
 
@@ -52,6 +54,7 @@ function changedFields(user: User, values: UserFormValues): UserUpdate {
 
 /** Users admin: sign-in accounts (username/password + role), API keys, and grants. */
 export default function Users() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useUsers()
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
   const close = () => setDialog({ kind: 'none' })
@@ -67,12 +70,11 @@ export default function Users() {
         onSuccess: (user) =>
           setDialog({
             kind: 'reveal',
-            title: `User “${user.username}” created`,
-            message:
-              'Share this one-time password with the user — they will be asked to change it on first sign-in. It is shown only once.',
+            title: t('users.reveal.created.title', { username: user.username }),
+            message: t('users.reveal.created.message'),
             secret: user.temp_password,
           }),
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       })
     } else if (dialog.kind === 'edit') {
       const body = changedFields(dialog.user, values)
@@ -84,10 +86,10 @@ export default function Users() {
         { id: dialog.user.id, body },
         {
           onSuccess: () => {
-            toast.success('User updated.')
+            toast.success(t('users.toast.updated'))
             close()
           },
-          onError: (e) => toast.error(e.message),
+          onError: (e) => toast.error(apiErrorMessage(e, t)),
         },
       )
     }
@@ -98,10 +100,10 @@ export default function Users() {
     const { user } = dialog
     deleteMut.mutate(user.id, {
       onSuccess: () => {
-        toast.success(`User “${user.username}” deleted.`)
+        toast.success(t('users.toast.deleted', { username: user.username }))
         close()
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
@@ -112,34 +114,30 @@ export default function Users() {
       onSuccess: (res) =>
         setDialog({
           kind: 'reveal',
-          title: `Password reset for “${user.username}”`,
-          message:
-            'Share this one-time password with the user — their old password no longer works and they will set a new one on next sign-in. Shown only once.',
+          title: t('users.reveal.reset.title', { username: user.username }),
+          message: t('users.reveal.reset.message'),
           secret: res.temp_password,
         }),
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
   const toggleActive = (user: User) =>
     updateMut.mutate(
       { id: user.id, body: { is_active: !user.is_active } },
-      { onError: (e) => toast.error(e.message) },
+      { onError: (e) => toast.error(apiErrorMessage(e, t)) },
     )
 
   return (
     <div className="animate-fade-in space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">Users</h1>
-          <p className="mt-1 text-[13px] text-ink-muted">
-            Each user signs in with a username + password (admins get the full console; others are
-            scoped by their grants) and may hold one API key for MCP/programmatic access.
-          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('users.title')}</h1>
+          <p className="mt-1 text-[13px] text-ink-muted">{t('users.subtitle')}</p>
         </div>
         <Button onClick={() => setDialog({ kind: 'create' })} className="shrink-0">
           <Plus className="h-5 w-5 shrink-0" />
-          New user
+          {t('users.new')}
         </Button>
       </header>
 
@@ -147,7 +145,7 @@ export default function Users() {
         data={data}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(user) => setDialog({ kind: 'edit', user })}
@@ -180,10 +178,10 @@ export default function Users() {
 
       <ConfirmDialog
         open={dialog.kind === 'delete'}
-        title="Delete user"
+        title={t('users.delete.title')}
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.user.username}”? Their API key and all permission grants are permanently removed. This cannot be undone.`
+            ? t('users.delete.message', { username: dialog.user.username })
             : ''
         }
         loading={deleteMut.isPending}
@@ -193,13 +191,13 @@ export default function Users() {
 
       <ConfirmDialog
         open={dialog.kind === 'reset'}
-        title="Reset password"
+        title={t('users.reset.title')}
         message={
           dialog.kind === 'reset'
-            ? `Reset the password for “${dialog.user.username}”? Their current password stops working immediately and any active session is signed out.`
+            ? t('users.reset.message', { username: dialog.user.username })
             : ''
         }
-        confirmLabel="Reset password"
+        confirmLabel={t('users.reset.title')}
         loading={resetMut.isPending}
         onConfirm={handleReset}
         onClose={close}
@@ -242,6 +240,7 @@ function UserList({
   onReset: (user: User) => void
   onToggleActive: (user: User) => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="flex flex-col gap-2">
@@ -252,15 +251,15 @@ function UserList({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load users" message={message} onRetry={onRetry} />
+    return <QueryError title={t('users.error')} message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
     return (
       <EmptyState
         icon={<UsersIcon className="h-7 w-7" />}
-        title="No users yet"
-        description="Create a user, share their one-time password, and grant access to workspaces or collections."
-        action={<Button onClick={onCreate}>New user</Button>}
+        title={t('users.empty.title')}
+        description={t('users.empty.description')}
+        action={<Button onClick={onCreate}>{t('users.new')}</Button>}
       />
     )
   }
@@ -300,48 +299,51 @@ function UserRow({
   onReset: (user: User) => void
   onToggleActive: (user: User) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center justify-between gap-3 px-4 py-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium text-ink">{user.username}</span>
-          {user.is_admin && <Badge>Admin</Badge>}
+          {user.is_admin && <Badge>{t('users.admin')}</Badge>}
           {user.name && <span className="truncate text-xs text-ink-muted">{user.name}</span>}
         </div>
         <p className="mt-0.5 truncate text-xs text-ink-faint">
           {user.email ? `${user.email} · ` : ''}
-          {user.api_key ? `key ${user.api_key.key_prefix}…` : 'no API key'} · created{' '}
-          {formatDate(user.created_at)}
-          {user.rate_limit_rpm > 0 && ` · ${user.rate_limit_rpm} rpm`}
+          {user.api_key
+            ? t('users.row.key', { prefix: user.api_key.key_prefix })
+            : t('users.row.noKey')}{' '}
+          · {t('users.row.created', { date: formatDate(user.created_at) })}
+          {user.rate_limit_rpm > 0 && ` · ${t('users.row.rpm', { rpm: user.rate_limit_rpm })}`}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
           onClick={() => onToggleActive(user)}
-          aria-label={user.is_active ? 'Deactivate user' : 'Activate user'}
+          aria-label={user.is_active ? t('users.row.deactivateAria') : t('users.row.activateAria')}
           className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-xs font-medium transition-colors hover:border-ink-faint"
         >
           <span className={cn('h-1.5 w-1.5 rounded-full', user.is_active ? 'bg-ok' : 'bg-ink-faint')} />
           <span className={user.is_active ? 'text-ok' : 'text-ink-muted'}>
-            {user.is_active ? 'Active' : 'Inactive'}
+            {user.is_active ? t('users.status.active') : t('users.status.inactive')}
           </span>
         </button>
-        <DropdownMenu triggerAriaLabel={`Manage ${user.username}`}>
+        <DropdownMenu triggerAriaLabel={t('users.row.manageAria', { username: user.username })}>
           <DropdownItem icon={<ShieldCheck className="h-4 w-4" />} onSelect={() => onPermissions(user)}>
-            Permissions
+            {t('users.actions.permissions')}
           </DropdownItem>
           <DropdownItem icon={<KeyRound className="h-4 w-4" />} onSelect={() => onKey(user)}>
-            API key
+            {t('users.actions.apiKey')}
           </DropdownItem>
           <DropdownItem icon={<RotateCcw className="h-4 w-4" />} onSelect={() => onReset(user)}>
-            Reset password
+            {t('users.reset.title')}
           </DropdownItem>
           <DropdownItem icon={<Pencil className="h-4 w-4" />} onSelect={() => onEdit(user)}>
-            Edit
+            {t('users.actions.edit')}
           </DropdownItem>
           <DropdownItem icon={<Trash2 className="h-4 w-4" />} danger onSelect={() => onDelete(user)}>
-            Delete
+            {t('users.actions.delete')}
           </DropdownItem>
         </DropdownMenu>
       </div>

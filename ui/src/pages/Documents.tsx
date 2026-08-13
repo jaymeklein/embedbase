@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { AlertCircle, ChevronRight, Database, DatabaseZap, Download, ExternalLink, FileDown, FileText, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   useAssignDocumentTag,
   useCollection,
@@ -36,6 +37,7 @@ import {
 import { UploadZone } from '../components/documents/UploadZone'
 import { DocumentFilters, type DocumentFilterValues } from '../components/documents/DocumentFilters'
 import { Pager } from '../components/Pager'
+import { apiErrorMessage } from '../i18n/apiError'
 import { formatBytes, timeAgo } from '../lib/format'
 import { useAuth } from '../auth/AuthContext'
 
@@ -52,6 +54,7 @@ const PAGE_SIZE = 50
 
 /** Documents within a collection: upload, live ingestion status, and delete. */
 export default function Documents() {
+  const { t } = useTranslation()
   const { wsId = '', colId = '' } = useParams()
   const workspace = useWorkspace(wsId)
   const collection = useCollection(wsId, colId)
@@ -113,7 +116,7 @@ export default function Documents() {
   // page, so a selected tag stays deselectable even when it filters the list down to zero rows.
   const tagOptions = useMemo(() => {
     const present = collectTags(data?.items)
-    const names = new Set(present.map((t) => t.name))
+    const names = new Set(present.map((tag) => tag.name))
     const missing = tagFilter
       .filter((n) => !names.has(n))
       .map((n) => ({ id: n, name: n, color: null }))
@@ -129,11 +132,11 @@ export default function Documents() {
         await uploadMut.mutateAsync({ file: f, retentionDays })
         ok += 1
       } catch (e) {
-        toast.error(`${f.name}: ${(e as Error).message}`)
+        toast.error(t('documents.toast.uploadError', { name: f.name, error: apiErrorMessage(e, t) }))
       }
     }
     setUploading(false)
-    if (ok > 0) toast.success(`${ok} file${ok === 1 ? '' : 's'} queued for ingestion.`)
+    if (ok > 0) toast.success(t('documents.toast.queued', { count: ok }))
   }
 
   const handleFiles = (files: File[]) => {
@@ -141,7 +144,7 @@ export default function Documents() {
     const valid: File[] = []
     for (const f of files) {
       if (f.size > maxBytes) {
-        toast.error(`${f.name} is larger than ${MAX_FILE_SIZE_MB} MB and was skipped.`)
+        toast.error(t('documents.toast.tooLarge', { name: f.name, max: MAX_FILE_SIZE_MB }))
       } else {
         valid.push(f)
       }
@@ -155,10 +158,10 @@ export default function Documents() {
     const doc = deleteTarget
     deleteMut.mutate(doc.document_id, {
       onSuccess: () => {
-        toast.success(`Deleted “${doc.filename}”.`)
+        toast.success(t('documents.toast.deleted', { name: doc.filename }))
         setDeleteTarget(null)
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
@@ -166,7 +169,7 @@ export default function Documents() {
     <div className="animate-fade-in space-y-6">
       <nav className="flex items-center gap-1.5 text-xs text-ink-muted">
         <Link to="/workspaces" className="hover:text-ink">
-          Workspaces
+          {t('nav.workspaces')}
         </Link>
         <ChevronRight className="h-4 w-4 text-ink-faint" />
         <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
@@ -177,11 +180,9 @@ export default function Documents() {
       </nav>
 
       <header>
-        <h1 className="text-xl font-semibold tracking-tight text-ink">Documents</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-ink">{t('documents.title')}</h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          {canWrite
-            ? 'Upload files to ingest them into this collection.'
-            : 'Browse and search documents in this collection.'}
+          {canWrite ? t('documents.subtitle.canWrite') : t('documents.subtitle.readonly')}
         </p>
       </header>
 
@@ -198,7 +199,7 @@ export default function Documents() {
               onChange={(e) => setRetentionDays(e.target.checked ? DEFAULT_RETENTION_DAYS : null)}
               className="h-4 w-4 accent-accent"
             />
-            Temporary — automatically delete after
+            {t('documents.retention.label')}
           </label>
           <input
             type="number"
@@ -207,10 +208,10 @@ export default function Documents() {
             value={retentionDays ?? DEFAULT_RETENTION_DAYS}
             disabled={retentionDays == null}
             onChange={(e) => setRetentionDays(clampRetention(Number(e.target.value)))}
-            aria-label="Retention in days"
+            aria-label={t('documents.retention.aria')}
             className="w-16 rounded-control border border-border bg-surface px-2 py-1 text-ink disabled:opacity-40"
           />
-          <span>day{retentionDays === 1 ? '' : 's'}</span>
+          <span>{t('documents.retention.day', { count: retentionDays ?? DEFAULT_RETENTION_DAYS })}</span>
         </div>
       )}
 
@@ -228,7 +229,7 @@ export default function Documents() {
         filtered={hasFilters}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         onRetry={() => void refetch()}
         onDelete={setDeleteTarget}
       />
@@ -244,10 +245,10 @@ export default function Documents() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete document"
+        title={t('documents.delete.title')}
         message={
           deleteTarget
-            ? `Delete “${deleteTarget.filename}”? Its chunks and indexed vectors are removed. This cannot be undone.`
+            ? t('documents.delete.message', { name: deleteTarget.filename })
             : ''
         }
         loading={deleteMut.isPending}
@@ -282,6 +283,7 @@ function DocumentList({
   onRetry: () => void
   onDelete: (doc: DocumentSummary) => void
 }) {
+  const { t } = useTranslation()
   const progressById = useIngestionProgress(wsId, colId)
   if (isLoading) {
     return (
@@ -296,20 +298,20 @@ function DocumentList({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load documents" message={message} onRetry={onRetry} />
+    return <QueryError title={t('documents.error')} message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
     return filtered ? (
       <EmptyState
         icon={<FileText className="h-7 w-7" />}
-        title="No matching documents"
-        description="No documents match the current filters. Adjust or clear them to see more."
+        title={t('documents.empty.filtered.title')}
+        description={t('documents.empty.filtered.description')}
       />
     ) : (
       <EmptyState
         icon={<FileText className="h-7 w-7" />}
-        title="No documents yet"
-        description="Drop files into the area above to start ingesting them."
+        title={t('documents.empty.none.title')}
+        description={t('documents.empty.none.description')}
       />
     )
   }
@@ -337,9 +339,10 @@ function DocumentList({
  *  parsing/embedding/storing. doc.status can't drive this — the list only refetches on
  *  the terminal event, so it's stale at "pending" for the whole run. */
 function IngestProgress({ progress }: { progress?: IngestionProgress }) {
+  const { t } = useTranslation()
   const pct = progress?.pct ?? null
   const determinate = pct != null
-  const label = progress ? 'Ingesting' : 'Uploading'
+  const label = progress ? t('documents.progress.ingesting') : t('status.uploading')
   return (
     <div className="flex w-40 shrink-0 flex-col gap-1">
       <div className="flex items-center justify-between text-xs text-ink-muted">
@@ -378,6 +381,7 @@ function DocumentRow({
   progress?: IngestionProgress
   onDelete: (doc: DocumentSummary) => void
 }) {
+  const { t } = useTranslation()
   const { isAdmin, canManageTags } = useAuth()
   // (Un)assigning a document tag needs the manage_tags privilege AND write on the resource —
   // mirror the backend (authorize_tag_management + authorize_document write) so we don't show a
@@ -393,7 +397,7 @@ function DocumentRow({
   const unassignMut = useUnassignDocumentTag(wsId, colId)
   const createMut = useCreateTag(wsId)
   const tagBusy = assignMut.isPending || unassignMut.isPending || createMut.isPending
-  const onErr = (e: Error) => toast.error(e.message)
+  const onErr = (e: Error) => toast.error(apiErrorMessage(e, t))
 
   const handleCreate = (name: string) =>
     createMut.mutate(
@@ -436,9 +440,10 @@ function DocumentRow({
             <p className="text-xs text-ink-faint">
               {doc.file_type.toUpperCase()} · {formatBytes(doc.file_size)}
               {doc.chunk_count != null &&
-                ` · ${doc.chunk_count} chunk${doc.chunk_count === 1 ? '' : 's'}`}{' '}
-              · updated {timeAgo(doc.updated_at)}
-              {doc.has_original && ` · original: ${doc.original_filename ?? doc.filename}`}
+                ` · ${t('documents.row.chunk', { count: doc.chunk_count })}`}{' '}
+              · {t('documents.row.updated', { ago: timeAgo(doc.updated_at) })}
+              {doc.has_original &&
+                ` · ${t('documents.row.original', { name: doc.original_filename ?? doc.filename })}`}
             </p>
           </div>
         </div>
@@ -449,7 +454,7 @@ function DocumentRow({
               onClick={() => setShowError((v) => !v)}
               className="text-xs font-medium text-err hover:underline"
             >
-              {showError ? 'Hide' : 'Why?'}
+              {showError ? t('documents.row.hide') : t('documents.row.why')}
             </button>
           )}
           {failed && canWrite && (
@@ -458,13 +463,13 @@ function DocumentRow({
               disabled={reprocessMut.isPending}
               onClick={() =>
                 reprocessMut.mutate(doc.document_id, {
-                  onSuccess: () => toast.success(`Reprocessing “${doc.filename}”.`),
+                  onSuccess: () => toast.success(t('documents.toast.reprocessing', { name: doc.filename })),
                   onError: onErr,
                 })
               }
               className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
             >
-              {reprocessMut.isPending ? 'Retrying…' : 'Retry'}
+              {reprocessMut.isPending ? t('common.retrying') : t('common.retry')}
             </button>
           )}
           {doc.status === 'pending' || doc.status === 'processing' ? (
@@ -478,7 +483,7 @@ function DocumentRow({
             canWrite={canWrite}
             onIndex={() =>
               indexMut.mutate(doc.document_id, {
-                onSuccess: () => toast.success(`Indexing “${doc.filename}”.`),
+                onSuccess: () => toast.success(t('documents.toast.indexing', { name: doc.filename })),
                 onError: onErr,
               })
             }
@@ -486,7 +491,7 @@ function DocumentRow({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Open ${doc.filename}`}
+            aria-label={t('common.openAria', { name: doc.filename })}
             onClick={() => void api.openDocument(doc.document_id).catch((e) => onErr(e as Error))}
             className="h-10 w-10 px-0"
           >
@@ -495,7 +500,7 @@ function DocumentRow({
           <Button
             variant="ghost"
             size="sm"
-            aria-label={`Download ${doc.filename}`}
+            aria-label={t('common.downloadAria', { name: doc.filename })}
             onClick={() =>
               void api.downloadDocument(doc.document_id, doc.filename).catch((e) => onErr(e as Error))
             }
@@ -507,7 +512,7 @@ function DocumentRow({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Download original source file (${doc.original_filename ?? doc.filename})`}
+              aria-label={t('documents.row.downloadOriginalAria', { name: doc.original_filename ?? doc.filename })}
               onClick={() =>
                 void api
                   .downloadDocument(doc.document_id, doc.original_filename ?? doc.filename, {
@@ -524,7 +529,7 @@ function DocumentRow({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Delete ${doc.filename}`}
+              aria-label={t('common.deleteAria', { name: doc.filename })}
               onClick={() => onDelete(doc)}
               className="h-10 w-10 px-0 hover:text-err"
             >
@@ -535,16 +540,16 @@ function DocumentRow({
       </div>
       {((doc.tags ?? []).length > 0 || canManageDocTags) && (
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
-          {(doc.tags ?? []).map((t) => (
+          {(doc.tags ?? []).map((tag) => (
             <TagChip
-              key={t.id}
-              name={t.name}
-              color={t.color}
+              key={tag.id}
+              name={tag.name}
+              color={tag.color}
               onRemove={
                 canManageDocTags
                   ? () =>
                       unassignMut.mutate(
-                        { docId: doc.document_id, tagId: t.id },
+                        { docId: doc.document_id, tagId: tag.id },
                         { onError: onErr },
                       )
                   : undefined
@@ -589,15 +594,16 @@ function IndexBadge({
   canWrite: boolean
   onIndex: () => void
 }) {
+  const { t } = useTranslation()
   if (doc.status !== 'done') return null
   if (doc.indexed) {
     return (
       <span
-        title="Indexed for BM25 / keyword search"
+        title={t('documents.index.indexedTitle')}
         className="inline-flex items-center gap-1 rounded-full border border-ok/30 bg-ok/5 px-2 py-0.5 text-xs font-medium text-ok"
       >
         <Database className="h-3.5 w-3.5" />
-        Indexed
+        {t('documents.index.indexed')}
       </span>
     )
   }
@@ -608,23 +614,24 @@ function IndexBadge({
       type="button"
       onClick={onIndex}
       disabled={busy}
-      title="Not in the keyword index — click to index"
+      title={t('documents.index.notIndexedTitle')}
       className="inline-flex items-center gap-1 rounded-full border border-dashed border-warn/40 px-2 py-0.5 text-xs font-medium text-warn transition-colors hover:bg-warn/5 disabled:opacity-60"
     >
       <DatabaseZap className="h-3.5 w-3.5" />
-      {busy ? 'Indexing…' : 'Index'}
+      {busy ? t('documents.index.indexing') : t('documents.index.index')}
     </button>
   )
 }
 
 /** Lazily fetch and show a failed document's ingestion error. */
 function FailureReason({ wsId, colId, docId }: { wsId: string; colId: string; docId: string }) {
+  const { t } = useTranslation()
   const { data, isLoading, isError } = useDocumentStatus(wsId, colId, docId, true)
   const text = isLoading
-    ? 'Loading error…'
+    ? t('documents.failure.loading')
     : isError
-      ? 'Could not load the error detail.'
-      : (data?.error ?? 'No error detail recorded.')
+      ? t('documents.failure.loadError')
+      : (data?.error ?? t('documents.failure.none'))
   return (
     <div className="mt-2 flex items-start gap-2 rounded-control border border-err/30 bg-err/5 px-3 py-2">
       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-err" />

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { User } from '../../api/types'
 import { Button, Field, Input, Modal } from '../ui'
 
@@ -55,6 +56,7 @@ export function UserFormModal({
   onSubmit: (values: UserFormValues) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const [values, setValues] = useState<UserFormValues>(DEFAULTS)
 
   // Reseed every time the modal opens so stale edits never leak between rows.
@@ -81,38 +83,38 @@ export function UserFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={editing ? 'Edit user' : 'New user'}
+      title={editing ? t('users.editTitle') : t('users.new')}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting} disabled={!valid}>
-            {editing ? 'Save changes' : 'Create'}
+            {editing ? t('common.saveChanges') : t('common.create')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
         <Field
-          label="Username"
+          label={t('auth.field.username')}
           htmlFor="user-username"
-          hint="Used to sign in. Letters, digits, and . _ + @ - (3–64 chars)."
-          error={username && !usernameValid ? 'Enter a valid username (3–64 characters).' : undefined}
+          hint={t('users.form.usernameHint')}
+          error={username && !usernameValid ? t('users.form.usernameError') : undefined}
         >
           <Input
             id="user-username"
             autoFocus
             value={values.username}
             onChange={(e) => set('username', e.target.value)}
-            placeholder="e.g. jane"
+            placeholder={t('users.form.usernamePlaceholder')}
           />
         </Field>
         <Field
-          label="Email"
+          label={t('users.form.email')}
           htmlFor="user-email"
-          hint="Optional — leave blank if the user has no email."
-          error={email && !emailValid ? 'Enter a valid email address.' : undefined}
+          hint={t('users.form.emailHint')}
+          error={email && !emailValid ? t('users.form.emailError') : undefined}
         >
           <Input
             id="user-email"
@@ -122,21 +124,21 @@ export function UserFormModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit()
             }}
-            placeholder="e.g. jane@example.com"
+            placeholder={t('users.form.emailPlaceholder')}
           />
         </Field>
-        <Field label="Name" htmlFor="user-name" hint="Optional — a display name.">
+        <Field label={t('common.name')} htmlFor="user-name" hint={t('users.form.nameHint')}>
           <Input
             id="user-name"
             value={values.name}
             onChange={(e) => set('name', e.target.value)}
-            placeholder="Optional"
+            placeholder={t('common.optional')}
           />
         </Field>
         <Field
-          label="MCP rate limit (requests/min)"
+          label={t('users.form.rateLimit')}
           htmlFor="user-rate-limit"
-          hint="Caps this user's key on /api/mcp. 0 = use the global default."
+          hint={t('users.form.rateLimitHint')}
         >
           <Input
             id="user-rate-limit"
@@ -156,7 +158,7 @@ export function UserFormModal({
             onChange={(e) => set('is_active', e.target.checked)}
             className="h-4 w-4 rounded border-border accent-accent"
           />
-          Active — an inactive user can't sign in and their API key stops working
+          {t('users.form.activeLabel')}
         </label>
         <label className="flex items-center gap-2 text-sm text-ink">
           <input
@@ -165,7 +167,7 @@ export function UserFormModal({
             onChange={(e) => set('is_admin', e.target.checked)}
             className="h-4 w-4 rounded border-border accent-accent"
           />
-          Admin — full console access (manage users, settings, every workspace)
+          {t('users.form.adminLabel')}
         </label>
       </div>
     </Modal>

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { AlertTriangle, Cpu, Info, Zap } from 'lucide-react'
+import { Trans, useTranslation } from 'react-i18next'
 import {
   SECRET_MASK,
   useAccelerator,
@@ -15,15 +16,17 @@ import type {
   SearchConfig,
 } from '../../api/types'
 import { Button, Card, Field, Input, QueryError, Select, Skeleton, useToast } from '../ui'
+import { apiErrorMessage } from '../../i18n/apiError'
 
 /** Runtime config — every section below applies live (API + workers reload). */
 export function ConfigPanel() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useConfig()
   if (isLoading) return <Skeleton className="h-72 w-full rounded-card" />
   if (isError || !data) {
     return (
       <QueryError
-        title="Could not load configuration"
+        title={t('settings.config.loadError')}
         message={error?.message}
         onRetry={() => void refetch()}
       />
@@ -48,6 +51,7 @@ export function ConfigPanel() {
  * no longer read by any upload path, so the panel no longer offers it.
  */
 function StorageForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const storage = config.storage
   const activeName = storage.default
   const activeType = storage.backends?.[activeName]?.type
@@ -57,15 +61,15 @@ function StorageForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          Where uploaded files are stored. The active backend is chosen in{' '}
-          <code>config.yaml</code> / <code>.env</code>. Retention is set{' '}
-          <strong>per upload</strong> (1–30 days, or kept permanently) on the Documents page —
-          there's no global retention setting.
+          <Trans
+            i18nKey="settings.storage.blurb"
+            components={{ code: <code />, strong: <strong /> }}
+          />
         </p>
       </div>
 
-      <Section title="Object storage">
-        <Field label="Active backend" htmlFor="storage-backend">
+      <Section title={t('settings.storage.title')}>
+        <Field label={t('settings.storage.activeBackend')} htmlFor="storage-backend">
           <Input
             id="storage-backend"
             value={activeType ? `${activeName} (${activeType})` : activeName}
@@ -84,6 +88,7 @@ function StorageForm({ config }: { config: AppConfig }) {
  * unwarned on a compatible (Ampere+) GPU; warned and PyMuPDF-preferred otherwise.
  */
 function ParserForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const update = useUpdateConfig()
   const accel = useAccelerator()
@@ -106,20 +111,21 @@ function ParserForm({ config }: { config: AppConfig }) {
     update.mutate(
       { ...config, parsers: { ...config.parsers, pdf_backend: backend } },
       {
-        onSuccess: () => toast.success('PDF backend saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => toast.success(t('settings.toast.pdfSaved')),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
 
   return (
     <Card className="flex flex-col gap-5 p-5">
-      <Section title="PDF parsing">
-        <Field label="Backend" htmlFor="pdf-backend">
+      <Section title={t('settings.parser.title')}>
+        <Field label={t('settings.parser.backend')} htmlFor="pdf-backend">
           <Select id="pdf-backend" value={backend} onChange={(e) => setBackend(e.target.value)}>
-            <option value="pymupdf">PyMuPDF — fast, one chunk per page</option>
+            <option value="pymupdf">{t('settings.parser.optionPymupdf')}</option>
             <option value="docling">
-              docling — section-aware + tables/OCR{compatible ? '' : ' (needs a GPU)'}
+              {t('settings.parser.optionDocling')}
+              {compatible ? '' : t('settings.parser.needsGpuSuffix')}
             </option>
           </Select>
         </Field>
@@ -131,17 +137,19 @@ function ParserForm({ config }: { config: AppConfig }) {
           <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
           <p className="text-[13px] text-ink-muted">
             {accel.data?.device === 'cuda'
-              ? `Your GPU (${accel.data?.name}, capability ${accel.data?.capability}) is older than Ampere — `
-              : 'No GPU detected — '}
-            docling runs on CPU and is <strong>very slow</strong> (minutes per document, and large
-            PDFs can hit the ingestion time limit). PyMuPDF is recommended on this hardware.
+              ? t('settings.parser.gpuOlderThanAmpere', {
+                  name: accel.data?.name,
+                  capability: accel.data?.capability,
+                })
+              : t('settings.parser.noGpuDetected')}
+            <Trans i18nKey="settings.parser.doclingCpuWarn" components={{ strong: <strong /> }} />
           </p>
         </div>
       )}
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save PDF backend'}
+          {update.isPending ? t('common.saving') : t('settings.parser.save')}
         </Button>
       </div>
     </Card>
@@ -156,8 +164,13 @@ function AcceleratorNote({
   accel: ReturnType<typeof useAccelerator>
   recommended: string
 }) {
+  const { t } = useTranslation()
   if (accel.isLoading) {
-    return <p className="text-[13px] text-ink-faint sm:col-span-2">Detecting GPU…</p>
+    return (
+      <p className="text-[13px] text-ink-faint sm:col-span-2">
+        {t('settings.parser.detectingGpu')}
+      </p>
+    )
   }
   const compatible = accel.data?.compatible ?? false
   return (
@@ -168,17 +181,25 @@ function AcceleratorNote({
         <Cpu className="h-4 w-4 shrink-0 text-ink-faint" />
       )}
       {compatible
-        ? `Compatible GPU detected (${accel.data?.name}, capability ${accel.data?.capability}).`
+        ? t('settings.parser.compatibleGpu', {
+            name: accel.data?.name,
+            capability: accel.data?.capability,
+          })
         : accel.data?.device === 'cuda'
-          ? `GPU ${accel.data?.name} (capability ${accel.data?.capability}) is below Ampere.`
-          : 'No compatible GPU detected.'}{' '}
-      Recommended: <strong className="ml-1">{recommended}</strong>.
+          ? t('settings.parser.gpuBelowAmpere', {
+              name: accel.data?.name,
+              capability: accel.data?.capability,
+            })
+          : t('settings.parser.noCompatibleGpu')}{' '}
+      {t('settings.parser.recommendedLabel')}{' '}
+      <strong className="ml-1">{recommended}</strong>.
     </p>
   )
 }
 
 /** Editable form for the embedding section; every other config section round-trips. */
 function EmbeddingForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const update = useUpdateConfig()
   const emb = config.embedding
@@ -225,8 +246,8 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
     update.mutate(
       { ...config, embedding },
       {
-        onSuccess: () => toast.success('Embedding config saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => toast.success(t('settings.toast.embeddingSaved')),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -236,28 +257,28 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-warn/40 bg-warn/10 px-3 py-2.5">
         <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
         <p className="text-[13px] text-ink-muted">
-          The embedding model turns documents into vectors. <strong>Changing the provider,
-            model, or output dimensions changes the vector size</strong> — existing collections
-          must be re-indexed or search will break. Changing only an API key is safe.
+          <Trans i18nKey="settings.embedding.blurb" components={{ strong: <strong /> }} />
         </p>
       </div>
 
-      <Section title="Embedding model">
-        <Field label="Provider" htmlFor="emb-provider">
+      <Section title={t('settings.embedding.title')}>
+        <Field label={t('settings.field.provider')} htmlFor="emb-provider">
           <Select id="emb-provider" value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            <option value="ollama">Ollama (local)</option>
-            <option value="sentence_transformers">Sentence-Transformers (in-process)</option>
-            <option value="openai_compat">OpenAI-compatible</option>
-            <option value="gemini">Google Gemini</option>
+            <option value="ollama">{t('settings.provider.ollamaLocal')}</option>
+            <option value="sentence_transformers">
+              {t('settings.provider.sentenceTransformers')}
+            </option>
+            <option value="openai_compat">{t('settings.provider.openaiCompat')}</option>
+            <option value="gemini">{t('settings.provider.gemini')}</option>
           </Select>
         </Field>
         {provider === 'ollama' ? (
           <OllamaModelField id="emb-model" model={model} setModel={setModel} baseUrl={baseUrl} />
         ) : (
           <Field
-            label="Model"
+            label={t('settings.field.model')}
             htmlFor="emb-model"
-            hint={isGemini ? 'e.g. gemini-embedding-001' : 'the exact model id on this server'}
+            hint={isGemini ? t('settings.embedding.modelHintGemini') : t('settings.embedding.modelHint')}
           >
             <Input
               id="emb-model"
@@ -269,12 +290,12 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
         )}
         {needsBaseUrl && (
           <Field
-            label="Base URL"
+            label={t('settings.field.baseUrl')}
             htmlFor="emb-base-url"
             hint={
               provider === 'openai_compat'
-                ? 'required — e.g. https://openrouter.ai/api'
-                : 'blank uses the Ollama default'
+                ? t('settings.field.baseUrlRequiredOpenrouter')
+                : t('settings.field.baseUrlOllamaDefault')
             }
           >
             <Input
@@ -290,23 +311,31 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
           </Field>
         )}
         {needsKey && (
-          <Field label="API key" htmlFor="emb-api-key" hint="Write-only; never shown after saving.">
+          <Field
+            label={t('settings.field.apiKey')}
+            htmlFor="emb-api-key"
+            hint={t('settings.field.apiKeyHint')}
+          >
             <Input
               id="emb-api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={
-                keyIsSet ? 'key set — leave blank to keep' : isGemini ? 'AI Studio key' : 'API key'
+                keyIsSet
+                  ? t('settings.field.keySetPlaceholder')
+                  : isGemini
+                    ? t('settings.field.aiStudioKey')
+                    : t('settings.field.apiKey')
               }
             />
           </Field>
         )}
         {isGemini && (
           <Field
-            label="Output dimensions"
+            label={t('settings.embedding.outputDim')}
             htmlFor="emb-output-dim"
-            hint="optional; blank = full 3072"
+            hint={t('settings.embedding.outputDimHint')}
           >
             <Input
               id="emb-output-dim"
@@ -320,9 +349,9 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
         )}
         {provider !== 'sentence_transformers' && (
           <Field
-            label="Max requests / min"
+            label={t('settings.embedding.maxRpm')}
             htmlFor="emb-max-rpm"
-            hint="throttle embeds so bulk ingestion stays under the provider's quota (each text = one request); blank or 0 = unlimited"
+            hint={t('settings.embedding.maxRpmHint')}
           >
             <Input
               id="emb-max-rpm"
@@ -330,7 +359,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
               min="0"
               value={maxRpm}
               onChange={(e) => setMaxRpm(e.target.value)}
-              placeholder="0 (unlimited)"
+              placeholder={t('settings.embedding.maxRpmPlaceholder')}
             />
           </Field>
         )}
@@ -340,11 +369,11 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
         {changesDimensions && (
           <span className="flex items-center gap-1.5 text-[13px] text-warn">
             <AlertTriangle className="h-4 w-4" />
-            Re-index required after saving
+            {t('settings.embedding.reindexRequired')}
           </span>
         )}
         <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save embedding config'}
+          {update.isPending ? t('common.saving') : t('settings.embedding.save')}
         </Button>
       </div>
     </Card>
@@ -358,6 +387,7 @@ function EmbeddingForm({ config }: { config: AppConfig }) {
  * Optional + graceful: a load or remote failure degrades to RRF-only ranking, never a 500.
  */
 function RerankerForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const update = useUpdateConfig()
   const rr = config.reranker
@@ -404,8 +434,8 @@ function RerankerForm({ config }: { config: AppConfig }) {
     update.mutate(
       { ...config, reranker },
       {
-        onSuccess: () => toast.success('Reranker config saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => toast.success(t('settings.toast.rerankerSaved')),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -415,13 +445,11 @@ function RerankerForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          The reranker reorders retrieved chunks by true query relevance before the final cut — the
-          biggest precision win. It's <strong>optional and safe</strong>: if the model or a remote
-          provider is unavailable, search falls back to its normal ranking.
+          <Trans i18nKey="settings.reranker.blurb" components={{ strong: <strong /> }} />
         </p>
       </div>
 
-      <Section title="Reranker">
+      <Section title={t('settings.reranker.title')}>
         <label className="flex items-center gap-2 text-[13px] text-ink sm:col-span-2">
           <input
             type="checkbox"
@@ -429,25 +457,25 @@ function RerankerForm({ config }: { config: AppConfig }) {
             onChange={(e) => setEnabled(e.target.checked)}
             className="h-5 w-5 accent-accent"
           />
-          Enable reranking
+          {t('settings.reranker.enable')}
         </label>
-        <Field label="Provider" htmlFor="rr-provider">
+        <Field label={t('settings.field.provider')} htmlFor="rr-provider">
           <Select id="rr-provider" value={provider} onChange={(e) => changeProvider(e.target.value)}>
-            <option value="cross_encoder">Cross-encoder (local, no key)</option>
-            <option value="rerank_api">Hosted rerank API (Cohere / Jina / Voyage)</option>
-            <option value="llm">LLM-as-reranker</option>
+            <option value="cross_encoder">{t('settings.reranker.providerCrossEncoder')}</option>
+            <option value="rerank_api">{t('settings.reranker.providerRerankApi')}</option>
+            <option value="llm">{t('settings.reranker.providerLlm')}</option>
           </Select>
         </Field>
         {isLlm && (
-          <Field label="LLM provider" htmlFor="rr-llm-provider">
+          <Field label={t('settings.reranker.llmProvider')} htmlFor="rr-llm-provider">
             <Select
               id="rr-llm-provider"
               value={llmProvider}
               onChange={(e) => setLlmProvider(e.target.value)}
             >
-              <option value="gemini">Google Gemini (AI Studio)</option>
-              <option value="openai_compat">OpenAI-compatible</option>
-              <option value="ollama">Ollama (local)</option>
+              <option value="gemini">{t('settings.provider.geminiAiStudio')}</option>
+              <option value="openai_compat">{t('settings.provider.openaiCompat')}</option>
+              <option value="ollama">{t('settings.provider.ollamaLocal')}</option>
             </Select>
           </Field>
         )}
@@ -455,16 +483,16 @@ function RerankerForm({ config }: { config: AppConfig }) {
           <OllamaModelField id="rr-model" model={model} setModel={setModel} baseUrl={baseUrl} />
         ) : (
           <Field
-            label="Model"
+            label={t('settings.field.model')}
             htmlFor="rr-model"
             hint={
               isRerankApi
-                ? 'e.g. rerank-v3.5 (Cohere), jina-reranker-v2 (Jina)'
+                ? t('settings.reranker.modelHintRerankApi')
                 : isLlm
                   ? isLlmGemini
-                    ? 'e.g. gemini-2.5-flash'
-                    : 'the exact chat model id'
-                  : 'a HuggingFace cross-encoder id; the baked default is offline-safe'
+                    ? t('settings.reranker.modelHintGemini')
+                    : t('settings.reranker.modelHintLlm')
+                  : t('settings.reranker.modelHintCrossEncoder')
             }
           >
             <Input
@@ -477,7 +505,7 @@ function RerankerForm({ config }: { config: AppConfig }) {
                   : isLlm
                     ? isLlmGemini
                       ? 'gemini-2.5-flash'
-                      : 'model id'
+                      : t('settings.field.modelIdPlaceholder')
                     : 'cross-encoder/ms-marco-MiniLM-L6-v2'
               }
             />
@@ -485,14 +513,14 @@ function RerankerForm({ config }: { config: AppConfig }) {
         )}
         {needsBaseUrl && (
           <Field
-            label="Base URL"
+            label={t('settings.field.baseUrl')}
             htmlFor="rr-base-url"
             hint={
               isRerankApi
-                ? 'required — the full /rerank endpoint'
+                ? t('settings.reranker.baseUrlHintRerankApi')
                 : llmProvider === 'openai_compat'
-                  ? 'required — e.g. https://openrouter.ai/api'
-                  : 'blank uses the Ollama default'
+                  ? t('settings.field.baseUrlRequiredOpenrouter')
+                  : t('settings.field.baseUrlOllamaDefault')
             }
           >
             <Input
@@ -510,22 +538,30 @@ function RerankerForm({ config }: { config: AppConfig }) {
           </Field>
         )}
         {needsKey && (
-          <Field label="API key" htmlFor="rr-api-key" hint="Write-only; never shown after saving.">
+          <Field
+            label={t('settings.field.apiKey')}
+            htmlFor="rr-api-key"
+            hint={t('settings.field.apiKeyHint')}
+          >
             <Input
               id="rr-api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder={
-                keyIsSet ? 'key set — leave blank to keep' : isLlmGemini ? 'AI Studio key' : 'API key'
+                keyIsSet
+                  ? t('settings.field.keySetPlaceholder')
+                  : isLlmGemini
+                    ? t('settings.field.aiStudioKey')
+                    : t('settings.field.apiKey')
               }
             />
           </Field>
         )}
         <Field
-          label="Candidates scored (top_n)"
+          label={t('settings.reranker.topN')}
           htmlFor="rr-top-n"
-          hint="max candidates the reranker scores per collection"
+          hint={t('settings.reranker.topNHint')}
         >
           <Input
             id="rr-top-n"
@@ -539,7 +575,7 @@ function RerankerForm({ config }: { config: AppConfig }) {
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save reranker config'}
+          {update.isPending ? t('common.saving') : t('settings.reranker.save')}
         </Button>
       </div>
     </Card>
@@ -552,6 +588,7 @@ function RerankerForm({ config }: { config: AppConfig }) {
  * top_k onto the next page(s) comes back whole. 0 disables it; the other search knobs round-trip.
  */
 function SearchForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const update = useUpdateConfig()
   const search = config.search
@@ -567,8 +604,8 @@ function SearchForm({ config }: { config: AppConfig }) {
     update.mutate(
       { ...config, search: next },
       {
-        onSuccess: () => toast.success('Search config saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => toast.success(t('settings.toast.searchSaved')),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -578,18 +615,15 @@ function SearchForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          Adjacency expansion pulls the chunks next to each result and merges them into one span, so
-          a section that runs across pages comes back whole instead of cut at the top-K boundary.
-          It's a plain lookup — no extra model calls — and <strong>safe</strong>: if it can't fetch,
-          search returns the un-expanded results.
+          <Trans i18nKey="settings.search.blurb" components={{ strong: <strong /> }} />
         </p>
       </div>
 
-      <Section title="Retrieval">
+      <Section title={t('settings.search.title')}>
         <Field
-          label="Adjacency expansion (neighbours)"
+          label={t('settings.search.expand')}
           htmlFor="search-expand"
-          hint={`chunks pulled on each side of a hit; 0 = off, max ${search.max_expand_neighbors}`}
+          hint={t('settings.search.expandHint', { max: search.max_expand_neighbors })}
         >
           <Input
             id="search-expand"
@@ -604,7 +638,7 @@ function SearchForm({ config }: { config: AppConfig }) {
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save search config'}
+          {update.isPending ? t('common.saving') : t('settings.search.save')}
         </Button>
       </div>
     </Card>
@@ -618,6 +652,7 @@ function SearchForm({ config }: { config: AppConfig }) {
  * so a save binds from the next MCP call. `enabled` and `max_results` round-trip untouched.
  */
 function MCPForm({ config }: { config: AppConfig }) {
+  const { t } = useTranslation()
   const toast = useToast()
   const update = useUpdateConfig()
   const mcp = config.mcp
@@ -638,8 +673,8 @@ function MCPForm({ config }: { config: AppConfig }) {
     update.mutate(
       { ...config, mcp: next },
       {
-        onSuccess: () => toast.success('MCP config saved. Services are reloading.'),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => toast.success(t('settings.toast.mcpSaved')),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -649,17 +684,15 @@ function MCPForm({ config }: { config: AppConfig }) {
       <div className="flex items-start gap-2 rounded-control border border-accent/30 bg-accent-weak px-3 py-2.5">
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-accent" />
         <p className="text-[13px] text-ink-muted">
-          The MCP endpoint (<code>/api/mcp</code>) throttles each API key to this many requests per
-          minute; the next request in the same minute returns <code>429</code>. Each key gets its own
-          budget, and the new limit <strong>applies to the next MCP request</strong>
+          <Trans i18nKey="settings.mcp.blurb" components={{ code: <code />, strong: <strong /> }} />
         </p>
       </div>
 
-      <Section title="MCP server">
+      <Section title={t('settings.mcp.title')}>
         <Field
-          label="Rate limit (requests / min per key)"
+          label={t('settings.mcp.rateLimit')}
           htmlFor="mcp-rpm"
-          hint="per API key on /api/mcp; the next request in the same minute returns 429"
+          hint={t('settings.mcp.rateLimitHint')}
         >
           <Input
             id="mcp-rpm"
@@ -673,7 +706,7 @@ function MCPForm({ config }: { config: AppConfig }) {
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={update.isPending}>
-          {update.isPending ? 'Saving…' : 'Save MCP config'}
+          {update.isPending ? t('common.saving') : t('settings.mcp.save')}
         </Button>
       </div>
     </Card>
@@ -696,6 +729,7 @@ function OllamaModelField({
   setModel: (m: string) => void
   baseUrl: string
 }) {
+  const { t } = useTranslation()
   const { data: models, isLoading, isError, error, refetch } = useOllamaModels(baseUrl, true)
 
   useEffect(() => {
@@ -703,12 +737,14 @@ function OllamaModelField({
   }, [models, model, setModel])
 
   return (
-    <Field label="Model" htmlFor={id} hint="Installed Ollama models">
+    <Field label={t('settings.field.model')} htmlFor={id} hint={t('settings.field.ollamaModelsHint')}>
       {isError ? (
         <div className="flex items-center gap-2">
-          <p className="text-[13px] text-danger">{error?.message ?? 'Could not reach Ollama'}</p>
+          <p className="text-[13px] text-danger">
+            {error?.message ?? t('settings.field.ollamaUnreachable')}
+          </p>
           <Button variant="ghost" onClick={() => void refetch()}>
-            Retry
+            {t('common.retry')}
           </Button>
         </div>
       ) : (
@@ -718,8 +754,8 @@ function OllamaModelField({
           onChange={(e) => setModel(e.target.value)}
           disabled={isLoading || !models?.length}
         >
-          {isLoading && <option>Loading models…</option>}
-          {!isLoading && !models?.length && <option>No models installed</option>}
+          {isLoading && <option>{t('settings.field.loadingModels')}</option>}
+          {!isLoading && !models?.length && <option>{t('settings.field.noModelsInstalled')}</option>}
           {models?.map((m) => (
             <option key={m} value={m}>
               {m}

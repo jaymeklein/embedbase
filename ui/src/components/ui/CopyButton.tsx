@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Check, Copy } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 import { Button, type ButtonProps } from './Button'
 import { useToast } from './Toast'
@@ -23,6 +24,7 @@ export function CopyButton({
   iconClassName?: string
 }) {
   const [copied, setCopied] = useState(false)
+  const { t } = useTranslation()
   const toast = useToast()
   const copy = async () => {
     try {
@@ -30,7 +32,7 @@ export function CopyButton({
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      toast.error('Copy failed — select it and copy manually.')
+      toast.error(t('ui.copyButton.failed'))
     }
   }
   return (
@@ -38,7 +40,7 @@ export function CopyButton({
       type="button"
       variant={variant}
       size={size}
-      aria-label={label ?? 'Copy'}
+      aria-label={label ?? t('common.copy')}
       {...props}
       onClick={copy}
     >
@@ -47,7 +49,7 @@ export function CopyButton({
       ) : (
         <Copy className={iconClassName} />
       )}
-      {label != null && <span>{copied ? 'Copied' : label}</span>}
+      {label != null && <span>{copied ? t('common.copied') : label}</span>}
     </Button>
   )
 }

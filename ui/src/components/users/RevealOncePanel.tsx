@@ -1,4 +1,5 @@
 import { ShieldAlert } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { Button, CopyButton } from '../ui'
 
 /**
@@ -15,6 +16,7 @@ export function RevealOncePanel({
   message: string
   onDone: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-start gap-2 rounded-control border border-warn/30 bg-warn/5 px-3 py-2.5">
@@ -25,10 +27,10 @@ export function RevealOncePanel({
         <code className="min-w-0 flex-1 truncate rounded-control border border-border bg-canvas px-3 py-2 font-mono text-[13px] text-ink">
           {secret}
         </code>
-        <CopyButton text={secret} label="Copy" size="md" iconClassName="h-5 w-5" className="shrink-0" />
+        <CopyButton text={secret} label={t('common.copy')} size="md" iconClassName="h-5 w-5" className="shrink-0" />
       </div>
       <div className="flex justify-end">
-        <Button onClick={onDone}>Done</Button>
+        <Button onClick={onDone}>{t('users.reveal.done')}</Button>
       </div>
     </div>
   )
