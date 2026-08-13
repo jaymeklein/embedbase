@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Collection } from '../../api/types'
 import {
   Button,
@@ -54,6 +55,7 @@ export function CollectionFormModal({
   onSubmit: (values: CollectionFormValues) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const [values, setValues] = useState<CollectionFormValues>(DEFAULTS)
 
   // Reseed every time the modal opens so stale edits never leak between rows.
@@ -75,20 +77,20 @@ export function CollectionFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={editing ? 'Edit collection' : 'New collection'}
+      title={editing ? t('collections.editTitle') : t('collections.new')}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting} disabled={!name}>
-            {editing ? 'Save changes' : 'Create'}
+            {editing ? t('common.saveChanges') : t('common.create')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name" htmlFor="col-name">
+        <Field label={t('common.name')} htmlFor="col-name">
           <Input
             id="col-name"
             autoFocus
@@ -97,21 +99,21 @@ export function CollectionFormModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit()
             }}
-            placeholder="e.g. Q3 Reports"
+            placeholder={t('collections.namePlaceholder')}
           />
         </Field>
-        <Field label="Description" htmlFor="col-desc" hint="Optional — what this collection holds.">
+        <Field label={t('common.description')} htmlFor="col-desc" hint={t('collections.descHint')}>
           <Textarea
             id="col-desc"
             value={values.description}
             onChange={(e) => set('description', e.target.value)}
-            placeholder="Optional"
+            placeholder={t('common.optional')}
           />
         </Field>
-        <Field label="Color">
+        <Field label={t('common.color')}>
           <ColorPicker value={values.color} onChange={(c) => set('color', c)} />
         </Field>
-        <Field label="Icon">
+        <Field label={t('common.icon')}>
           <IconPicker value={values.icon} onChange={(i) => set('icon', i)} />
         </Field>
       </div>

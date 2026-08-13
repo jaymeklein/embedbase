@@ -1,0 +1,782 @@
+{
+  "common": {
+    "saving": "Salvando…",
+    "cancel": "Cancelar",
+    "create": "Criar",
+    "saveChanges": "Salvar alterações",
+    "name": "Nome",
+    "description": "Descrição",
+    "optional": "Opcional",
+    "color": "Cor",
+    "icon": "Ícone",
+    "tags": "Tags",
+    "noDescription": "Sem descrição",
+    "created": "Criado em {{date}}",
+    "editAria": "Editar {{name}}",
+    "deleteAria": "Excluir {{name}}",
+    "more": "Mais",
+    "clear": "Limpar",
+    "retry": "Tentar novamente",
+    "retrying": "Tentando…",
+    "min": "mín",
+    "max": "máx",
+    "openAria": "Abrir {{name}}",
+    "downloadAria": "Baixar {{name}}",
+    "close": "Fechar",
+    "removeAria": "Remover {{name}}",
+    "confirm": "Confirmar",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "dismiss": "Dispensar"
+  },
+  "nav": {
+    "dashboard": "Painel",
+    "workspaces": "Espaços de trabalho",
+    "graph": "Grafo",
+    "search": "Busca",
+    "indexing": "Indexação",
+    "ingestionQueue": "Fila de ingestão",
+    "users": "Usuários",
+    "settings": "Configurações",
+    "admin": "Admin"
+  },
+  "topbar": {
+    "masterKey": "Chave mestra",
+    "adminSuffix": " · admin",
+    "changePassword": "Alterar senha",
+    "changePasswordTitle": "Alterar sua senha",
+    "signOut": "Sair",
+    "signOutTitle": "Sair e encerrar sua sessão",
+    "language": "Alterar idioma"
+  },
+  "status": {
+    "uploading": "Enviando",
+    "pending": "Pendente",
+    "processing": "Processando",
+    "done": "Concluído",
+    "failed": "Falhou",
+    "deleting": "Excluindo",
+    "rate_limited": "Limite atingido"
+  },
+  "workspaces": {
+    "title": "Espaços de trabalho",
+    "subtitle": "Contêineres de nível superior para suas coleções.",
+    "new": "Novo espaço de trabalho",
+    "editTitle": "Editar espaço de trabalho",
+    "namePlaceholder": "ex.: Pesquisa",
+    "descHint": "Opcional — o que vive neste espaço de trabalho.",
+    "empty": {
+      "title": "Nenhum espaço de trabalho ainda",
+      "canCreate": "Crie seu primeiro espaço de trabalho para começar a organizar coleções.",
+      "readonly": "Nenhum espaço de trabalho foi compartilhado com você ainda."
+    },
+    "error": "Não foi possível carregar os espaços de trabalho",
+    "toast": {
+      "created": "Espaço de trabalho “{{name}}” criado.",
+      "updated": "Espaço de trabalho atualizado.",
+      "deleted": "Espaço de trabalho “{{name}}” excluído."
+    },
+    "delete": {
+      "title": "Excluir espaço de trabalho",
+      "message": "Excluir “{{name}}”? Suas coleções, chaves de API e documentos serão removidos permanentemente. Isso não pode ser desfeito."
+    }
+  },
+  "collections": {
+    "title": "Coleções",
+    "subtitle": "Conjuntos de documentos pesquisáveis neste espaço de trabalho.",
+    "new": "Nova coleção",
+    "editTitle": "Editar coleção",
+    "namePlaceholder": "ex.: Relatórios do 3º tri",
+    "descHint": "Opcional — o que esta coleção contém.",
+    "empty": {
+      "title": "Nenhuma coleção ainda",
+      "canCreate": "Crie uma coleção para começar a ingerir e pesquisar documentos.",
+      "readonly": "Nenhuma coleção aqui ainda."
+    },
+    "error": "Não foi possível carregar as coleções",
+    "toast": {
+      "created": "Coleção “{{name}}” criada.",
+      "updated": "Coleção atualizada.",
+      "deleted": "Coleção “{{name}}” excluída."
+    },
+    "delete": {
+      "title": "Excluir coleção",
+      "message": "Excluir “{{name}}”? Seus documentos e vetores indexados serão removidos permanentemente. Isso não pode ser desfeito."
+    }
+  },
+  "documents": {
+    "title": "Documentos",
+    "subtitle": {
+      "canWrite": "Envie arquivos para ingeri-los nesta coleção.",
+      "readonly": "Navegue e pesquise documentos nesta coleção."
+    },
+    "error": "Não foi possível carregar os documentos",
+    "empty": {
+      "none": {
+        "title": "Nenhum documento ainda",
+        "description": "Solte arquivos na área acima para começar a ingeri-los."
+      },
+      "filtered": {
+        "title": "Nenhum documento correspondente",
+        "description": "Nenhum documento corresponde aos filtros atuais. Ajuste ou limpe-os para ver mais."
+      }
+    },
+    "retention": {
+      "label": "Temporário — excluir automaticamente após",
+      "aria": "Retenção em dias",
+      "day_one": "dia",
+      "day_other": "dias"
+    },
+    "delete": {
+      "title": "Excluir documento",
+      "message": "Excluir “{{name}}”? Seus chunks e vetores indexados serão removidos. Isso não pode ser desfeito."
+    },
+    "toast": {
+      "queued_one": "{{count}} arquivo na fila para ingestão.",
+      "queued_other": "{{count}} arquivos na fila para ingestão.",
+      "uploadError": "{{name}}: {{error}}",
+      "tooLarge": "{{name}} é maior que {{max}} MB e foi ignorado.",
+      "deleted": "“{{name}}” excluído.",
+      "reprocessing": "Reprocessando “{{name}}”.",
+      "indexing": "Indexando “{{name}}”."
+    },
+    "progress": {
+      "ingesting": "Ingerindo"
+    },
+    "row": {
+      "chunk_one": "{{count}} chunk",
+      "chunk_other": "{{count}} chunks",
+      "updated": "atualizado {{ago}}",
+      "original": "original: {{name}}",
+      "why": "Por quê?",
+      "hide": "Ocultar",
+      "downloadOriginalAria": "Baixar arquivo de origem original ({{name}})"
+    },
+    "index": {
+      "indexed": "Indexado",
+      "indexedTitle": "Indexado para busca BM25 / por palavra-chave",
+      "notIndexedTitle": "Fora do índice de palavras-chave — clique para indexar",
+      "index": "Indexar",
+      "indexing": "Indexando…"
+    },
+    "failure": {
+      "loading": "Carregando erro…",
+      "loadError": "Não foi possível carregar o detalhe do erro.",
+      "none": "Nenhum detalhe de erro registrado."
+    },
+    "filters": {
+      "searchPlaceholder": "Buscar nomes de arquivo…",
+      "statusAria": "Status",
+      "anyStatus": "Qualquer status",
+      "typeAria": "Tipo de arquivo",
+      "anyType": "Qualquer tipo",
+      "indexedAria": "Indexado",
+      "indexedAny": "Indexado: qualquer",
+      "indexed": "Indexado",
+      "notIndexed": "Não indexado",
+      "storageBackend": "Backend de armazenamento",
+      "embeddingModel": "Modelo de embedding",
+      "size": "Tamanho (bytes)",
+      "created": "Criado"
+    },
+    "upload": {
+      "uploading": "Enviando…",
+      "drag": "Arraste arquivos aqui, ou ",
+      "browse": "procurar",
+      "hint": "PDF, texto, Markdown · DOCX/PPTX com docling · até {{max}} MB cada"
+    }
+  },
+  "auth": {
+    "field": {
+      "username": "Usuário",
+      "password": "Senha"
+    },
+    "login": {
+      "subtitle": "Entre na sua conta.",
+      "submit": "Entrar",
+      "submitting": "Entrando…",
+      "useMaster": "Usar chave mestra",
+      "invalid": "Usuário ou senha inválidos."
+    },
+    "unlock": {
+      "subtitle": "Digite sua chave mestra para desbloquear o console.",
+      "masterKey": "Chave mestra",
+      "submit": "Desbloquear",
+      "submitting": "Verificando…",
+      "back": "Voltar para o login",
+      "rejected": "Essa chave foi rejeitada. Verifique e tente novamente."
+    },
+    "api": {
+      "checking": "Verificando API…",
+      "unreachable": "API inacessível",
+      "ready": "API pronta · {{model}}",
+      "modelFallback": "modelo"
+    },
+    "password": {
+      "current": "Senha atual",
+      "new": "Nova senha",
+      "confirm": "Confirmar nova senha",
+      "hint": "Pelo menos {{min}} caracteres.",
+      "tooShort": "Use pelo menos {{min}} caracteres.",
+      "mismatch": "As senhas não coincidem.",
+      "update": "Atualizar senha",
+      "setContinue": "Definir senha e continuar",
+      "changeTitle": "Alterar senha",
+      "updated": "Senha atualizada.",
+      "failed": "Não foi possível alterar a senha.",
+      "setTitle": "Definir uma nova senha",
+      "signedInAs": "Conectado como {{name}}. ",
+      "chooseNew": "Escolha uma nova senha para concluir o login."
+    }
+  },
+  "errors": {
+    "network": "Não foi possível conectar à API. O sistema está em execução?",
+    "sessionExpired": "Sessão expirada. Entre novamente.",
+    "accountDeactivated": "Sua conta foi desativada.",
+    "adminRequired": "Acesso de administrador necessário.",
+    "configNotLoaded": "Configuração ainda não carregada.",
+    "passwordChangeRequired": "É necessário alterar a senha."
+  },
+  "search": {
+    "title": "Busca",
+    "subtitle": "Busca híbrida BM25 + semântica em todas as suas coleções.",
+    "queryPlaceholder": "Busque em suas coleções…",
+    "submit": "Buscar",
+    "selectPrompt": "Selecione ao menos uma coleção para buscar.",
+    "topK": "Top-K",
+    "modeLabel": "Modo",
+    "mode": {
+      "hybrid": "Híbrida",
+      "semantic": "Semântica",
+      "bm25": "BM25",
+      "semantic_only": "Somente semântica"
+    },
+    "modeHint": {
+      "hybrid": "BM25 + semântica",
+      "semantic": "Similaridade vetorial",
+      "bm25": "Ranking por palavra-chave",
+      "semantic_only": "Índice BM25 indisponível — recorreu à busca semântica"
+    },
+    "alpha": "Alfa",
+    "alphaHint": "0 = somente BM25, 1 = somente semântica",
+    "hideFilters": "Ocultar filtros",
+    "filters": "Filtros",
+    "filename": "Nome do arquivo",
+    "filenamePlaceholder": "ex.: relatorio.pdf",
+    "commaSeparated": "Separadas por vírgula",
+    "tagsPlaceholder": "ex.: financeiro, 3tri",
+    "failed": "A busca falhou",
+    "empty": {
+      "title": "Busque em suas coleções",
+      "description": "Escolha uma ou mais coleções à esquerda, digite uma consulta e execute."
+    },
+    "noMatches": {
+      "title": "Nenhum resultado",
+      "description": "Nenhum chunk correspondeu a esta consulta nas coleções selecionadas. Tente ampliar a consulta ou afrouxar os filtros."
+    },
+    "timing": "embedding {{embed}}ms · busca {{search}}ms · total {{total}}ms",
+    "underDelivered": {
+      "withTopK": "Menos resultados que o solicitado (top_k {{topK}}). Um filtro seletivo ou um conjunto pequeno de candidatos deixou algumas vagas sem preencher.",
+      "noTopK": "Menos resultados que o solicitado. Um filtro seletivo ou um conjunto pequeno de candidatos deixou algumas vagas sem preencher."
+    },
+    "breakdown": {
+      "title": "Detalhamento por coleção",
+      "stats": "{{retrieved}} → {{returned}} · {{contributed}} no top-k"
+    },
+    "relevanceScore": "Pontuação de relevância",
+    "unknownFile": "Arquivo desconhecido",
+    "pages": "· pp.{{range}}",
+    "page": "· p.{{page}}",
+    "tree": {
+      "noWorkspaces": "Nenhum espaço de trabalho ainda.",
+      "collapse": "Recolher {{name}}",
+      "expand": "Expandir {{name}}",
+      "all": "Todas",
+      "noCollections": "Nenhuma coleção"
+    }
+  },
+  "tags": {
+    "subtitle": "Correlacione e filtre coleções e documentos neste espaço de trabalho.",
+    "new": "Nova tag",
+    "error": "Não foi possível carregar as tags",
+    "empty": {
+      "title": "Nenhuma tag ainda",
+      "description": "Crie uma tag para correlacionar e filtrar coleções e documentos."
+    },
+    "count": {
+      "col": "{{count}} col",
+      "doc": "{{count}} doc"
+    },
+    "workspaceBadge": "espaço de trabalho",
+    "mergeAria": "Mesclar {{name}}",
+    "itemsError": "Não foi possível carregar os itens",
+    "notAssigned": "Ainda não atribuída a nada.",
+    "none": "Nenhum",
+    "editTitle": "Editar tag",
+    "nameHint": "Convertida para minúsculas e sem espaços nas pontas ao salvar.",
+    "namePlaceholder": "ex.: financeiro",
+    "mergeTitle": "Mesclar tag",
+    "merge": "Mesclar",
+    "mergeInto": "Mesclar em",
+    "mergeIntro": {
+      "before": "Mova todas as atribuições de ",
+      "after": " para outra tag e depois exclua-a."
+    },
+    "noMergeTargets": "Nenhuma outra tag para mesclar.",
+    "selectTag": "Selecione uma tag…",
+    "filterByTag": "Filtrar por tag:",
+    "delete": {
+      "title": "Excluir tag",
+      "message": "Excluir “{{name}}”? Ela será removida de todas as coleções e documentos que marca. Isso não pode ser desfeito."
+    },
+    "toast": {
+      "created": "Tag “{{name}}” criada.",
+      "updated": "Tag atualizada.",
+      "merged": "Tags mescladas.",
+      "deleted": "Tag “{{name}}” excluída."
+    },
+    "picker": {
+      "add": "Tag",
+      "placeholder": "Filtrar ou criar…",
+      "create": "Criar “{{name}}”",
+      "empty": "Nenhuma tag ainda."
+    }
+  },
+  "graph": {
+    "title": "Grafo",
+    "subtitle": "Arquivos (os nós maiores) ligados pelas tags que compartilham. Nós de tag mais quentes são mais reutilizados. Arraste um nó para fixá-lo e destacá-lo, clique para soltá-lo; ajuste a força de repulsão ou redefina para recentralizar.",
+    "workspaceAria": "Espaço de trabalho",
+    "collectionAria": "Coleção",
+    "allCollections": "Todas as coleções",
+    "error": "Não foi possível carregar o grafo",
+    "empty": {
+      "title": "Nada para exibir no grafo ainda",
+      "description": "Marque alguns documentos neste escopo e eles aparecerão aqui, ligados pelas tags que compartilham."
+    },
+    "resetView": "Redefinir visualização",
+    "reset": "Redefinir",
+    "heat": {
+      "title": "Calor das tags",
+      "files_one": "{{count}} arquivo",
+      "files_other": "{{count}} arquivos"
+    },
+    "open": "Abrir",
+    "download": "Baixar",
+    "files": "Arquivos",
+    "node": {
+      "usedBy_one": "Usada por {{count}} arquivo.",
+      "usedBy_other": "Usada por {{count}} arquivos.",
+      "tags_one": "{{count}} tag.",
+      "tags_other": "{{count}} tags."
+    },
+    "zoomIn": "Aproximar",
+    "zoomOut": "Afastar",
+    "fitToView": "Ajustar à tela",
+    "repel": {
+      "title": "Força de repulsão — o quanto os nós se afastam entre si",
+      "aria": "Força de repulsão"
+    }
+  },
+  "dashboard": {
+    "title": "Painel",
+    "subtitle": "Saúde do sistema e atividade recente num relance.",
+    "health": {
+      "unreachable": "Não foi possível acessar o endpoint de saúde.",
+      "system": "Sistema",
+      "vectorStore": "Armazenamento de vetores",
+      "version": "Versão",
+      "uptime": "Tempo de atividade"
+    },
+    "viewAll": "Ver todos",
+    "goToWorkspaces": "Ir para Espaços de trabalho",
+    "recentActivity": "Atividade recente",
+    "noActivity": {
+      "title": "Nenhuma atividade recente",
+      "description": "A ingestão de documentos em suas coleções aparecerá aqui."
+    }
+  },
+  "indexing": {
+    "title": "Indexação",
+    "subtitle": "Cobertura do índice de palavras-chave por coleção. Um documento fica pesquisável assim que seus chunks são armazenados — o índice de palavras-chave é mantido automaticamente, então não há nada a reconstruir. Qualquer cobertura incompleta é uma ingestão que não terminou; repita as que falharam aqui.",
+    "error": "Não foi possível carregar o status de indexação",
+    "empty": {
+      "title": "Nada para indexar ainda",
+      "description": "Envie documentos para uma coleção e eles aparecerão aqui."
+    },
+    "unindexed_one": "{{count}} não indexado",
+    "unindexed_other": "{{count}} não indexados",
+    "coverage": "{{indexed}}/{{total}} indexados",
+    "pendingSuffix": " · {{count}} em ingestão",
+    "failedSuffix": " · {{count}} com falha",
+    "failedDocs_one": "{{count}} documento com falha",
+    "failedDocs_other": "{{count}} documentos com falha",
+    "retryFailed": "Repetir falhas",
+    "retryDialog": {
+      "title": "Repetir ingestões com falha",
+      "message": "Reingerir {{docs}} em “{{name}}”? Cada um é reenfileirado e tem seus embeddings gerados novamente a partir do arquivo armazenado — retomando de onde a última tentativa parou — consumindo cota do provedor de embeddings. Documentos ainda em ingestão são mantidos."
+    },
+    "toast": {
+      "requeued_one": "{{count}} documento reenfileirado.",
+      "requeued_other": "{{count}} documentos reenfileirados."
+    }
+  },
+  "queue": {
+    "retryFailed": "Repetir falhas",
+    "retryAllFailed": "Repetir todas as falhas",
+    "queueEmpty": "Fila vazia",
+    "paused": "· pausado pela cota do provedor de embeddings — repetindo em {{time}}",
+    "live": "Ao vivo",
+    "connecting": "Conectando…",
+    "error": "Não foi possível carregar a fila",
+    "openInCollectionTitle": "Abrir na coleção para editar ou excluir",
+    "open": "Abrir",
+    "unknownCollection": "Coleção desconhecida",
+    "chunks": "Chunks",
+    "chunksLatest": "(mais recentes)",
+    "chunkProgress": "{{current}} / {{total}} chunks",
+    "retryIn": "repetir em {{time}}",
+    "retrying": "repetindo…",
+    "parts": {
+      "ingesting": "{{count}} em ingestão",
+      "queued": "{{count}} na fila",
+      "waiting": "{{count}} aguardando limite de taxa"
+    },
+    "filters": {
+      "collectionPlaceholder": "Nome da coleção"
+    },
+    "empty": {
+      "filtered": {
+        "title": "Nenhum trabalho correspondente",
+        "description": "Nenhum trabalho de ingestão corresponde aos filtros atuais. Ajuste ou limpe-os para ver mais."
+      },
+      "none": {
+        "title": "Nenhuma ingestão ainda",
+        "description": "Envie um documento e seus chunks aparecerão aqui em tempo real conforme seus embeddings são gerados."
+      }
+    },
+    "retryDialog": {
+      "title": "Repetir documentos com falha",
+      "message": "Reexecutar a ingestão de todos os documentos com falha na fila? Cada um é reenfileirado de onde parou.",
+      "messageFiltered": "Reexecutar a ingestão de todos os documentos com falha que correspondem aos filtros atuais? Cada um é reenfileirado de onde parou."
+    },
+    "toast": {
+      "reenqueued_one": "{{count}} documento com falha reenfileirado.",
+      "reenqueued_other": "{{count}} documentos com falha reenfileirados.",
+      "noneMatched": "Nenhum documento com falha corresponde aos filtros atuais."
+    },
+    "phase": {
+      "parsing": "análise",
+      "embedding": "embedding",
+      "storing": "armazenamento",
+      "rate_limited": "limite atingido",
+      "done": "concluído",
+      "failed": "falhou"
+    }
+  },
+  "ui": {
+    "queryError": {
+      "title": "Não foi possível carregar isto"
+    },
+    "copyButton": {
+      "failed": "Falha ao copiar — selecione e copie manualmente."
+    },
+    "errorBoundary": {
+      "title": "Algo deu errado"
+    },
+    "pager": {
+      "range": "Mostrando {{from}}–{{to}} de {{total}}",
+      "previous": "Anterior",
+      "page": "Página {{page}} de {{pages}}",
+      "next": "Próxima"
+    }
+  },
+  "users": {
+    "title": "Usuários",
+    "subtitle": "Cada usuário entra com nome de usuário + senha (administradores têm o console completo; os demais são restritos por suas permissões) e pode ter uma chave de API para acesso programático/via MCP.",
+    "new": "Novo usuário",
+    "editTitle": "Editar usuário",
+    "admin": "Admin",
+    "error": "Não foi possível carregar os usuários",
+    "revoke": "Revogar",
+    "empty": {
+      "title": "Nenhum usuário ainda",
+      "description": "Crie um usuário, compartilhe a senha de uso único e conceda acesso a espaços de trabalho ou coleções."
+    },
+    "status": {
+      "active": "Ativo",
+      "inactive": "Inativo"
+    },
+    "actions": {
+      "permissions": "Permissões",
+      "apiKey": "Chave de API",
+      "edit": "Editar",
+      "delete": "Excluir"
+    },
+    "row": {
+      "key": "chave {{prefix}}…",
+      "noKey": "sem chave de API",
+      "created": "criado em {{date}}",
+      "rpm": "{{rpm}} rpm",
+      "activateAria": "Ativar usuário",
+      "deactivateAria": "Desativar usuário",
+      "manageAria": "Gerenciar {{username}}"
+    },
+    "toast": {
+      "updated": "Usuário atualizado.",
+      "deleted": "Usuário “{{username}}” excluído."
+    },
+    "reveal": {
+      "done": "Concluir",
+      "created": {
+        "title": "Usuário “{{username}}” criado",
+        "message": "Compartilhe esta senha de uso único com o usuário — será solicitado que ele a altere no primeiro acesso. Ela é exibida apenas uma vez."
+      },
+      "reset": {
+        "title": "Senha redefinida para “{{username}}”",
+        "message": "Compartilhe esta senha de uso único com o usuário — a senha antiga não funciona mais e ele definirá uma nova no próximo acesso. Exibida apenas uma vez."
+      }
+    },
+    "delete": {
+      "title": "Excluir usuário",
+      "message": "Excluir “{{username}}”? A chave de API e todas as permissões concedidas serão removidas permanentemente. Isso não pode ser desfeito."
+    },
+    "reset": {
+      "title": "Redefinir senha",
+      "message": "Redefinir a senha de “{{username}}”? A senha atual para de funcionar imediatamente e qualquer sessão ativa é encerrada."
+    },
+    "form": {
+      "usernameHint": "Usado para entrar. Letras, dígitos e . _ + @ - (3–64 caracteres).",
+      "usernameError": "Digite um nome de usuário válido (3–64 caracteres).",
+      "usernamePlaceholder": "ex.: joana",
+      "email": "E-mail",
+      "emailHint": "Opcional — deixe em branco se o usuário não tiver e-mail.",
+      "emailError": "Digite um endereço de e-mail válido.",
+      "emailPlaceholder": "ex.: joana@exemplo.com",
+      "nameHint": "Opcional — um nome de exibição.",
+      "rateLimit": "Limite de requisições MCP (requisições/min)",
+      "rateLimitHint": "Limita a chave deste usuário em /api/mcp. 0 = usar o padrão global.",
+      "activeLabel": "Ativo — um usuário inativo não pode entrar e sua chave de API para de funcionar",
+      "adminLabel": "Admin — acesso total ao console (gerenciar usuários, configurações e todos os espaços de trabalho)"
+    },
+    "key": {
+      "title": "Chave de API — {{name}}",
+      "revealMessage": "Copie esta chave agora — ela é exibida por completo apenas uma vez e não pode ser recuperada novamente.",
+      "used": "usada {{ago}}",
+      "neverUsed": "nunca usada",
+      "revokeAria": "Revogar chave",
+      "none": "Este usuário ainda não tem chave de API.",
+      "rotate": "Rotacionar chave",
+      "create": "Criar chave",
+      "rotateHint": "Rotacionar substitui a chave atual — a antiga para de funcionar imediatamente.",
+      "toast": {
+        "revoked": "Chave revogada."
+      }
+    },
+    "grants": {
+      "modalTitle": "Permissões — {{email}}",
+      "intro": {
+        "lead": "As permissões",
+        "emphasis": "restringem este usuário",
+        "rest": ". Sem nenhuma, ele vê e grava tudo. Um espaço de trabalho o limita a ele; adicione uma coleção (ou documento) para restringi-lo a apenas essa."
+      },
+      "error": "Não foi possível carregar as permissões",
+      "empty": {
+        "title": "Nenhuma permissão ainda",
+        "description": "Conceda a este usuário leitura ou escrita em um espaço de trabalho, coleção ou documento acima."
+      },
+      "resourceType": "Tipo de recurso",
+      "type": {
+        "workspace": "Espaço de trabalho",
+        "collection": "Coleção",
+        "document": "Documento",
+        "capability": "Capacidade"
+      },
+      "levelLabel": "Nível",
+      "readOption": "Leitura — buscar, listar, baixar",
+      "writeOption": "Escrita — ingerir, excluir (e ler)",
+      "read": "Leitura",
+      "write": "Escrita",
+      "capabilityLabel": {
+        "create_workspace": "Criar espaços de trabalho",
+        "manage_tags": "Gerenciar tags"
+      },
+      "capabilityHelp": {
+        "create_workspace": "Permite que este usuário crie novos espaços de trabalho — ele obtém acesso de escrita a todos os que criar.",
+        "manage_tags": "Permite que este usuário crie, edite, exclua e atribua tags em qualquer espaço de trabalho que possa ler."
+      },
+      "selectWorkspace": "Selecione um espaço de trabalho…",
+      "select": "Selecione…",
+      "pickWorkspaceFirst": "Escolha um espaço de trabalho primeiro",
+      "documentId": "ID do documento",
+      "documentIdHint": "O id do documento (ex.: doc_…), da sua coleção.",
+      "addPermission": "Adicionar permissão",
+      "deleted": "excluído",
+      "copyIdTitle": "Copiar id: {{id}}",
+      "copyIdAria": "Copiar id {{id}}",
+      "revokeAria": "Revogar permissão",
+      "toast": {
+        "granted": "Permissão concedida.",
+        "revoked": "Permissão revogada."
+      }
+    }
+  },
+  "settings": {
+    "title": "Configurações",
+    "subtitle": "Configuração de runtime, segurança do console e acesso MCP.",
+    "tabs": {
+      "general": "Geral",
+      "mcp": "Servidor MCP"
+    },
+    "config": {
+      "title": "Configuração",
+      "loadError": "Não foi possível carregar a configuração"
+    },
+    "runtime": {
+      "title": "Runtime",
+      "unreachable": "API inacessível",
+      "unreachableDetail": "Não foi possível acessar o endpoint de health.",
+      "service": "Serviço",
+      "version": "Versão",
+      "vectorStore": "Vector store",
+      "embeddingProvider": "Provedor de embedding",
+      "embeddingModel": "Modelo de embedding",
+      "uptime": "Uptime"
+    },
+    "security": {
+      "title": "Segurança",
+      "session": "Sessão",
+      "sessionNote": "Sua credencial é mantida apenas neste navegador. Saia para limpá-la.",
+      "signOut": "Sair"
+    },
+    "field": {
+      "provider": "Provedor",
+      "model": "Modelo",
+      "baseUrl": "URL base",
+      "apiKey": "Chave de API",
+      "apiKeyHint": "Somente escrita; nunca exibida após salvar.",
+      "keySetPlaceholder": "chave definida — deixe em branco para manter",
+      "aiStudioKey": "Chave do AI Studio",
+      "baseUrlRequiredOpenrouter": "obrigatório — ex.: https://openrouter.ai/api",
+      "baseUrlOllamaDefault": "em branco usa o padrão do Ollama",
+      "modelIdPlaceholder": "id do modelo",
+      "ollamaModelsHint": "Modelos do Ollama instalados",
+      "ollamaUnreachable": "Não foi possível acessar o Ollama",
+      "loadingModels": "Carregando modelos…",
+      "noModelsInstalled": "Nenhum modelo instalado"
+    },
+    "provider": {
+      "ollamaLocal": "Ollama (local)",
+      "sentenceTransformers": "Sentence-Transformers (em processo)",
+      "openaiCompat": "Compatível com OpenAI",
+      "gemini": "Google Gemini",
+      "geminiAiStudio": "Google Gemini (AI Studio)"
+    },
+    "storage": {
+      "blurb": "Onde os arquivos enviados são armazenados. O backend ativo é escolhido em <code>config.yaml</code> / <code>.env</code>. A retenção é definida <strong>por upload</strong> (1–30 dias, ou mantido permanentemente) na página de Documentos — não há configuração global de retenção.",
+      "title": "Armazenamento de objetos",
+      "activeBackend": "Backend ativo"
+    },
+    "parser": {
+      "title": "Análise de PDF",
+      "backend": "Backend",
+      "optionPymupdf": "PyMuPDF — rápido, um chunk por página",
+      "optionDocling": "docling — reconhece seções + tabelas/OCR",
+      "needsGpuSuffix": " (precisa de GPU)",
+      "gpuOlderThanAmpere": "Sua GPU ({{name}}, capacidade {{capability}}) é anterior à Ampere — ",
+      "noGpuDetected": "Nenhuma GPU detectada — ",
+      "doclingCpuWarn": "o docling roda na CPU e é <strong>muito lento</strong> (minutos por documento, e PDFs grandes podem atingir o limite de tempo de ingestão). O PyMuPDF é recomendado neste hardware.",
+      "save": "Salvar backend de PDF",
+      "detectingGpu": "Detectando GPU…",
+      "compatibleGpu": "GPU compatível detectada ({{name}}, capacidade {{capability}}).",
+      "gpuBelowAmpere": "A GPU {{name}} (capacidade {{capability}}) é anterior à Ampere.",
+      "noCompatibleGpu": "Nenhuma GPU compatível detectada.",
+      "recommendedLabel": "Recomendado:"
+    },
+    "embedding": {
+      "blurb": "O modelo de embedding transforma documentos em vetores. <strong>Alterar o provedor, o modelo ou as dimensões de saída muda o tamanho do vetor</strong> — as coleções existentes precisam ser reindexadas ou a busca vai quebrar. Alterar apenas uma chave de API é seguro.",
+      "title": "Modelo de embedding",
+      "modelHintGemini": "ex.: gemini-embedding-001",
+      "modelHint": "o id exato do modelo neste servidor",
+      "outputDim": "Dimensões de saída",
+      "outputDimHint": "opcional; em branco = 3072 completo",
+      "maxRpm": "Máx. de requisições / min",
+      "maxRpmHint": "limite os embeds para que a ingestão em massa fique dentro da cota do provedor (cada texto = uma requisição); em branco ou 0 = ilimitado",
+      "maxRpmPlaceholder": "0 (ilimitado)",
+      "reindexRequired": "Reindexação necessária após salvar",
+      "save": "Salvar configuração de embedding"
+    },
+    "reranker": {
+      "blurb": "O reranker reordena os chunks recuperados pela relevância real da consulta antes do corte final — o maior ganho de precisão. Ele é <strong>opcional e seguro</strong>: se o modelo ou um provedor remoto estiver indisponível, a busca volta para a ordenação normal.",
+      "title": "Reranker",
+      "enable": "Ativar reranking",
+      "providerCrossEncoder": "Cross-encoder (local, sem chave)",
+      "providerRerankApi": "API de rerank hospedada (Cohere / Jina / Voyage)",
+      "providerLlm": "LLM como reranker",
+      "llmProvider": "Provedor de LLM",
+      "modelHintRerankApi": "ex.: rerank-v3.5 (Cohere), jina-reranker-v2 (Jina)",
+      "modelHintGemini": "ex.: gemini-2.5-flash",
+      "modelHintLlm": "o id exato do modelo de chat",
+      "modelHintCrossEncoder": "um id de cross-encoder do HuggingFace; o padrão embutido funciona offline",
+      "baseUrlHintRerankApi": "obrigatório — o endpoint /rerank completo",
+      "topN": "Candidatos avaliados (top_n)",
+      "topNHint": "máximo de candidatos que o reranker avalia por coleção",
+      "save": "Salvar configuração do reranker"
+    },
+    "search": {
+      "blurb": "A expansão de adjacência puxa os chunks vizinhos a cada resultado e os mescla em um único trecho, para que uma seção que se estende por várias páginas volte inteira em vez de cortada no limite do top-K. É uma busca simples — sem chamadas extras a modelos — e <strong>segura</strong>: se não conseguir buscar, a busca retorna os resultados não expandidos.",
+      "title": "Recuperação",
+      "expand": "Expansão de adjacência (vizinhos)",
+      "expandHint": "chunks puxados de cada lado de um acerto; 0 = desativado, máx {{max}}",
+      "save": "Salvar configuração de busca"
+    },
+    "mcp": {
+      "blurb": "O endpoint do MCP (<code>/api/mcp</code>) limita cada chave de API a esta quantidade de requisições por minuto; a próxima requisição no mesmo minuto retorna <code>429</code>. Cada chave tem seu próprio orçamento, e o novo limite <strong>vale a partir da próxima requisição MCP</strong>",
+      "title": "Servidor MCP",
+      "rateLimit": "Limite de taxa (requisições / min por chave)",
+      "rateLimitHint": "por chave de API em /api/mcp; a próxima requisição no mesmo minuto retorna 429",
+      "save": "Salvar configuração de MCP"
+    },
+    "toast": {
+      "pdfSaved": "Backend de PDF salvo. Os serviços estão recarregando.",
+      "embeddingSaved": "Configuração de embedding salva. Os serviços estão recarregando.",
+      "rerankerSaved": "Configuração do reranker salva. Os serviços estão recarregando.",
+      "searchSaved": "Configuração de busca salva. Os serviços estão recarregando.",
+      "mcpSaved": "Configuração de MCP salva. Os serviços estão recarregando."
+    }
+  },
+  "mcp": {
+    "tagsNote": "As ferramentas de tags precisam da permissão manage_tags; atribuir a uma coleção/documento também exige escrita nele.",
+    "connection": {
+      "title": "Conexão",
+      "address": "Endereço do servidor",
+      "addressHintLocal": "Este endereço só funciona nesta máquina; o servidor não conseguiu determinar um IP de rede local para outros dispositivos usarem.",
+      "addressHint": "Detectado automaticamente a partir do servidor. Usado para montar o endpoint e os trechos abaixo.",
+      "endpoint": "Endpoint",
+      "transport": "Transporte",
+      "authHeader": "Cabeçalho de autenticação",
+      "authNote": "Envie uma <strong>chave de API</strong> em cada requisição como <authcode></authcode> ou <apikeycode></apikeycode> — a chave mestra, ou uma <strong>chave por usuário</strong> para acesso restrito (cada ferramenta respeita as permissões de leitura/escrita desse usuário). Substitua pela sua nos trechos abaixo; nada fica embutido aqui."
+    },
+    "clientSetup": {
+      "title": "Configuração do cliente",
+      "instructions": "Adicione isto à configuração de servidores do seu cliente MCP (substitua a chave de exemplo):",
+      "copyConfig": "Copiar config"
+    },
+    "skill": {
+      "title": "Skill do agente",
+      "download": "Baixar .zip",
+      "folderNote": "Uma pequena pasta de skill (<code>SKILL.md</code> + <code>references/</code>). Descompacte-a no diretório de skills do seu agente (ex.: <code>.claude/skills/embedbase/</code>) — o agente carrega o <code>SKILL.md</code> logo de início e abre um arquivo de referência apenas quando a tarefa precisa, para que uma sessão somente leitura nunca puxe as regras de upload.",
+      "bundled": "Incluídos:",
+      "unavailable": "A skill está indisponível — não foi possível carregar o catálogo de ferramentas."
+    },
+    "tools": {
+      "title": "Ferramentas",
+      "count_one": "{{count}} ferramenta · cada uma respeita suas permissões",
+      "count_other": "{{count}} ferramentas · cada uma respeita suas permissões",
+      "loadError": "Não foi possível carregar o catálogo de ferramentas"
+    },
+    "rest": {
+      "title": "Referência da API REST",
+      "blurb": "Uma referência OpenAPI independente apenas dos endpoints de integração — busca e acesso a espaços de trabalho/coleções/documentos — para a IA ler como padrão da API."
+    }
+  }
+}

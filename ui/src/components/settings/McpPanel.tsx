@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, ExternalLink } from 'lucide-react'
+import { Trans, useTranslation } from 'react-i18next'
 import { api } from '../../api/client'
 import { useMcpTools } from '../../api/hooks'
 import type { McpToolGroup } from '../../api/types'
@@ -191,6 +192,7 @@ ${TAGS_NOTE}
 
 /** A labelled monospace value row with a copy button. */
 function ValueRow({ label, value }: { label: string; value: string }) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs text-ink-faint">{label}</span>
@@ -198,7 +200,7 @@ function ValueRow({ label, value }: { label: string; value: string }) {
         <code className="flex-1 truncate rounded-control bg-canvas px-2 py-1.5 font-mono text-[13px] text-ink">
           {value}
         </code>
-        <CopyButton text={value} label="Copy" />
+        <CopyButton text={value} label={t('common.copy')} />
       </div>
     </div>
   )
@@ -212,6 +214,7 @@ function ValueRow({ label, value }: { label: string; value: string }) {
  * they track the registered tools automatically.
  */
 export function McpPanel() {
+  const { t } = useTranslation()
   // Address an MCP client uses to reach this server. Defaults to how the console
   // was reached; when that's localhost it only works on this machine, so we swap
   // in the LAN IP the server reports (same protocol/port) — reachable by other
@@ -247,16 +250,12 @@ export function McpPanel() {
   return (
     <div className="space-y-8">
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-ink">Connection</h2>
+        <h2 className="text-sm font-semibold text-ink">{t('mcp.connection.title')}</h2>
         <Card className="flex flex-col gap-4 p-5">
           <Field
-            label="Server address"
+            label={t('mcp.connection.address')}
             htmlFor="mcp-address"
-            hint={
-              isLocal
-                ? "This address only works on this machine; the server couldn't determine a LAN IP for other devices to use."
-                : 'Auto-detected from the server. Used to build the endpoint and snippets below.'
-            }
+            hint={isLocal ? t('mcp.connection.addressHintLocal') : t('mcp.connection.addressHint')}
           >
             <Input
               id="mcp-address"
@@ -265,58 +264,58 @@ export function McpPanel() {
               spellCheck={false}
             />
           </Field>
-          <ValueRow label="Endpoint" value={`${address}/api/mcp/`} />
+          <ValueRow label={t('mcp.connection.endpoint')} value={`${address}/api/mcp/`} />
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-ink-faint">Transport</span>
+              <span className="text-xs text-ink-faint">{t('mcp.connection.transport')}</span>
               <span className="font-mono text-[13px] text-ink">HTTP (streamable)</span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-ink-faint">Auth header</span>
+              <span className="text-xs text-ink-faint">{t('mcp.connection.authHeader')}</span>
               <span className="font-mono text-[13px] text-ink">Authorization: Bearer …</span>
             </div>
           </div>
           <p className="text-xs text-ink-muted">
-            Send an <strong>API key</strong> on every request as{' '}
-            <code className="font-mono">Authorization: Bearer &lt;key&gt;</code> or{' '}
-            <code className="font-mono">X-API-Key: &lt;key&gt;</code> — the master key, or a{' '}
-            <strong>per-user key</strong> for scoped access (each tool respects that user's
-            read/write grants). Substitute your own in the snippets below; nothing is embedded here.
+            <Trans
+              i18nKey="mcp.connection.authNote"
+              components={{
+                strong: <strong />,
+                authcode: <code className="font-mono">Authorization: Bearer &lt;key&gt;</code>,
+                apikeycode: <code className="font-mono">X-API-Key: &lt;key&gt;</code>,
+              }}
+            />
           </p>
         </Card>
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-ink">Client setup</h2>
+        <h2 className="text-sm font-semibold text-ink">{t('mcp.clientSetup.title')}</h2>
         <Card className="flex flex-col gap-3 p-5">
-          <p className="text-[13px] text-ink-muted">
-            Add this to your MCP client's server config (replace the placeholder key):
-          </p>
+          <p className="text-[13px] text-ink-muted">{t('mcp.clientSetup.instructions')}</p>
           <CodeBlock text={config} />
           <div className="flex justify-end">
-            <CopyButton text={config} label="Copy config" />
+            <CopyButton text={config} label={t('mcp.clientSetup.copyConfig')} />
           </div>
         </Card>
       </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-ink">Agent skill</h2>
+          <h2 className="text-sm font-semibold text-ink">{t('mcp.skill.title')}</h2>
           {skill && (
             <div className="flex gap-2">
               <Button variant="secondary" size="sm" onClick={downloadSkill}>
                 <Download className="h-4 w-4" />
-                Download .zip
+                {t('mcp.skill.download')}
               </Button>
             </div>
           )}
         </div>
         <p className="text-[13px] text-ink-muted">
-          A small skill folder (<code className="font-mono">SKILL.md</code> +{' '}
-          <code className="font-mono">references/</code>). Unzip it into your agent's skills directory
-          (e.g. <code className="font-mono">.claude/skills/embedbase/</code>) — the agent loads{' '}
-          <code className="font-mono">SKILL.md</code> up front and opens a reference file only when the
-          task needs it, so a read-only session never pulls in the upload rules.
+          <Trans
+            i18nKey="mcp.skill.folderNote"
+            components={{ code: <code className="font-mono" /> }}
+          />
         </p>
         {toolsQuery.isLoading ? (
           <Skeleton className="h-96 w-full rounded-card" />
@@ -326,7 +325,7 @@ export function McpPanel() {
               <CodeBlock text={skill} className="max-h-96" />
             </Card>
             <p className="text-xs text-ink-faint">
-              Bundled:{' '}
+              {t('mcp.skill.bundled')}{' '}
               {bundle
                 .filter((f) => f.name !== 'SKILL.md')
                 .map((f) => f.name)
@@ -334,24 +333,22 @@ export function McpPanel() {
             </p>
           </>
         ) : (
-          <p className="text-xs text-ink-muted">
-            The skill is unavailable — the tool catalogue could not be loaded.
-          </p>
+          <p className="text-xs text-ink-muted">{t('mcp.skill.unavailable')}</p>
         )}
       </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-ink">Tools</h2>
+          <h2 className="text-sm font-semibold text-ink">{t('mcp.tools.title')}</h2>
           {groups.length > 0 && (
             <span className="text-xs text-ink-faint">
-              {groups.reduce((n, g) => n + g.tools.length, 0)} tools · each respects your grants
+              {t('mcp.tools.count', { count: groups.reduce((n, g) => n + g.tools.length, 0) })}
             </span>
           )}
         </div>
         {toolsQuery.isError ? (
           <QueryError
-            title="Could not load the tool catalogue"
+            title={t('mcp.tools.loadError')}
             message={(toolsQuery.error as Error)?.message}
             onRetry={() => void toolsQuery.refetch()}
           />
@@ -366,31 +363,28 @@ export function McpPanel() {
                     {g.group}
                   </p>
                   <div className="space-y-3">
-                    {g.tools.map((t) => (
-                      <div key={t.name}>
+                    {g.tools.map((tool) => (
+                      <div key={tool.name}>
                         <p className="font-mono text-[13px] text-ink">
-                          {t.name}
-                          <span className="text-ink-faint">{t.signature}</span>
+                          {tool.name}
+                          <span className="text-ink-faint">{tool.signature}</span>
                         </p>
-                        <p className="mt-0.5 text-xs text-ink-muted">{t.summary}</p>
+                        <p className="mt-0.5 text-xs text-ink-muted">{tool.summary}</p>
                       </div>
                     ))}
                   </div>
                 </div>
               ))}
             </Card>
-            <p className="text-xs text-ink-muted">{TAGS_NOTE}</p>
+            <p className="text-xs text-ink-muted">{t('mcp.tagsNote')}</p>
           </>
         )}
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-ink">REST API reference</h2>
+        <h2 className="text-sm font-semibold text-ink">{t('mcp.rest.title')}</h2>
         <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
-          <p className="text-[13px] text-ink-muted">
-            A standalone OpenAPI reference of just the integration endpoints — search and
-            workspace/collection/document access — for the AI to read as the API standard.
-          </p>
+          <p className="text-[13px] text-ink-muted">{t('mcp.rest.blurb')}</p>
           <div className="flex gap-2">
             <a href="/api/reference" target="_blank" rel="noreferrer">
               <Button variant="secondary" size="sm">

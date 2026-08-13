@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { FileClock, FileText, FolderKanban, Layers } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useHealth, useRecentDocuments, useWorkspaces } from '../api/hooks'
 import type { Workspace } from '../api/types'
 import {
@@ -12,17 +13,19 @@ import {
   Skeleton,
   StatusBadge,
 } from '../components/ui'
+import { apiErrorMessage } from '../i18n/apiError'
 import { cn } from '../lib/cn'
 import { formatUptime, timeAgo } from '../lib/format'
 
 /** Operator landing page: system health, workspace overview, recent activity. */
 export default function Dashboard() {
+  const { t } = useTranslation()
   return (
     <div className="animate-fade-in space-y-8">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight text-ink">Dashboard</h1>
+        <h1 className="text-xl font-semibold tracking-tight text-ink">{t('dashboard.title')}</h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          System health and recent activity at a glance.
+          {t('dashboard.subtitle')}
         </p>
       </header>
       <HealthCard />
@@ -49,13 +52,14 @@ function StatItem({ label, value, online }: { label: string; value: string; onli
 
 /** `GET /healthz` summary card. */
 function HealthCard() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useHealth()
   if (isLoading) return <Skeleton className="h-36 w-full rounded-card" />
   if (isError || !data) {
     return (
       <QueryError
-        title="API unreachable"
-        message={error?.message ?? 'Could not reach the health endpoint.'}
+        title={t('auth.api.unreachable')}
+        message={error ? apiErrorMessage(error, t) : t('dashboard.health.unreachable')}
         onRetry={() => void refetch()}
       />
     )
@@ -64,7 +68,7 @@ function HealthCard() {
   return (
     <Card className="p-5">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-ink">System</h2>
+        <h2 className="text-sm font-semibold text-ink">{t('dashboard.health.system')}</h2>
         <span className="inline-flex items-center gap-1.5 text-xs">
           <span className={cn('h-1.5 w-1.5 rounded-full', healthy ? 'bg-ok' : 'bg-warn')} />
           <span className={healthy ? 'text-ok' : 'text-warn'}>{data.status}</span>
@@ -72,17 +76,17 @@ function HealthCard() {
       </div>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatItem
-          label="Vector store"
+          label={t('dashboard.health.vectorStore')}
           value={data.vector_store}
           online={data.vector_store_connected}
         />
         <StatItem
-          label="Embedding model"
+          label={t('documents.filters.embeddingModel')}
           value={data.embedding_model}
           online={data.embedding_model_loaded}
         />
-        <StatItem label="Version" value={data.version} />
-        <StatItem label="Uptime" value={formatUptime(data.uptime_seconds)} />
+        <StatItem label={t('dashboard.health.version')} value={data.version} />
+        <StatItem label={t('dashboard.health.uptime')} value={formatUptime(data.uptime_seconds)} />
       </div>
       <p className="mt-4 text-xs text-ink-faint">
         {data.embedding_provider} · {data.service}
@@ -93,23 +97,24 @@ function HealthCard() {
 
 /** Workspace count plus a compact grid of clickable workspace cards. */
 function WorkspaceOverview() {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useWorkspaces()
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-ink">
-          Workspaces
+          {t('workspaces.title')}
           {data && <span className="ml-1 font-normal text-ink-faint">· {data.length}</span>}
         </h2>
         <Link to="/workspaces" className="text-xs font-medium text-accent hover:underline">
-          View all
+          {t('dashboard.viewAll')}
         </Link>
       </div>
       <WorkspaceGrid
         data={data}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         onRetry={() => void refetch()}
       />
     </section>
@@ -130,6 +135,7 @@ function WorkspaceGrid({
   message?: string
   onRetry: () => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -139,16 +145,16 @@ function WorkspaceGrid({
       </div>
     )
   }
-  if (isError) return <QueryError title="Could not load workspaces" message={message} onRetry={onRetry} />
+  if (isError) return <QueryError title={t('workspaces.error')} message={message} onRetry={onRetry} />
   if (!data || data.length === 0) {
     return (
       <EmptyState
         icon={<FolderKanban className="h-7 w-7" />}
-        title="No workspaces yet"
-        description="Create your first workspace to start organising collections."
+        title={t('workspaces.empty.title')}
+        description={t('workspaces.empty.canCreate')}
         action={
           <Link to="/workspaces">
-            <Button size="sm">Go to Workspaces</Button>
+            <Button size="sm">{t('dashboard.goToWorkspaces')}</Button>
           </Link>
         }
       />
@@ -165,6 +171,7 @@ function WorkspaceGrid({
 
 /** A single workspace card that links through to its collections. */
 function WorkspaceCard({ ws }: { ws: Workspace }) {
+  const { t } = useTranslation()
   return (
     <Link to={`/workspaces/${ws.id}`}>
       <Card interactive className="flex h-full items-start gap-3 p-4">
@@ -185,7 +192,7 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
             )}
           </div>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
-            {ws.description || 'No description'}
+            {ws.description || t('common.noDescription')}
           </p>
         </div>
       </Card>
@@ -195,10 +202,11 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
 
 /** Most-recently-updated documents aggregated across every collection. */
 function RecentActivity() {
+  const { t } = useTranslation()
   const { documents, isLoading } = useRecentDocuments()
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-ink">Recent activity</h2>
+      <h2 className="mb-3 text-sm font-semibold text-ink">{t('dashboard.recentActivity')}</h2>
       <RecentActivityBody documents={documents} isLoading={isLoading} />
     </section>
   )
@@ -211,6 +219,7 @@ function RecentActivityBody({
   documents: ReturnType<typeof useRecentDocuments>['documents']
   isLoading: boolean
 }) {
+  const { t } = useTranslation()
   if (isLoading && documents.length === 0) {
     return (
       <Card className="divide-y divide-border">
@@ -227,8 +236,8 @@ function RecentActivityBody({
     return (
       <EmptyState
         icon={<FileClock className="h-7 w-7" />}
-        title="No recent activity"
-        description="Document ingestion across your collections will show up here."
+        title={t('dashboard.noActivity.title')}
+        description={t('dashboard.noActivity.description')}
       />
     )
   }

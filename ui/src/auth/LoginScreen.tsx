@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { LogIn } from 'lucide-react'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { ApiError } from '../api/client'
+import { apiErrorMessage } from '../i18n/apiError'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { useAuth } from './AuthContext'
 import { ApiReachLine, UnlockScreen, useApiReach } from './UnlockScreen'
 
 /** Maps a login failure to a coarse, credential-safe message. */
-function loginError(err: unknown): string {
-  if (err instanceof ApiError) {
-    return err.status === 401 ? 'Invalid username or password.' : err.message
-  }
-  return 'Could not reach the API. Is the stack running?'
+function loginError(err: unknown, t: TFunction): string {
+  if (err instanceof ApiError && err.status === 401) return t('auth.login.invalid')
+  return apiErrorMessage(err, t)
 }
 
 /**
@@ -19,6 +20,7 @@ function loginError(err: unknown): string {
  * swaps in the bootstrap {@link UnlockScreen} (break-glass admin access).
  */
 export function LoginScreen() {
+  const { t } = useTranslation()
   const { login } = useAuth()
   const { reach, health } = useApiReach()
   const [useMaster, setUseMaster] = useState(false)
@@ -42,7 +44,7 @@ export function LoginScreen() {
     try {
       await login(username.trim(), password)
     } catch (err) {
-      setError(loginError(err))
+      setError(loginError(err, t))
       setBusy(false)
     }
   }
@@ -55,23 +57,23 @@ export function LoginScreen() {
             <LogIn className="h-6 w-6" />
           </div>
           <h1 className="text-lg font-semibold tracking-tight text-ink">EmbedBase</h1>
-          <p className="mt-1 text-[13px] text-ink-muted">Sign in to your account.</p>
+          <p className="mt-1 text-[13px] text-ink-muted">{t('auth.login.subtitle')}</p>
         </div>
 
         <form onSubmit={onSubmit} className="flex flex-col gap-3">
           <Input
             ref={inputRef}
             autoComplete="username"
-            placeholder="Username"
-            aria-label="Username"
+            placeholder={t('auth.field.username')}
+            aria-label={t('auth.field.username')}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
           <Input
             type="password"
             autoComplete="current-password"
-            placeholder="Password"
-            aria-label="Password"
+            placeholder={t('auth.field.password')}
+            aria-label={t('auth.field.password')}
             aria-invalid={error != null}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -87,7 +89,7 @@ export function LoginScreen() {
             disabled={!username.trim() || !password}
             className="w-full"
           >
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? t('auth.login.submitting') : t('auth.login.submit')}
           </Button>
         </form>
 
@@ -96,7 +98,7 @@ export function LoginScreen() {
           onClick={() => setUseMaster(true)}
           className="mt-4 w-full text-center text-xs text-ink-faint hover:text-ink-muted"
         >
-          Use master key instead
+          {t('auth.login.useMaster')}
         </button>
 
         <ApiReachLine reach={reach} health={health} />

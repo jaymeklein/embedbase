@@ -12,35 +12,47 @@ export function formatUptime(seconds: number): string {
   return `${Math.floor(seconds)}s`
 }
 
-const UNITS: [limit: number, secs: number, label: string][] = [
-  [60, 1, 's'],
-  [3_600, 60, 'm'],
-  [86_400, 3_600, 'h'],
-  [2_592_000, 86_400, 'd'],
+// Thresholds → the Intl relative-time unit to render at that magnitude.
+const REL_UNITS: [limit: number, secs: number, unit: Intl.RelativeTimeFormatUnit][] = [
+  [60, 1, 'second'],
+  [3_600, 60, 'minute'],
+  [86_400, 3_600, 'hour'],
+  [2_592_000, 86_400, 'day'],
 ]
 
-/** Render an ISO timestamp as a coarse relative age (`3m ago`, `2h ago`). */
+/** Render an ISO timestamp as a coarse, localized relative age (`3 min ago` / `há 3 min`). */
 export function timeAgo(iso: string): string {
   const then = Date.parse(iso)
   if (Number.isNaN(then)) return '—'
   const diff = Math.max(0, (Date.now() - then) / 1_000)
-  for (const [limit, secs, label] of UNITS) {
-    if (diff < limit) return `${Math.floor(diff / secs)}${label} ago`
+  for (const [limit, secs, unit] of REL_UNITS) {
+    if (diff < limit) return relFmt.format(-Math.floor(diff / secs), unit)
   }
-  return `${Math.floor(diff / 2_592_000)}mo ago`
+  return relFmt.format(-Math.floor(diff / 2_592_000), 'month')
 }
 
-const DATE_FMT = new Intl.DateTimeFormat(undefined, {
+const DATE_FMT_OPTS: Intl.DateTimeFormatOptions = {
   year: 'numeric',
   month: 'short',
   day: 'numeric',
-})
+}
+// Both rebuilt on language change (see `i18n/index.ts`) so calendar dates and
+// relative ages track the active language; start on the runtime default until
+// i18n boots.
+let dateFmt = new Intl.DateTimeFormat(undefined, DATE_FMT_OPTS)
+let relFmt = new Intl.RelativeTimeFormat(undefined, { numeric: 'always', style: 'narrow' })
+
+/** Point the shared date + relative-time formatters at a new locale (e.g. `pt-BR`). */
+export function setDateLocale(locale: string): void {
+  dateFmt = new Intl.DateTimeFormat(locale, DATE_FMT_OPTS)
+  relFmt = new Intl.RelativeTimeFormat(locale, { numeric: 'always', style: 'narrow' })
+}
 
 /** Render an ISO timestamp as an absolute calendar date (`Jun 12, 2026`). */
 export function formatDate(iso: string): string {
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return '—'
-  return DATE_FMT.format(ms)
+  return dateFmt.format(ms)
 }
 
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB']

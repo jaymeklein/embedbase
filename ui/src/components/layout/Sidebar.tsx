@@ -1,11 +1,15 @@
 import { NavLink } from 'react-router-dom'
 import { DatabaseZap, FolderKanban, LayoutDashboard, ListChecks, Search, Settings, Users, Workflow, type LucideIcon } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 import { useAuth } from '../../auth/AuthContext'
 
+/** The nav labels are translation keys under `nav.*`, resolved at render. */
+type NavLabelKey = `nav.${'dashboard' | 'workspaces' | 'graph' | 'search' | 'indexing' | 'ingestionQueue' | 'users' | 'settings'}`
+
 interface NavItem {
   to: string
-  label: string
+  labelKey: NavLabelKey
   icon: LucideIcon
   end?: boolean
 }
@@ -13,31 +17,32 @@ interface NavItem {
 // Admins see the full console; a non-admin sees only the data plane they're scoped
 // to (browse their permitted workspaces + search + the ingestion views below).
 const ADMIN_MAIN: NavItem[] = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/workspaces', label: 'Workspaces', icon: FolderKanban },
-  { to: '/graph', label: 'Graph', icon: Workflow },
-  { to: '/search', label: 'Search', icon: Search },
+  { to: '/', labelKey: 'nav.dashboard', icon: LayoutDashboard, end: true },
+  { to: '/workspaces', labelKey: 'nav.workspaces', icon: FolderKanban },
+  { to: '/graph', labelKey: 'nav.graph', icon: Workflow },
+  { to: '/search', labelKey: 'nav.search', icon: Search },
 ]
 
 const USER_MAIN: NavItem[] = [
-  { to: '/workspaces', label: 'Workspaces', icon: FolderKanban },
-  { to: '/search', label: 'Search', icon: Search },
+  { to: '/workspaces', labelKey: 'nav.workspaces', icon: FolderKanban },
+  { to: '/search', labelKey: 'nav.search', icon: Search },
 ]
 
 // Ingestion views — everyone sees them; the backend scopes their contents to the
 // caller's grants (a non-admin sees only their permitted collections' jobs/coverage).
 const INGESTION_ITEMS: NavItem[] = [
-  { to: '/indexing', label: 'Indexing', icon: DatabaseZap },
-  { to: '/ingestion-queue', label: 'Ingestion Queue', icon: ListChecks },
+  { to: '/indexing', labelKey: 'nav.indexing', icon: DatabaseZap },
+  { to: '/ingestion-queue', labelKey: 'nav.ingestionQueue', icon: ListChecks },
 ]
 
 // Grouped under the "Admin" heading in the sidebar (admins only).
 const ADMIN_ITEMS: NavItem[] = [
-  { to: '/users', label: 'Users', icon: Users },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/users', labelKey: 'nav.users', icon: Users },
+  { to: '/settings', labelKey: 'nav.settings', icon: Settings },
 ]
 
-function NavItemLink({ to, label, icon: Icon, end }: NavItem) {
+function NavItemLink({ to, labelKey, icon: Icon, end }: NavItem) {
+  const { t } = useTranslation()
   return (
     <NavLink
       to={to}
@@ -52,12 +57,13 @@ function NavItemLink({ to, label, icon: Icon, end }: NavItem) {
       }
     >
       <Icon className="h-5 w-5" />
-      {label}
+      {t(labelKey)}
     </NavLink>
   )
 }
 
 export function Sidebar() {
+  const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const mainItems = [...(isAdmin ? ADMIN_MAIN : USER_MAIN), ...INGESTION_ITEMS]
   return (
@@ -75,7 +81,7 @@ export function Sidebar() {
         {isAdmin && (
           <>
             <div className="mt-4 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-              Admin
+              {t('nav.admin')}
             </div>
             {ADMIN_ITEMS.map((item) => (
               <NavItemLink key={item.to} {...item} />

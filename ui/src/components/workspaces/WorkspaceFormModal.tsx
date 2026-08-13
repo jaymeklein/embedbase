@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Workspace } from '../../api/types'
 import {
   Button,
@@ -54,6 +55,7 @@ export function WorkspaceFormModal({
   onSubmit: (values: WorkspaceFormValues) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const [values, setValues] = useState<WorkspaceFormValues>(DEFAULTS)
 
   // Reseed every time the modal opens so stale edits never leak between rows.
@@ -75,20 +77,20 @@ export function WorkspaceFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={editing ? 'Edit workspace' : 'New workspace'}
+      title={editing ? t('workspaces.editTitle') : t('workspaces.new')}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting} disabled={!name}>
-            {editing ? 'Save changes' : 'Create'}
+            {editing ? t('common.saveChanges') : t('common.create')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name" htmlFor="ws-name">
+        <Field label={t('common.name')} htmlFor="ws-name">
           <Input
             id="ws-name"
             autoFocus
@@ -97,21 +99,21 @@ export function WorkspaceFormModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit()
             }}
-            placeholder="e.g. Research"
+            placeholder={t('workspaces.namePlaceholder')}
           />
         </Field>
-        <Field label="Description" htmlFor="ws-desc" hint="Optional — what lives in this workspace.">
+        <Field label={t('common.description')} htmlFor="ws-desc" hint={t('workspaces.descHint')}>
           <Textarea
             id="ws-desc"
             value={values.description}
             onChange={(e) => set('description', e.target.value)}
-            placeholder="Optional"
+            placeholder={t('common.optional')}
           />
         </Field>
-        <Field label="Color">
+        <Field label={t('common.color')}>
           <ColorPicker value={values.color} onChange={(c) => set('color', c)} />
         </Field>
-        <Field label="Icon">
+        <Field label={t('common.icon')}>
           <IconPicker value={values.icon} onChange={(i) => set('icon', i)} />
         </Field>
       </div>

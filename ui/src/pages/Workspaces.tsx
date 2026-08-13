@@ -1,6 +1,7 @@
 import { useState, type MouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FolderKanban, Layers, Pencil, Plus, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useCreateWorkspace, useDeleteWorkspace, useUpdateWorkspace, useWorkspaces } from '../api/hooks'
 import type { Workspace, WorkspaceUpdate } from '../api/types'
 import {
@@ -19,6 +20,7 @@ import {
   type WorkspaceFormValues,
 } from '../components/workspaces/WorkspaceFormModal'
 import { useAuth } from '../auth/AuthContext'
+import { apiErrorMessage } from '../i18n/apiError'
 import { formatDate } from '../lib/format'
 
 /** Which dialog (if any) is currently open, plus the row it acts on. */
@@ -40,6 +42,7 @@ function changedFields(ws: Workspace, values: WorkspaceFormValues): WorkspaceUpd
 
 /** Workspaces index: list, create, edit, and delete the top-level containers. */
 export default function Workspaces() {
+  const { t } = useTranslation()
   const { canCreateWorkspaces } = useAuth()
   const { data, isLoading, isError, error, refetch } = useWorkspaces()
   const [dialog, setDialog] = useState<Dialog>({ kind: 'none' })
@@ -54,10 +57,10 @@ export default function Workspaces() {
     if (dialog.kind === 'create') {
       createMut.mutate(values, {
         onSuccess: () => {
-          toast.success(`Workspace “${values.name}” created.`)
+          toast.success(t('workspaces.toast.created', { name: values.name }))
           close()
         },
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       })
     } else if (dialog.kind === 'edit') {
       const body = changedFields(dialog.ws, values)
@@ -69,10 +72,10 @@ export default function Workspaces() {
         { id: dialog.ws.id, body },
         {
           onSuccess: () => {
-            toast.success('Workspace updated.')
+            toast.success(t('workspaces.toast.updated'))
             close()
           },
-          onError: (e) => toast.error(e.message),
+          onError: (e) => toast.error(apiErrorMessage(e, t)),
         },
       )
     }
@@ -83,10 +86,10 @@ export default function Workspaces() {
     const { ws } = dialog
     deleteMut.mutate(ws.id, {
       onSuccess: () => {
-        toast.success(`Workspace “${ws.name}” deleted.`)
+        toast.success(t('workspaces.toast.deleted', { name: ws.name }))
         close()
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
@@ -94,15 +97,13 @@ export default function Workspaces() {
     <div className="animate-fade-in space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">Workspaces</h1>
-          <p className="mt-1 text-[13px] text-ink-muted">
-            Top-level containers for your collections.
-          </p>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('workspaces.title')}</h1>
+          <p className="mt-1 text-[13px] text-ink-muted">{t('workspaces.subtitle')}</p>
         </div>
         {canCreateWorkspaces && (
           <Button onClick={() => setDialog({ kind: 'create' })}>
             <Plus className="h-5 w-5" />
-            New workspace
+            {t('workspaces.new')}
           </Button>
         )}
       </header>
@@ -111,7 +112,7 @@ export default function Workspaces() {
         data={data}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         canCreate={canCreateWorkspaces}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
@@ -129,10 +130,10 @@ export default function Workspaces() {
 
       <ConfirmDialog
         open={dialog.kind === 'delete'}
-        title="Delete workspace"
+        title={t('workspaces.delete.title')}
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.ws.name}”? Its collections, API keys, and documents are permanently removed. This cannot be undone.`
+            ? t('workspaces.delete.message', { name: dialog.ws.name })
             : ''
         }
         loading={deleteMut.isPending}
@@ -165,6 +166,7 @@ function WorkspaceList({
   onEdit: (ws: Workspace) => void
   onDelete: (ws: Workspace) => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -175,19 +177,15 @@ function WorkspaceList({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load workspaces" message={message} onRetry={onRetry} />
+    return <QueryError title={t('workspaces.error')} message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
     return (
       <EmptyState
         icon={<FolderKanban className="h-7 w-7" />}
-        title="No workspaces yet"
-        description={
-          canCreate
-            ? 'Create your first workspace to start organising collections.'
-            : 'No workspaces are shared with you yet.'
-        }
-        action={canCreate ? <Button onClick={onCreate}>New workspace</Button> : undefined}
+        title={t('workspaces.empty.title')}
+        description={canCreate ? t('workspaces.empty.canCreate') : t('workspaces.empty.readonly')}
+        action={canCreate ? <Button onClick={onCreate}>{t('workspaces.new')}</Button> : undefined}
       />
     )
   }
@@ -210,6 +208,7 @@ function WorkspaceCard({
   onEdit: (ws: Workspace) => void
   onDelete: (ws: Workspace) => void
 }) {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const stop = (fn: () => void) => (e: MouseEvent) => {
     e.stopPropagation()
@@ -239,18 +238,20 @@ function WorkspaceCard({
             )}
           </div>
           <p className="mt-0.5 truncate text-xs text-ink-muted">
-            {ws.description || 'No description'}
+            {ws.description || t('common.noDescription')}
           </p>
         </div>
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-xs text-ink-faint">Created {formatDate(ws.created_at)}</span>
+        <span className="text-xs text-ink-faint">
+          {t('common.created', { date: formatDate(ws.created_at) })}
+        </span>
         {ws.can_write && (
           <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Edit ${ws.name}`}
+              aria-label={t('common.editAria', { name: ws.name })}
               onClick={stop(() => onEdit(ws))}
               className="h-10 w-10 px-0"
             >
@@ -259,7 +260,7 @@ function WorkspaceCard({
             <Button
               variant="ghost"
               size="sm"
-              aria-label={`Delete ${ws.name}`}
+              aria-label={t('common.deleteAria', { name: ws.name })}
               onClick={stop(() => onDelete(ws))}
               className="h-10 w-10 px-0 hover:text-err"
             >

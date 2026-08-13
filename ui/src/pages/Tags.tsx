@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ChevronRight, GitMerge, Pencil, Plus, Tags as TagsIcon, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   useCreateTag,
   useDeleteTag,
@@ -11,6 +12,7 @@ import {
   useWorkspace,
 } from '../api/hooks'
 import type { Tag, TagUpdate } from '../api/types'
+import { apiErrorMessage } from '../i18n/apiError'
 import {
   Badge,
   Button,
@@ -38,6 +40,7 @@ type Dialog =
 
 /** Workspace tags: list with counts, create / rename / recolor / merge / delete, correlation view. */
 export default function Tags() {
+  const { t } = useTranslation()
   const { wsId = '' } = useParams()
   const workspace = useWorkspace(wsId)
   const { data, isLoading, isError, error, refetch } = useTags(wsId)
@@ -54,10 +57,10 @@ export default function Tags() {
     if (dialog.kind === 'create') {
       createMut.mutate(values, {
         onSuccess: () => {
-          toast.success(`Tag “${values.name}” created.`)
+          toast.success(t('tags.toast.created', { name: values.name }))
           close()
         },
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       })
     } else if (dialog.kind === 'edit') {
       const body = changedFields(dialog.tag, values)
@@ -66,10 +69,10 @@ export default function Tags() {
         { tagId: dialog.tag.id, body },
         {
           onSuccess: () => {
-            toast.success('Tag updated.')
+            toast.success(t('tags.toast.updated'))
             close()
           },
-          onError: (e) => toast.error(e.message),
+          onError: (e) => toast.error(apiErrorMessage(e, t)),
         },
       )
     }
@@ -81,10 +84,10 @@ export default function Tags() {
       { source_id: dialog.tag.id, target_id: targetId },
       {
         onSuccess: () => {
-          toast.success('Tags merged.')
+          toast.success(t('tags.toast.merged'))
           close()
         },
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -94,10 +97,10 @@ export default function Tags() {
     const { tag } = dialog
     deleteMut.mutate(tag.id, {
       onSuccess: () => {
-        toast.success(`Tag “${tag.name}” deleted.`)
+        toast.success(t('tags.toast.deleted', { name: tag.name }))
         close()
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
 
@@ -105,26 +108,26 @@ export default function Tags() {
     <div className="animate-fade-in space-y-6">
       <nav className="flex items-center gap-1.5 text-xs text-ink-muted">
         <Link to="/workspaces" className="hover:text-ink">
-          Workspaces
+          {t('nav.workspaces')}
         </Link>
         <ChevronRight className="h-4 w-4 text-ink-faint" />
         <Link to={`/workspaces/${wsId}`} className="hover:text-ink">
           {workspace.data?.name ?? '…'}
         </Link>
         <ChevronRight className="h-4 w-4 text-ink-faint" />
-        <span className="text-ink">Tags</span>
+        <span className="text-ink">{t('common.tags')}</span>
       </nav>
 
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">Tags</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-ink">{t('common.tags')}</h1>
           <p className="mt-1 text-[13px] text-ink-muted">
-            Correlate and filter collections and documents across this workspace.
+            {t('tags.subtitle')}
           </p>
         </div>
         <Button onClick={() => setDialog({ kind: 'create' })}>
           <Plus className="h-5 w-5" />
-          New tag
+          {t('tags.new')}
         </Button>
       </header>
 
@@ -133,7 +136,7 @@ export default function Tags() {
         data={data}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         onRetry={() => void refetch()}
         onCreate={() => setDialog({ kind: 'create' })}
         onEdit={(tag) => setDialog({ kind: 'edit', tag })}
@@ -160,10 +163,10 @@ export default function Tags() {
 
       <ConfirmDialog
         open={dialog.kind === 'delete'}
-        title="Delete tag"
+        title={t('tags.delete.title')}
         message={
           dialog.kind === 'delete'
-            ? `Delete “${dialog.tag.name}”? It is removed from every collection and document it tags. This cannot be undone.`
+            ? t('tags.delete.message', { name: dialog.tag.name })
             : ''
         }
         loading={deleteMut.isPending}
@@ -205,6 +208,7 @@ function TagList({
   onMerge: (tag: Tag) => void
   onDelete: (tag: Tag) => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -215,15 +219,15 @@ function TagList({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load tags" message={message} onRetry={onRetry} />
+    return <QueryError title={t('tags.error')} message={message} onRetry={onRetry} />
   }
   if (!data || data.length === 0) {
     return (
       <EmptyState
         icon={<TagsIcon className="h-7 w-7" />}
-        title="No tags yet"
-        description="Create a tag to correlate and filter collections and documents."
-        action={<Button onClick={onCreate}>New tag</Button>}
+        title={t('tags.empty.title')}
+        description={t('tags.empty.description')}
+        action={<Button onClick={onCreate}>{t('tags.new')}</Button>}
       />
     )
   }
@@ -257,6 +261,7 @@ function TagRow({
   onMerge: (tag: Tag) => void
   onDelete: (tag: Tag) => void
 }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   return (
     <Card className="group p-3">
@@ -269,21 +274,21 @@ function TagRow({
         >
           <TagChip name={tag.name} color={tag.color} />
           <span className="flex gap-1.5 text-ink-muted">
-            <Badge>{tag.collection_count} col</Badge>
-            <Badge>{tag.document_count} doc</Badge>
-            {tag.workspace_count > 0 && <Badge>workspace</Badge>}
+            <Badge>{t('tags.count.col', { count: tag.collection_count })}</Badge>
+            <Badge>{t('tags.count.doc', { count: tag.document_count })}</Badge>
+            {tag.workspace_count > 0 && <Badge>{t('tags.workspaceBadge')}</Badge>}
           </span>
         </button>
         <div className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <Button variant="ghost" size="sm" aria-label={`Edit ${tag.name}`}
+          <Button variant="ghost" size="sm" aria-label={t('common.editAria', { name: tag.name })}
             onClick={() => onEdit(tag)} className="h-7 w-7 px-0">
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="sm" aria-label={`Merge ${tag.name}`}
+          <Button variant="ghost" size="sm" aria-label={t('tags.mergeAria', { name: tag.name })}
             onClick={() => onMerge(tag)} className="h-7 w-7 px-0">
             <GitMerge className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="sm" aria-label={`Delete ${tag.name}`}
+          <Button variant="ghost" size="sm" aria-label={t('common.deleteAria', { name: tag.name })}
             onClick={() => onDelete(tag)} className="h-7 w-7 px-0 hover:text-err">
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -296,35 +301,41 @@ function TagRow({
 
 /** Correlated collections + documents for one tag, loaded on first expand. */
 function ItemsPanel({ wsId, tag }: { wsId: string; tag: Tag }) {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useTagItems(wsId, tag.id, true)
   if (isLoading) return <Skeleton className="mt-3 h-16 rounded-control" />
   if (isError) {
     return (
       <div className="mt-3">
-        <QueryError title="Could not load items" message={error?.message} onRetry={() => void refetch()} />
+        <QueryError
+          title={t('tags.itemsError')}
+          message={error ? apiErrorMessage(error, t) : undefined}
+          onRetry={() => void refetch()}
+        />
       </div>
     )
   }
   const empty = !data || (data.collections.length === 0 && data.documents.length === 0)
   if (empty) {
-    return <p className="mt-3 text-xs text-ink-faint">Not assigned to anything yet.</p>
+    return <p className="mt-3 text-xs text-ink-faint">{t('tags.notAssigned')}</p>
   }
   return (
     <div className="mt-3 grid grid-cols-1 gap-3 border-t border-border pt-3 text-[13px] sm:grid-cols-2">
-      <ItemColumn label="Collections" items={data.collections.map((c) => c.name)} />
-      <ItemColumn label="Documents" items={data.documents.map((d) => d.filename)} />
+      <ItemColumn label={t('collections.title')} items={data.collections.map((c) => c.name)} />
+      <ItemColumn label={t('documents.title')} items={data.documents.map((d) => d.filename)} />
     </div>
   )
 }
 
 function ItemColumn({ label, items }: { label: string; items: string[] }) {
+  const { t } = useTranslation()
   return (
     <div>
       <p className="mb-1 text-xs font-medium text-ink-muted">
         {label} ({items.length})
       </p>
       {items.length === 0 ? (
-        <p className="text-xs text-ink-faint">None</p>
+        <p className="text-xs text-ink-faint">{t('tags.none')}</p>
       ) : (
         <ul className="space-y-0.5">
           {items.map((name, i) => (
@@ -352,6 +363,7 @@ function TagFormModal({
   onSubmit: (values: { name: string; color: string }) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const [name, setName] = useState('')
   const [color, setColor] = useState<string>(SWATCHES[6])
 
@@ -372,20 +384,20 @@ function TagFormModal({
     <Modal
       open={open}
       onClose={onClose}
-      title={editing ? 'Edit tag' : 'New tag'}
+      title={editing ? t('tags.editTitle') : t('tags.new')}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting} disabled={!trimmed}>
-            {editing ? 'Save changes' : 'Create'}
+            {editing ? t('common.saveChanges') : t('common.create')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
-        <Field label="Name" htmlFor="tag-name" hint="Lowercased and trimmed on save.">
+        <Field label={t('common.name')} htmlFor="tag-name" hint={t('tags.nameHint')}>
           <Input
             id="tag-name"
             autoFocus
@@ -394,10 +406,10 @@ function TagFormModal({
             onKeyDown={(e) => {
               if (e.key === 'Enter') submit()
             }}
-            placeholder="e.g. finance"
+            placeholder={t('tags.namePlaceholder')}
           />
         </Field>
-        <Field label="Color">
+        <Field label={t('common.color')}>
           <ColorPicker value={color} onChange={setColor} />
         </Field>
       </div>
@@ -421,8 +433,9 @@ function MergeModal({
   onMerge: (targetId: string) => void
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const [target, setTarget] = useState('')
-  const candidates = tags.filter((t) => t.id !== source?.id)
+  const candidates = tags.filter((tag) => tag.id !== source?.id)
 
   useEffect(() => {
     if (open) setTarget('')
@@ -432,32 +445,33 @@ function MergeModal({
     <Modal
       open={open}
       onClose={onClose}
-      title="Merge tag"
+      title={t('tags.mergeTitle')}
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={() => target && onMerge(target)} loading={submitting} disabled={!target}>
-            Merge
+            {t('tags.merge')}
           </Button>
         </>
       }
     >
       <div className="flex flex-col gap-4">
         <p className="text-[13px] text-ink-muted">
-          Move every assignment of <span className="font-medium text-ink">{source?.name}</span> onto
-          another tag, then delete it.
+          {t('tags.mergeIntro.before')}
+          <span className="font-medium text-ink">{source?.name}</span>
+          {t('tags.mergeIntro.after')}
         </p>
-        <Field label="Merge into" htmlFor="merge-target">
+        <Field label={t('tags.mergeInto')} htmlFor="merge-target">
           {candidates.length === 0 ? (
-            <p className="text-xs text-ink-faint">No other tags to merge into.</p>
+            <p className="text-xs text-ink-faint">{t('tags.noMergeTargets')}</p>
           ) : (
             <Select id="merge-target" value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">Select a tag…</option>
-              {candidates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
+              <option value="">{t('tags.selectTag')}</option>
+              {candidates.map((tag) => (
+                <option key={tag.id} value={tag.id}>
+                  {tag.name}
                 </option>
               ))}
             </Select>

@@ -13,6 +13,7 @@ import {
   X,
   XCircle,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   Badge,
   Button,
@@ -25,6 +26,7 @@ import {
   useToast,
 } from '../components/ui'
 import type { BadgeStatus } from '../components/ui'
+import { apiErrorMessage } from '../i18n/apiError'
 import { Pager } from '../components/Pager'
 import {
   FILE_TYPES,
@@ -51,6 +53,7 @@ const PAGE_SIZE = 50
  * jobs start and settle, so page 1 stays current without polling.
  */
 export default function IngestionQueue() {
+  const { t } = useTranslation()
   // A non-admin views the queue scoped to their grants (the backend filters jobs, stats, and the
   // live stream); retrying re-ingests documents, so it stays an admin action.
   const { isAdmin } = useAuth()
@@ -76,12 +79,12 @@ export default function IngestionQueue() {
       onSuccess: ({ retried }) => {
         toast.success(
           retried > 0
-            ? `Re-enqueued ${retried} failed document${retried === 1 ? '' : 's'}.`
-            : 'No failed documents matched the current filters.',
+            ? t('queue.toast.reenqueued', { count: retried })
+            : t('queue.toast.noneMatched'),
         )
         setConfirmRetry(false)
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
   }
   const lastPage = Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)
@@ -119,7 +122,7 @@ export default function IngestionQueue() {
         filtered={hasFilters}
         isLoading={isLoading}
         isError={isError}
-        message={error?.message}
+        message={error ? apiErrorMessage(error, t) : undefined}
         onRetry={() => void refetch()}
       />
       <Pager
@@ -133,13 +136,13 @@ export default function IngestionQueue() {
 
       <ConfirmDialog
         open={confirmRetry}
-        title="Retry failed documents"
+        title={t('queue.retryDialog.title')}
         message={
           hasFilters
-            ? 'Re-run ingestion for every failed document matching the current filters? Each is re-queued from where it left off.'
-            : 'Re-run ingestion for every failed document in the queue? Each is re-queued from where it left off.'
+            ? t('queue.retryDialog.messageFiltered')
+            : t('queue.retryDialog.message')
         }
-        confirmLabel="Retry failed"
+        confirmLabel={t('queue.retryFailed')}
         loading={retryMut.isPending}
         onConfirm={retryAllFailed}
         onClose={() => setConfirmRetry(false)}
@@ -172,27 +175,27 @@ function Header({
   retrying: boolean
   onRetryAll: () => void
 }) {
+  const { t } = useTranslation()
   const processing = counts.processing ?? 0
   const pending = counts.pending ?? 0
   const waiting = counts.rate_limited ?? 0
   const parts: string[] = []
-  if (processing > 0) parts.push(`${processing} ingesting`)
-  if (pending > 0) parts.push(`${pending} queued`)
-  if (waiting > 0) parts.push(`${waiting} waiting on rate limit`)
+  if (processing > 0) parts.push(t('queue.parts.ingesting', { count: processing }))
+  if (pending > 0) parts.push(t('queue.parts.queued', { count: pending }))
+  if (waiting > 0) parts.push(t('queue.parts.waiting', { count: waiting }))
   return (
     <div className="flex items-center justify-between gap-3">
       <div>
         <h1 className="flex items-center gap-2 text-xl font-semibold text-ink">
           <ListChecks className="h-6 w-6 text-accent" />
-          Ingestion Queue
+          {t('nav.ingestionQueue')}
         </h1>
         <p className="mt-1 text-[13px] text-ink-muted">
-          {parts.length ? parts.join(' · ') : 'Queue empty'}
+          {parts.length ? parts.join(' · ') : t('queue.queueEmpty')}
           {pausedSeconds > 0 && (
             <span className="text-warn">
               {' '}
-              · paused on the embedding provider's quota — retrying in{' '}
-              {formatBackoff(pausedSeconds)}
+              {t('queue.paused', { time: formatBackoff(pausedSeconds) })}
             </span>
           )}
         </p>
@@ -203,12 +206,12 @@ function Header({
         {canRetryAll && (
           <Button variant="secondary" size="sm" onClick={onRetryAll} disabled={retrying}>
             <RotateCcw className={cn('h-4 w-4', retrying && 'animate-spin')} />
-            {retrying ? 'Retrying…' : 'Retry all failed'}
+            {retrying ? t('common.retrying') : t('queue.retryAllFailed')}
           </Button>
         )}
         <span className="flex items-center gap-1.5 text-xs text-ink-faint">
           <span className={cn('h-2 w-2 rounded-full', connected ? 'bg-ok' : 'bg-ink-faint/50')} />
-          {connected ? 'Live' : 'Connecting…'}
+          {connected ? t('queue.live') : t('queue.connecting')}
         </span>
       </div>
     </div>
@@ -237,6 +240,7 @@ function JobFilters({
   value: JobFilterValues
   onChange: (next: JobFilterValues) => void
 }) {
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const set = <K extends keyof JobFilterValues>(key: K, v: JobFilterValues[K]) =>
     onChange({ ...value, [key]: v })
@@ -249,34 +253,34 @@ function JobFilters({
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-faint" />
           <input
             className={`${inputCls} w-full pl-8`}
-            placeholder="Search filenames…"
+            placeholder={t('documents.filters.searchPlaceholder')}
             value={value.filename ?? ''}
             onChange={(e) => set('filename', text(e.target.value))}
           />
         </div>
         <select
           className={inputCls}
-          aria-label="Status"
+          aria-label={t('documents.filters.statusAria')}
           value={value.status ?? ''}
           onChange={(e) => set('status', text(e.target.value))}
         >
-          <option value="">Any status</option>
+          <option value="">{t('documents.filters.anyStatus')}</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {t(`status.${s}`)}
             </option>
           ))}
         </select>
         <select
           className={inputCls}
-          aria-label="File type"
+          aria-label={t('documents.filters.typeAria')}
           value={value.file_type ?? ''}
           onChange={(e) => set('file_type', text(e.target.value))}
         >
-          <option value="">Any type</option>
-          {FILE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
+          <option value="">{t('documents.filters.anyType')}</option>
+          {FILE_TYPES.map((ft) => (
+            <option key={ft} value={ft}>
+              {ft}
             </option>
           ))}
         </select>
@@ -288,7 +292,7 @@ function JobFilters({
           }`}
         >
           <SlidersHorizontal className="h-4 w-4" />
-          More
+          {t('common.more')}
         </button>
         {active && (
           <button
@@ -297,7 +301,7 @@ function JobFilters({
             className="inline-flex h-9 items-center gap-1 rounded-control px-2 text-[13px] text-ink-muted hover:text-ink"
           >
             <X className="h-4 w-4" />
-            Clear
+            {t('common.clear')}
           </button>
         )}
       </div>
@@ -306,12 +310,12 @@ function JobFilters({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-border/60 bg-canvas/50 p-2.5">
           <input
             className={inputCls}
-            placeholder="Collection name"
+            placeholder={t('queue.filters.collectionPlaceholder')}
             value={value.collection ?? ''}
             onChange={(e) => set('collection', text(e.target.value))}
           />
           <label className="flex items-center gap-1.5 text-xs text-ink-muted">
-            Created
+            {t('documents.filters.created')}
             <input
               type="date"
               className={`${inputCls} w-40`}
@@ -353,6 +357,7 @@ function QueueBody({
   message?: string
   onRetry: () => void
 }) {
+  const { t } = useTranslation()
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -366,20 +371,20 @@ function QueueBody({
     )
   }
   if (isError) {
-    return <QueryError title="Could not load the queue" message={message} onRetry={onRetry} />
+    return <QueryError title={t('queue.error')} message={message} onRetry={onRetry} />
   }
   if (jobs.length === 0) {
     return filtered ? (
       <EmptyState
         icon={<ListChecks className="h-7 w-7" />}
-        title="No matching jobs"
-        description="No ingestion jobs match the current filters. Adjust or clear them to see more."
+        title={t('queue.empty.filtered.title')}
+        description={t('queue.empty.filtered.description')}
       />
     ) : (
       <EmptyState
         icon={<ListChecks className="h-7 w-7" />}
-        title="No ingestions yet"
-        description="Upload a document and its chunks will stream here in real time as they're embedded."
+        title={t('queue.empty.none.title')}
+        description={t('queue.empty.none.description')}
       />
     )
   }
@@ -418,15 +423,16 @@ function OpenInCollection({
   collectionId: string
   filename: string
 }) {
+  const { t } = useTranslation()
   if (!workspaceId) return null
   return (
     <Link
       to={`/workspaces/${workspaceId}/collections/${collectionId}?filename=${encodeURIComponent(filename)}`}
-      title="Open in collection to edit or delete"
+      title={t('queue.openInCollectionTitle')}
       className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink-muted hover:text-ink"
     >
       <FolderOpen className="h-3.5 w-3.5" />
-      Open
+      {t('queue.open')}
     </Link>
   )
 }
@@ -434,6 +440,7 @@ function OpenInCollection({
 /** A static queue row for a job with no live stream (finished, failed, or not currently in the
  *  live buffer). The failure reason ships in the row payload, so no extra request is needed. */
 function JobRow({ job }: { job: JobSummary }) {
+  const { t } = useTranslation()
   const { isAdmin } = useAuth()
   const [showError, setShowError] = useState(false)
   const failed = job.status === 'failed'
@@ -447,9 +454,9 @@ function JobRow({ job }: { job: JobSummary }) {
           <div className="min-w-0">
             <p className="truncate text-[13px] font-medium text-ink">{job.filename}</p>
             <p className="truncate text-xs text-ink-faint">
-              {job.collection_name ?? 'Unknown collection'} · {job.file_type.toUpperCase()}
+              {job.collection_name ?? t('queue.unknownCollection')} · {job.file_type.toUpperCase()}
               {job.chunk_count != null &&
-                ` · ${job.chunk_count} chunk${job.chunk_count === 1 ? '' : 's'}`}{' '}
+                ` · ${t('documents.row.chunk', { count: job.chunk_count })}`}{' '}
               · {timeAgo(job.updated_at)}
             </p>
           </div>
@@ -466,7 +473,7 @@ function JobRow({ job }: { job: JobSummary }) {
               onClick={() => setShowError((v) => !v)}
               className="text-xs font-medium text-err hover:underline"
             >
-              {showError ? 'Hide' : 'Why?'}
+              {showError ? t('documents.row.hide') : t('documents.row.why')}
             </button>
           )}
           {failed && isAdmin && (
@@ -475,13 +482,13 @@ function JobRow({ job }: { job: JobSummary }) {
               disabled={reprocessMut.isPending}
               onClick={() =>
                 reprocessMut.mutate(job.document_id, {
-                  onSuccess: () => toast.success(`Reprocessing “${job.filename}”.`),
-                  onError: (e) => toast.error(e.message),
+                  onSuccess: () => toast.success(t('documents.toast.reprocessing', { name: job.filename })),
+                  onError: (e) => toast.error(apiErrorMessage(e, t)),
                 })
               }
               className="text-xs font-medium text-accent hover:underline disabled:opacity-60"
             >
-              {reprocessMut.isPending ? 'Retrying…' : 'Retry'}
+              {reprocessMut.isPending ? t('common.retrying') : t('common.retry')}
             </button>
           )}
           <StatusBadge status={job.status as BadgeStatus} />
@@ -508,6 +515,7 @@ const PHASE_STYLE: Record<string, string> = {
 }
 
 function QueueCard({ item }: { item: QueueItem }) {
+  const { t } = useTranslation()
   const determinate = item.pct != null
   const terminal = item.status === 'done' || item.status === 'failed'
   return (
@@ -542,11 +550,11 @@ function QueueCard({ item }: { item: QueueItem }) {
             {item.status === 'rate_limited' && item.retry_at ? (
               <RetryCountdown retryAt={item.retry_at} />
             ) : (
-              <span className="capitalize">{item.phase}</span>
+              <span className="capitalize">{t(`queue.phase.${item.phase}`)}</span>
             )}
             {item.total != null && (
               <span className="tabular-nums">
-                {item.current ?? 0} / {item.total} chunks
+                {t('queue.chunkProgress', { current: item.current ?? 0, total: item.total })}
               </span>
             )}
           </div>
@@ -566,7 +574,7 @@ function QueueCard({ item }: { item: QueueItem }) {
       {item.recentChunks.length > 0 && (
         <div className="rounded-control border border-border bg-canvas/50">
           <div className="border-b border-border px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
-            Chunks {terminal ? '' : '(latest)'}
+            {t('queue.chunks')} {terminal ? '' : t('queue.chunksLatest')}
           </div>
           <ul className="max-h-48 overflow-y-auto py-1">
             {[...item.recentChunks].reverse().map((c) => (
@@ -586,11 +594,12 @@ function QueueCard({ item }: { item: QueueItem }) {
 }
 
 function PhaseBadge({ item }: { item: QueueItem }) {
+  const { t } = useTranslation()
   if (item.status === 'rate_limited') {
     return (
       <Badge className="shrink-0 text-warn">
         <AlertTriangle className="h-3.5 w-3.5" />
-        Rate limited
+        {t('status.rate_limited')}
       </Badge>
     )
   }
@@ -606,13 +615,14 @@ function PhaseBadge({ item }: { item: QueueItem }) {
   return (
     <Badge className={cn('shrink-0 capitalize', cls)}>
       {icon}
-      {item.status === 'processing' ? item.phase : item.status}
+      {item.status === 'processing' ? t(`queue.phase.${item.phase}`) : t(`status.${item.status}`)}
     </Badge>
   )
 }
 
 /** Live "retry in M:SS" countdown to a paused item's scheduled resume time. */
 function RetryCountdown({ retryAt }: { retryAt: string }) {
+  const { t } = useTranslation()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -621,7 +631,9 @@ function RetryCountdown({ retryAt }: { retryAt: string }) {
   const remaining = Math.max(0, Math.round((new Date(retryAt).getTime() - now) / 1000))
   const label =
     remaining > 0
-      ? `retry in ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`
-      : 'retrying…'
+      ? t('queue.retryIn', {
+          time: `${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`,
+        })
+      : t('queue.retrying')
   return <span className="tabular-nums text-warn">{label}</span>
 }

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useCollections, useWorkspaces } from '../../api/hooks'
 import type { Collection, Workspace } from '../../api/types'
 import { EntityIcon, QueryError, Skeleton } from '../ui'
+import { apiErrorMessage } from '../../i18n/apiError'
 
 /** Selection callbacks shared down the tree. */
 interface TreeActions {
@@ -17,6 +19,7 @@ interface TreeActions {
  * select-all toggle.
  */
 export function WorkspaceTree(actions: TreeActions) {
+  const { t } = useTranslation()
   const { data, isLoading, isError, error, refetch } = useWorkspaces()
   if (isLoading) {
     return (
@@ -28,10 +31,16 @@ export function WorkspaceTree(actions: TreeActions) {
     )
   }
   if (isError) {
-    return <QueryError title="Could not load workspaces" message={error?.message} onRetry={() => void refetch()} />
+    return (
+      <QueryError
+        title={t('workspaces.error')}
+        message={error ? apiErrorMessage(error, t) : undefined}
+        onRetry={() => void refetch()}
+      />
+    )
   }
   if (!data || data.length === 0) {
-    return <p className="px-1 text-xs text-ink-faint">No workspaces yet.</p>
+    return <p className="px-1 text-xs text-ink-faint">{t('search.tree.noWorkspaces')}</p>
   }
   return (
     <div className="flex flex-col gap-0.5">
@@ -44,6 +53,7 @@ export function WorkspaceTree(actions: TreeActions) {
 
 /** One workspace and its collections, collapsible, with a select-all control. */
 function WorkspaceNode({ ws, selected, onToggle, onToggleMany }: { ws: Workspace } & TreeActions) {
+  const { t } = useTranslation()
   const { data, isLoading } = useCollections(ws.id)
   const [open, setOpen] = useState(true)
   const cols = data ?? []
@@ -57,7 +67,11 @@ function WorkspaceNode({ ws, selected, onToggle, onToggleMany }: { ws: Workspace
           type="button"
           onClick={() => setOpen((o) => !o)}
           className="text-ink-faint transition-colors hover:text-ink"
-          aria-label={open ? `Collapse ${ws.name}` : `Expand ${ws.name}`}
+          aria-label={
+            open
+              ? t('search.tree.collapse', { name: ws.name })
+              : t('search.tree.expand', { name: ws.name })
+          }
         >
           {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
         </button>
@@ -71,7 +85,7 @@ function WorkspaceNode({ ws, selected, onToggle, onToggleMany }: { ws: Workspace
             onClick={() => onToggleMany(ids, !allSelected)}
             className="text-xs text-accent hover:underline"
           >
-            {allSelected ? 'Clear' : 'All'}
+            {allSelected ? t('common.clear') : t('search.tree.all')}
           </button>
         )}
       </div>
@@ -80,7 +94,7 @@ function WorkspaceNode({ ws, selected, onToggle, onToggleMany }: { ws: Workspace
           {isLoading ? (
             <Skeleton className="ml-2 h-6 w-32 rounded-control" />
           ) : cols.length === 0 ? (
-            <p className="px-2 py-1 text-xs text-ink-faint">No collections</p>
+            <p className="px-2 py-1 text-xs text-ink-faint">{t('search.tree.noCollections')}</p>
           ) : (
             cols.map((col) => (
               <CollectionCheckbox

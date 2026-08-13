@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { FileText, Layers } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { SearchResult } from '../../api/types'
 import { Badge, Card } from '../ui'
 
@@ -33,6 +34,7 @@ function highlight(text: string, query: string): ReactNode {
 
 /** A single ranked search hit: rank, score, provenance, and emphasized text. */
 export function ResultCard({ result, query }: { result: SearchResult; query: string }) {
+  const { t } = useTranslation()
   const src = result.source
   return (
     <Card className="p-4">
@@ -49,20 +51,20 @@ export function ResultCard({ result, query }: { result: SearchResult; query: str
             <span className="truncate text-xs text-ink-faint">{src.workspace_name}</span>
           )}
         </div>
-        <span className="shrink-0 font-mono text-xs text-accent" title="Relevance score">
+        <span className="shrink-0 font-mono text-xs text-accent" title={t('search.relevanceScore')}>
           {result.score.toFixed(3)}
         </span>
       </div>
       {src && (src.filename || src.page_number !== null || src.page_range) && (
         <p className="mb-2 flex items-center gap-1.5 text-xs text-ink-muted">
           <FileText className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{src.filename ?? 'Unknown file'}</span>
+          <span className="truncate">{src.filename ?? t('search.unknownFile')}</span>
           {/* A span merged across pages advertises its full range; a single hit shows its page. */}
           {src.page_range ? (
-            <span className="text-ink-faint">· pp.{src.page_range}</span>
+            <span className="text-ink-faint">{t('search.pages', { range: src.page_range })}</span>
           ) : (
             src.page_number !== null && (
-              <span className="text-ink-faint">· p.{src.page_number}</span>
+              <span className="text-ink-faint">{t('search.page', { page: src.page_number })}</span>
             )
           )}
         </p>

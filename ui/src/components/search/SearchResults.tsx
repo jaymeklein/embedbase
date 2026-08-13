@@ -1,18 +1,18 @@
 import type { UseMutationResult } from '@tanstack/react-query'
 import { AlertTriangle, SearchX, Telescope } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { CollectionStat, SearchMode, SearchRequest, SearchResponse } from '../../api/types'
 import { Card, EmptyState, QueryError, Skeleton } from '../ui'
+import { apiErrorMessage } from '../../i18n/apiError'
 import { ResultCard } from './ResultCard'
 
-const MODE: Record<SearchMode, { label: string; cls: string; hint: string }> = {
-  hybrid: { label: 'Hybrid', cls: 'border-accent/40 text-accent', hint: 'BM25 + semantic' },
-  semantic: { label: 'Semantic', cls: 'border-border text-ink-muted', hint: 'Vector similarity' },
-  bm25: { label: 'BM25', cls: 'border-border text-ink-muted', hint: 'Keyword ranking' },
-  semantic_only: {
-    label: 'Semantic only',
-    cls: 'border-warn/40 text-warn',
-    hint: 'BM25 index unavailable — fell back to semantic',
-  },
+/** Per-mode chip styling; the label and hint are resolved from `search.mode.*` /
+ *  `search.modeHint.*` at render time. */
+const MODE_CLS: Record<SearchMode, string> = {
+  hybrid: 'border-accent/40 text-accent',
+  semantic: 'border-border text-ink-muted',
+  bm25: 'border-border text-ink-muted',
+  semantic_only: 'border-warn/40 text-warn',
 }
 
 /** Results pane: drives off the search mutation across all of its states. */
@@ -21,6 +21,7 @@ export function SearchResults({
 }: {
   mutation: UseMutationResult<SearchResponse, Error, SearchRequest>
 }) {
+  const { t } = useTranslation()
   if (mutation.isPending) {
     return (
       <div className="flex flex-col gap-3">
@@ -31,15 +32,15 @@ export function SearchResults({
     )
   }
   if (mutation.isError) {
-    return <QueryError title="Search failed" message={mutation.error.message} />
+    return <QueryError title={t('search.failed')} message={apiErrorMessage(mutation.error, t)} />
   }
   const res = mutation.data
   if (!res) {
     return (
       <EmptyState
         icon={<Telescope className="h-7 w-7" />}
-        title="Search your collections"
-        description="Pick one or more collections on the left, type a query, and run it."
+        title={t('search.empty.title')}
+        description={t('search.empty.description')}
       />
     )
   }
@@ -51,8 +52,8 @@ export function SearchResults({
       {res.results.length === 0 ? (
         <EmptyState
           icon={<SearchX className="h-7 w-7" />}
-          title="No matches"
-          description="No chunks matched this query in the selected collections. Try broadening the query or relaxing filters."
+          title={t('search.noMatches.title')}
+          description={t('search.noMatches.description')}
         />
       ) : (
         res.results.map((r) => <ResultCard key={r.chunk_id} result={r} query={query} />)
@@ -64,17 +65,23 @@ export function SearchResults({
 
 /** Mode chip + millisecond timing line. */
 function ResultsHeader({ res }: { res: SearchResponse }) {
-  const mode = MODE[res.search_mode] ?? MODE.semantic
+  const { t } = useTranslation()
+  const mode = res.search_mode
+  const cls = MODE_CLS[mode] ?? MODE_CLS.semantic
   return (
     <div className="flex items-center justify-between gap-3">
       <span
-        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${mode.cls}`}
-        title={mode.hint}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
+        title={t(`search.modeHint.${mode}`)}
       >
-        {mode.label}
+        {t(`search.mode.${mode}`)}
       </span>
       <span className="font-mono text-xs text-ink-faint">
-        embed {res.query_embedding_ms}ms · search {res.search_ms}ms · total {res.total_ms}ms
+        {t('search.timing', {
+          embed: res.query_embedding_ms,
+          search: res.search_ms,
+          total: res.total_ms,
+        })}
       </span>
     </div>
   )
@@ -82,12 +89,14 @@ function ResultsHeader({ res }: { res: SearchResponse }) {
 
 /** Warns that filters or available matches starved the requested `top_k`. */
 function UnderDeliveredBanner({ topK }: { topK?: number }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-start gap-2 rounded-card border border-warn/30 bg-warn/5 px-3.5 py-3">
       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warn" />
       <p className="text-[13px] text-ink-muted">
-        Fewer results than requested{topK ? ` (top_k ${topK})` : ''}. A selective filter or a small
-        candidate pool left some slots unfilled.
+        {topK
+          ? t('search.underDelivered.withTopK', { topK })
+          : t('search.underDelivered.noTopK')}
       </p>
     </div>
   )
@@ -95,12 +104,13 @@ function UnderDeliveredBanner({ topK }: { topK?: number }) {
 
 /** Per-collection retrieved / returned / contributed breakdown. */
 function CollectionStatsPanel({ stats }: { stats: Record<string, CollectionStat> }) {
+  const { t } = useTranslation()
   const entries = Object.values(stats)
   if (entries.length === 0) return null
   return (
     <Card className="p-4">
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-        Per-collection breakdown
+        {t('search.breakdown.title')}
       </h3>
       <div className="flex flex-col gap-2">
         {entries.map((s) => (
@@ -110,7 +120,11 @@ function CollectionStatsPanel({ stats }: { stats: Record<string, CollectionStat>
               <span className="ml-1 text-ink-faint">· {s.workspace_name}</span>
             </span>
             <span className="shrink-0 font-mono text-xs text-ink-muted">
-              {s.retrieved_before_filter} → {s.returned_after_filter} · {s.contributed_to_top_k} in top-k
+              {t('search.breakdown.stats', {
+                retrieved: s.retrieved_before_filter,
+                returned: s.returned_after_filter,
+                contributed: s.contributed_to_top_k,
+              })}
             </span>
           </div>
         ))}

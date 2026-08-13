@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, ShieldCheck, Trash2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import {
   useCollections,
   useGrantPermission,
@@ -21,21 +22,13 @@ import {
   Skeleton,
   useToast,
 } from '../ui'
+import { apiErrorMessage } from '../../i18n/apiError'
 
 /** Grantable capabilities — privileges not tied to a resource (backend `_CAPABILITIES`).
- *  The `id` must match the backend capability string. */
-const CAPABILITIES = [
-  {
-    id: 'create_workspace',
-    label: 'Create workspaces',
-    help: 'Lets this user create new workspaces — they get write access to any they create.',
-  },
-  {
-    id: 'manage_tags',
-    label: 'Manage tags',
-    help: 'Lets this user create, edit, delete, and assign tags in any workspace they can read.',
-  },
-] as const
+ *  Each id must match the backend capability string; its human label + help are resolved
+ *  from `users.grants.capabilityLabel.<id>` / `capabilityHelp.<id>` so they follow the language. */
+const CAPABILITY_IDS = ['create_workspace', 'manage_tags'] as const
+type CapabilityId = (typeof CAPABILITY_IDS)[number]
 
 /**
  * Permission editor for one user. Permissions SCOPE A USER DOWN: with none the user
@@ -54,17 +47,23 @@ export function PermissionsModal({
   user: User | null
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const userId = user?.id ?? ''
   const { data, isLoading, isError, error, refetch } = usePermissions(userId, open && Boolean(userId))
 
   return (
-    <Modal open={open} onClose={onClose} title={`Permissions — ${user?.email ?? ''}`} className="max-w-xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('users.grants.modalTitle', { email: user?.email ?? '' })}
+      className="max-w-xl"
+    >
       {user && (
         <div className="flex flex-col gap-5">
           <p className="rounded-control border border-border bg-canvas/50 px-3 py-2 text-xs text-ink-muted">
-            Permissions <span className="font-medium text-ink">scope this user down</span>. With none,
-            they see and write everything. A workspace limits them to it; add a collection (or document) to
-            narrow them to just that one.
+            {t('users.grants.intro.lead')}{' '}
+            <span className="font-medium text-ink">{t('users.grants.intro.emphasis')}</span>
+            {t('users.grants.intro.rest')}
           </p>
           <GrantForm userId={user.id} />
           {isLoading ? (
@@ -74,12 +73,16 @@ export function PermissionsModal({
               ))}
             </div>
           ) : isError ? (
-            <QueryError title="Could not load grants" message={error?.message} onRetry={() => void refetch()} />
+            <QueryError
+              title={t('users.grants.error')}
+              message={error ? apiErrorMessage(error, t) : undefined}
+              onRetry={() => void refetch()}
+            />
           ) : !data || data.length === 0 ? (
             <EmptyState
               icon={<ShieldCheck className="h-7 w-7" />}
-              title="No permissions yet"
-              description="Grant this user read or write on a workspace, collection, or document above."
+              title={t('users.grants.empty.title')}
+              description={t('users.grants.empty.description')}
             />
           ) : (
             <div className="divide-y divide-border rounded-card border border-border">
@@ -104,11 +107,12 @@ export function PermissionsModal({
 
 /** The add-a-grant form: resource type → resource picker → level → add. */
 function GrantForm({ userId }: { userId: string }) {
+  const { t } = useTranslation()
   const [resourceType, setResourceType] = useState<ResourceType>('collection')
   const [wsId, setWsId] = useState('')
   const [colId, setColId] = useState('')
   const [docId, setDocId] = useState('')
-  const [capabilityId, setCapabilityId] = useState<string>(CAPABILITIES[0].id)
+  const [capabilityId, setCapabilityId] = useState<CapabilityId>(CAPABILITY_IDS[0])
   const [level, setLevel] = useState<PermissionLevel>('read')
   const toast = useToast()
 
@@ -133,10 +137,10 @@ function GrantForm({ userId }: { userId: string }) {
       { resource_type: resourceType, resource_id: resourceId, level: grantLevel },
       {
         onSuccess: () => {
-          toast.success('Permission granted.')
+          toast.success(t('users.grants.toast.granted'))
           setDocId('')
         },
-        onError: (e) => toast.error(e.message),
+        onError: (e) => toast.error(apiErrorMessage(e, t)),
       },
     )
   }
@@ -144,7 +148,7 @@ function GrantForm({ userId }: { userId: string }) {
   return (
     <div className="flex flex-col gap-3 rounded-card border border-border p-3.5">
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Resource type">
+        <Field label={t('users.grants.resourceType')}>
           <Select
             value={resourceType}
             onChange={(e) => {
@@ -153,41 +157,44 @@ function GrantForm({ userId }: { userId: string }) {
               setDocId('')
             }}
           >
-            <option value="workspace">Workspace</option>
-            <option value="collection">Collection</option>
-            <option value="document">Document</option>
-            <option value="capability">Capability</option>
+            <option value="workspace">{t('users.grants.type.workspace')}</option>
+            <option value="collection">{t('users.grants.type.collection')}</option>
+            <option value="document">{t('users.grants.type.document')}</option>
+            <option value="capability">{t('users.grants.type.capability')}</option>
           </Select>
         </Field>
         {resourceType !== 'capability' && (
-          <Field label="Level">
+          <Field label={t('users.grants.levelLabel')}>
             <Select value={level} onChange={(e) => setLevel(e.target.value as PermissionLevel)}>
-              <option value="read">Read — search, list, download</option>
-              <option value="write">Write — ingest, delete (and read)</option>
+              <option value="read">{t('users.grants.readOption')}</option>
+              <option value="write">{t('users.grants.writeOption')}</option>
             </Select>
           </Field>
         )}
       </div>
 
       {resourceType === 'capability' && (
-        <Field label="Capability">
-          <Select value={capabilityId} onChange={(e) => setCapabilityId(e.target.value)}>
-            {CAPABILITIES.map((cap) => (
-              <option key={cap.id} value={cap.id}>
-                {cap.label}
+        <Field label={t('users.grants.type.capability')}>
+          <Select
+            value={capabilityId}
+            onChange={(e) => setCapabilityId(e.target.value as CapabilityId)}
+          >
+            {CAPABILITY_IDS.map((id) => (
+              <option key={id} value={id}>
+                {t(`users.grants.capabilityLabel.${id}`)}
               </option>
             ))}
           </Select>
           <p className="mt-1.5 text-xs text-ink-muted">
-            {CAPABILITIES.find((cap) => cap.id === capabilityId)?.help}
+            {t(`users.grants.capabilityHelp.${capabilityId}`)}
           </p>
         </Field>
       )}
 
       {resourceType === 'workspace' && (
-        <Field label="Workspace">
+        <Field label={t('users.grants.type.workspace')}>
           <Select value={wsId} onChange={(e) => setWsId(e.target.value)}>
-            <option value="">Select a workspace…</option>
+            <option value="">{t('users.grants.selectWorkspace')}</option>
             {(workspaces.data ?? []).map((ws) => (
               <option key={ws.id} value={ws.id}>
                 {ws.name}
@@ -199,7 +206,7 @@ function GrantForm({ userId }: { userId: string }) {
 
       {resourceType === 'collection' && (
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Workspace">
+          <Field label={t('users.grants.type.workspace')}>
             <Select
               value={wsId}
               onChange={(e) => {
@@ -207,7 +214,7 @@ function GrantForm({ userId }: { userId: string }) {
                 setColId('')
               }}
             >
-              <option value="">Select…</option>
+              <option value="">{t('users.grants.select')}</option>
               {(workspaces.data ?? []).map((ws) => (
                 <option key={ws.id} value={ws.id}>
                   {ws.name}
@@ -215,9 +222,11 @@ function GrantForm({ userId }: { userId: string }) {
               ))}
             </Select>
           </Field>
-          <Field label="Collection">
+          <Field label={t('users.grants.type.collection')}>
             <Select value={colId} onChange={(e) => setColId(e.target.value)} disabled={!wsId}>
-              <option value="">{wsId ? 'Select…' : 'Pick a workspace first'}</option>
+              <option value="">
+                {wsId ? t('users.grants.select') : t('users.grants.pickWorkspaceFirst')}
+              </option>
               {(collections.data ?? []).map((col) => (
                 <option key={col.id} value={col.id}>
                   {col.name}
@@ -229,7 +238,7 @@ function GrantForm({ userId }: { userId: string }) {
       )}
 
       {resourceType === 'document' && (
-        <Field label="Document ID" hint="The document's id (e.g. doc_…), from its collection.">
+        <Field label={t('users.grants.documentId')} hint={t('users.grants.documentIdHint')}>
           <Input value={docId} onChange={(e) => setDocId(e.target.value)} placeholder="doc_…" />
         </Field>
       )}
@@ -237,7 +246,7 @@ function GrantForm({ userId }: { userId: string }) {
       <div className="flex justify-end">
         <Button onClick={add} loading={grantMut.isPending} disabled={!resourceId}>
           <Plus className="h-5 w-5" />
-          Add permission
+          {t('users.grants.addPermission')}
         </Button>
       </div>
     </div>
@@ -260,13 +269,14 @@ function GrantRow({
   resourceName: string | null
   level: PermissionLevel
 }) {
+  const { t } = useTranslation()
   const revokeMut = useRevokePermission(userId)
   const [confirming, setConfirming] = useState(false)
   const toast = useToast()
   const revoke = () =>
     revokeMut.mutate(grantId, {
-      onSuccess: () => toast.success('Permission revoked.'),
-      onError: (e) => toast.error(e.message),
+      onSuccess: () => toast.success(t('users.grants.toast.revoked')),
+      onError: (e) => toast.error(apiErrorMessage(e, t)),
     })
 
   // Show the resource's name; the raw id becomes a click-to-copy chip. A deleted
@@ -276,8 +286,10 @@ function GrantRow({
   return (
     <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
       <div className="flex min-w-0 items-center gap-2">
-        <Badge>{level === 'write' ? 'Write' : 'Read'}</Badge>
-        <span className="shrink-0 text-xs capitalize text-ink-muted">{resourceType}</span>
+        <Badge>{level === 'write' ? t('users.grants.write') : t('users.grants.read')}</Badge>
+        <span className="shrink-0 text-xs text-ink-muted">
+          {t(`users.grants.type.${resourceType}`)}
+        </span>
         <span
           className={
             resourceName
@@ -286,7 +298,7 @@ function GrantRow({
           }
           title={resourceName ?? undefined}
         >
-          {resourceName ?? 'deleted'}
+          {resourceName ?? t('users.grants.deleted')}
         </span>
         <CopyButton
           text={resourceId}
@@ -294,24 +306,24 @@ function GrantRow({
           variant="ghost"
           iconClassName="h-3.5 w-3.5"
           className="shrink-0 font-mono"
-          title={`Copy id: ${resourceId}`}
-          aria-label={`Copy id ${resourceId}`}
+          title={t('users.grants.copyIdTitle', { id: resourceId })}
+          aria-label={t('users.grants.copyIdAria', { id: resourceId })}
         />
       </div>
       {confirming ? (
         <div className="flex shrink-0 items-center gap-1.5">
           <Button variant="danger" size="sm" onClick={revoke} loading={revokeMut.isPending}>
-            Revoke
+            {t('users.revoke')}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setConfirming(false)} disabled={revokeMut.isPending}>
-            Cancel
+            {t('common.cancel')}
           </Button>
         </div>
       ) : (
         <Button
           variant="ghost"
           size="sm"
-          aria-label="Revoke permission"
+          aria-label={t('users.grants.revokeAria')}
           onClick={() => setConfirming(true)}
           className="h-10 w-10 shrink-0 px-0 hover:text-err"
         >

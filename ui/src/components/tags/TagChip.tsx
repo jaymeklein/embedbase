@@ -1,4 +1,5 @@
 import { X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 
 const DEFAULT_COLOR = '#5B6B7A'
@@ -18,6 +19,7 @@ export function TagChip({
   onRemove?: () => void
   className?: string
 }) {
+  const { t } = useTranslation()
   const c = color || DEFAULT_COLOR
   return (
     <span
@@ -32,7 +34,7 @@ export function TagChip({
         <button
           type="button"
           onClick={onRemove}
-          aria-label={`Remove ${name}`}
+          aria-label={t('common.removeAria', { name })}
           className="rounded-full transition-opacity hover:opacity-70"
         >
           <X className="h-3.5 w-3.5" />

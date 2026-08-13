@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 
 export interface ModalProps {
@@ -14,6 +15,7 @@ export interface ModalProps {
 
 /** Centered overlay dialog. Closes on Esc and backdrop click; locks body scroll. */
 export function Modal({ open, onClose, title, children, footer, className }: ModalProps) {
+  const { t } = useTranslation()
   useEffect(() => {
     if (!open) return
     const { body } = document
@@ -49,7 +51,7 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
             <button
               onClick={onClose}
               className="text-ink-faint transition-colors hover:text-ink"
-              aria-label="Close"
+              aria-label={t('common.close')}
             >
               <X className="h-5 w-5" />
             </button>
